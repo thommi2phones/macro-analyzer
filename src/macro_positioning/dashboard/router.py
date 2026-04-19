@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from macro_positioning.dashboard.brain_panel import router as brain_panel_router
 from macro_positioning.dashboard.checklist import (
     Checklist,
     ChecklistItem,
@@ -22,6 +23,7 @@ from macro_positioning.dashboard.ops_data import OpsSnapshot, build_ops_snapshot
 from macro_positioning.dashboard.templates import command_center_html, ops_dashboard_html
 
 router = APIRouter()
+router.include_router(brain_panel_router)
 
 
 # ---------------------------------------------------------------------------

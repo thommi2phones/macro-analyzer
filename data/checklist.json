@@ -137,8 +137,8 @@
     },
     {
       "id": "llm-extraction",
-      "title": "LLM macro synthesis (Gemini via N8N)",
-      "detail": "Code built — needs N8N text webhook wired up",
+      "title": "LLM macro synthesis (direct APIs, multi-model)",
+      "detail": "Gemini/Claude/Ollama backends \u2014 N8N removed as default",
       "category": "pipeline",
       "priority": "critical",
       "status": "in_progress",
@@ -165,10 +165,10 @@
     {
       "id": "source-scoring",
       "title": "Source scoring system",
-      "detail": "Track accuracy over time, adjust trust weights",
+      "detail": "Persistence + CRUD scaffolded (Stream D)",
       "category": "pipeline",
       "priority": "high",
-      "status": "todo",
+      "status": "in_progress",
       "completed_at": null
     },
     {
@@ -218,8 +218,8 @@
     },
     {
       "id": "vision-charts",
-      "title": "Chart analysis via Gemini Vision (N8N)",
-      "detail": "Code built — needs N8N vision webhook wired up",
+      "title": "Chart vision (direct Gemini/Claude API)",
+      "detail": "Backend-agnostic via brain.backends \u2014 no N8N",
       "category": "pipeline",
       "priority": "high",
       "status": "in_progress",
@@ -258,7 +258,7 @@
       "detail": "Returns directional macro view for a specific ticker (consumed by Trading Agent decision gate)",
       "category": "integration",
       "priority": "medium",
-      "status": "todo",
+      "status": "done",
       "completed_at": null
     },
     {
@@ -267,9 +267,216 @@
       "detail": "Accepts trade outcomes from Trading Agent, updates source trust weights",
       "category": "integration",
       "priority": "medium",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "stream-a-personal-gmail",
+      "title": "Stream A: Personal Gmail OAuth + fetch",
+      "detail": "Implement OAuth flow, fetch_newsletters, persist with dedup",
+      "category": "integration",
+      "priority": "critical",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-a-finnhub-impl",
+      "title": "Stream A: Finnhub connector full impl",
+      "detail": "company_news, general_news, sentiment endpoints",
+      "category": "data",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-a-gnews-impl",
+      "title": "Stream A: Google News RSS full impl",
+      "detail": "fetch_query, fetch_topic, macro topic batching",
+      "category": "data",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-a-fmp-impl",
+      "title": "Stream A: FMP connector full impl",
+      "detail": "Historical prices + technical indicators",
+      "category": "data",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-a-scheduler-cron",
+      "title": "Stream A: Scheduler cron loop",
+      "detail": "Add apscheduler, wire morning/midday/close/weekly runs",
+      "category": "infra",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-b-live-synthesis",
+      "title": "Stream B: First live Gemini synthesis test",
+      "detail": "Real newsletters \u2192 Gemini 2.5 Pro \u2192 theses validation",
+      "category": "pipeline",
+      "priority": "critical",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-b-retry-backoff",
+      "title": "Stream B: Retry + backoff for LLM calls",
+      "detail": "Tenacity wrapping for all backends",
+      "category": "pipeline",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-b-momentum-wiring",
+      "title": "Stream B: Wire momentum context into synthesis",
+      "detail": "compute_momentum_context \u2192 prompt momentum_block",
+      "category": "pipeline",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-b-cached-synthesis",
+      "title": "Stream B: Cache synthesis results",
+      "detail": "Avoid re-firing full brain on each /positioning/view",
+      "category": "pipeline",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-b-token-tracking",
+      "title": "Stream B: Token + cost tracking",
+      "detail": "Extend BrainCallRecord with tokens and USD estimates",
+      "category": "pipeline",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-c-brain-activity-ui",
+      "title": "Stream C: Brain Activity panel (UI)",
+      "detail": "Last 10 calls w/ latency, backend, success",
+      "category": "dashboard",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-c-reasoning-trail-ui",
+      "title": "Stream C: Reasoning Trail panel (UI)",
+      "detail": "Thesis \u2192 evidence \u2192 source \u2192 weight tree",
+      "category": "dashboard",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-c-chart-upload-ui",
+      "title": "Stream C: Chart Upload widget (UI)",
+      "detail": "File upload \u2192 /charts/analyze \u2192 render",
+      "category": "dashboard",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-c-source-scoring-ui",
+      "title": "Stream C: Source Scoring panel (UI)",
+      "detail": "Weights table sortable by trust + trade record",
+      "category": "dashboard",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-c-integration-status-ui",
+      "title": "Stream C: Integration Status panel (UI)",
+      "detail": "Tactical-executor call count + last outcome reports",
+      "category": "dashboard",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-c-mobile-responsive",
+      "title": "Stream C: Mobile responsive layouts",
+      "detail": "Phone-friendly all panels",
+      "category": "dashboard",
+      "priority": "low",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-d-deploy-macro",
+      "title": "Stream D: Deploy macro-analyzer to public URL",
+      "detail": "Render or Railway, reachable by tactical-executor",
+      "category": "infra",
+      "priority": "critical",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-d-live-integration-test",
+      "title": "Stream D: Full end-to-end live integration test",
+      "detail": "TradingView alert \u2192 macro gate \u2192 outcome POST \u2192 weight update",
+      "category": "integration",
+      "priority": "critical",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-d-regime-push",
+      "title": "Stream D: Wire regime-change push into pipeline",
+      "detail": "detect_regime_change() post-pipeline, push to tactical webhook",
+      "category": "integration",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-d-view-caching",
+      "title": "Stream D: Cache /positioning/view responses",
+      "detail": "5-min TTL cache so tactical gate calls don't recompute",
+      "category": "integration",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-d-tactical-cache-at-entry",
+      "title": "Stream D (tactical repo): Cache macro view at entry",
+      "detail": "Fetch once on entry, snapshot for outcome attribution",
+      "category": "integration",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-d-tactical-gate-ui",
+      "title": "Stream D (tactical repo): Macro gate status UI",
+      "detail": "Show per-setup which gate was applied",
+      "category": "dashboard",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "stream-d-schema-ci-check",
+      "title": "Stream D: GitHub Action: schema drift check",
+      "detail": "Compare contract versions between repos, fail CI on drift",
+      "category": "infra",
+      "priority": "medium",
       "status": "todo",
       "completed_at": null
     }
   ],
-  "updated_at": "2026-04-06T00:20:05.888566+00:00"
+  "updated_at": "2026-04-19T17:08:15.284373+00:00"
 }

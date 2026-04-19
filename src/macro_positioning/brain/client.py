@@ -1,11 +1,17 @@
-"""BrainClient — the single interface the rest of the app uses to talk to the Brain.
+"""BrainClient — unified interface the rest of the app uses for LLM reasoning.
 
-Today: wraps local Python functions that call Gemini via N8N webhook.
-Phase 2: will wrap HTTP calls to the extracted macro-brain service.
+Multi-model, direct-API architecture:
+  - Primary: Gemini 2.5 Pro (best macro reasoning, 1M context)
+  - Escalation: Claude Sonnet (structured output, careful reasoning)
+  - Vision: Gemini 2.5 Pro (native multimodal)
+  - Fallback: Ollama local (dev/testing)
 
-The consumer code (pipeline, API, dashboard) must NEVER import synthesis.py
-or vision.py directly. They only touch BrainClient. That's what makes the
-Phase 2 extraction mechanical instead of a rewrite.
+Direct API calls — no N8N dependency. N8N is kept as an OPTIONAL advanced
+workflow path for users who want it, but not the default.
+
+When Phase 2 splits the Brain into its own repo/service, this interface
+stays; only the factory changes from "local Python calls" to "HTTP calls
+to macro-brain service".
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from macro_positioning.core.models import (
     NormalizedDocument,
     Thesis,
 )
+from macro_positioning.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +34,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class SynthesisResult:
-    """What the Brain returns from a macro synthesis call."""
+    """Structured output of a macro synthesis call."""
 
     def __init__(
         self,
@@ -36,72 +43,70 @@ class SynthesisResult:
         top_trades: list[str] | None = None,
         key_risks: list[str] | None = None,
         data_gaps: list[str] | None = None,
+        model_used: str = "",
+        latency_ms: float = 0.0,
     ) -> None:
         self.theses = theses
         self.market_regime = market_regime
         self.top_trades = top_trades or []
         self.key_risks = key_risks or []
         self.data_gaps = data_gaps or []
+        self.model_used = model_used
+        self.latency_ms = latency_ms
 
     def __repr__(self) -> str:
         return (
             f"SynthesisResult(theses={len(self.theses)}, "
-            f"regime={self.market_regime!r}, "
-            f"trades={len(self.top_trades)})"
+            f"regime={self.market_regime[:40]!r}, "
+            f"trades={len(self.top_trades)}, "
+            f"model={self.model_used!r}, "
+            f"latency={self.latency_ms:.0f}ms)"
         )
 
 
 # ---------------------------------------------------------------------------
-# BrainClient interface
+# Interface
 # ---------------------------------------------------------------------------
 
 class BrainClient(Protocol):
-    """Interface every Brain implementation must satisfy."""
-
     def synthesize_macro(
         self,
         documents: list[NormalizedDocument],
         observations: list[MarketObservation] | None = None,
         analyst_notes: list[str] | None = None,
         chart_reads: list[dict] | None = None,
-    ) -> SynthesisResult:
-        """Read all inputs and produce structured macro positioning."""
-        ...
+        escalate: bool = False,
+    ) -> SynthesisResult: ...
 
     def analyze_chart(
         self,
         image_url: str,
         asset_context: str = "",
         additional_context: str = "",
-    ) -> dict:
-        """Analyze a single chart from a URL. Returns structured read."""
-        ...
+    ) -> dict: ...
 
     def analyze_chart_file(
         self,
         file_path: str,
         asset_context: str = "",
         additional_context: str = "",
-    ) -> dict:
-        """Analyze a chart from a local file path."""
-        ...
+    ) -> dict: ...
 
     @property
-    def available(self) -> bool:
-        """Whether the Brain is configured and ready to call."""
-        ...
+    def available(self) -> bool: ...
 
 
 # ---------------------------------------------------------------------------
-# Concrete implementations
+# Direct API client
 # ---------------------------------------------------------------------------
 
-class GeminiBrainClient:
-    """Brain backed by Gemini 2.5 Pro via N8N webhook.
+class DirectAPIBrainClient:
+    """Brain that calls Gemini/Claude APIs directly — no N8N, no proxy.
 
-    Currently calls local Python functions that POST to N8N. In Phase 2, this
-    whole class gets replaced with an HTTP client to the extracted Brain
-    service — no changes to consumers.
+    Routes by task:
+      - macro synthesis → primary backend (Gemini 2.5 Pro default)
+      - vision → vision backend (Gemini 2.5 Pro default, multimodal)
+      - escalation → alternative backend (Claude default, when escalate=True)
     """
 
     def synthesize_macro(
@@ -110,13 +115,21 @@ class GeminiBrainClient:
         observations=None,
         analyst_notes=None,
         chart_reads=None,
+        escalate=False,
     ) -> SynthesisResult:
         from macro_positioning.brain.synthesis import run_synthesis
+
+        backend = (
+            settings.brain_escalation_backend
+            if escalate
+            else settings.brain_primary_backend
+        )
         return run_synthesis(
             documents=documents,
             observations=observations or [],
             analyst_notes=analyst_notes or [],
             chart_reads=chart_reads or [],
+            backend=backend,
         )
 
     def analyze_chart(
@@ -130,6 +143,7 @@ class GeminiBrainClient:
             image_url=image_url,
             asset_context=asset_context,
             additional_context=additional_context,
+            backend=settings.brain_vision_backend,
         )
 
     def analyze_chart_file(
@@ -143,48 +157,46 @@ class GeminiBrainClient:
             file_path=file_path,
             asset_context=asset_context,
             additional_context=additional_context,
+            backend=settings.brain_vision_backend,
         )
 
     @property
     def available(self) -> bool:
-        from macro_positioning.core.settings import settings
-        return bool(settings.n8n_webhook_url)
+        return bool(
+            settings.gemini_api_key
+            or settings.anthropic_api_key
+            or settings.ollama_base_url
+        )
 
+
+# ---------------------------------------------------------------------------
+# Heuristic fallback (no LLM at all)
+# ---------------------------------------------------------------------------
 
 class HeuristicBrainClient:
-    """Fallback Brain that uses deterministic keyword heuristics.
-
-    Used when no LLM is configured. Keeps the system functional for
-    development and as a safety net.
-    """
+    """Deterministic keyword extractor — always works, no external deps."""
 
     def synthesize_macro(
-        self,
-        documents,
-        observations=None,
-        analyst_notes=None,
-        chart_reads=None,
+        self, documents, observations=None, analyst_notes=None,
+        chart_reads=None, escalate=False,
     ) -> SynthesisResult:
         from macro_positioning.brain.heuristic import HeuristicThesisExtractor
-
         extractor = HeuristicThesisExtractor()
         theses = []
         for doc in documents:
-            theses.extend(
-                extractor.extract(
-                    document_id=doc.document_id,
-                    source_id=doc.source_id,
-                    text=doc.cleaned_text,
-                    published_at=doc.published_at,
-                    url=doc.url,
-                )
-            )
-        return SynthesisResult(theses=theses)
+            theses.extend(extractor.extract(
+                document_id=doc.document_id,
+                source_id=doc.source_id,
+                text=doc.cleaned_text,
+                published_at=doc.published_at,
+                url=doc.url,
+            ))
+        return SynthesisResult(theses=theses, model_used="heuristic")
 
     def analyze_chart(self, image_url, asset_context="", additional_context=""):
         return {
-            "error": "Chart analysis not available without LLM backend",
-            "summary": "Configure N8N webhook to enable vision analysis",
+            "error": "Vision not available — configure an LLM backend",
+            "summary": "Set MPA_GEMINI_API_KEY or MPA_ANTHROPIC_API_KEY",
         }
 
     def analyze_chart_file(self, file_path, asset_context="", additional_context=""):
@@ -192,7 +204,7 @@ class HeuristicBrainClient:
 
     @property
     def available(self) -> bool:
-        return True  # Always available as fallback
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -202,15 +214,19 @@ class HeuristicBrainClient:
 def build_brain_client() -> BrainClient:
     """Return the best available Brain client based on configuration.
 
-    Auto-detection order:
-      1. GeminiBrainClient if N8N webhook is configured
-      2. HeuristicBrainClient as fallback
+    Auto-detection:
+      1. If any LLM API key is configured → DirectAPIBrainClient
+      2. Else → HeuristicBrainClient (deterministic fallback)
     """
-    from macro_positioning.core.settings import settings
+    if settings.gemini_api_key or settings.anthropic_api_key:
+        logger.info(
+            "Brain: direct API mode "
+            "(primary=%s, vision=%s, escalation=%s)",
+            settings.brain_primary_backend,
+            settings.brain_vision_backend,
+            settings.brain_escalation_backend,
+        )
+        return DirectAPIBrainClient()
 
-    if settings.n8n_webhook_url:
-        logger.info("Brain: Gemini (via N8N) — performance tier")
-        return GeminiBrainClient()
-
-    logger.info("Brain: heuristic fallback — no LLM credentials configured")
+    logger.info("Brain: heuristic fallback (no LLM credentials)")
     return HeuristicBrainClient()

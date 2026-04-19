@@ -177,15 +177,38 @@ def source_scoring_outcome(report: MacroOutcomeReport) -> MacroOutcomeAck:
         if t:
             credited_sources.update(t.source_ids)
 
-    # TODO (Phase 2): actually update persistent source weights
-    # For now, log the event so we can measure attribution
+    # Determine if macro view was aligned with the trade direction
+    macro_direction = report.macro_view_at_entry.direction.lower()
+    trade_direction = report.direction.lower()
+    macro_aligned = (
+        (trade_direction == "long" and macro_direction == "bullish") or
+        (trade_direction == "short" and macro_direction == "bearish")
+    )
+
+    # Apply outcome to each credited source's weight
+    from macro_positioning.integration import source_weights as sw_module
+    updates: dict[str, dict] = {}
+    for source_id in credited_sources:
+        old_weight = sw_module.get_weight(source_id).weight
+        updated = sw_module.apply_outcome(
+            source_id=source_id,
+            outcome=report.outcome,
+            macro_aligned=macro_aligned,
+        )
+        updates[source_id] = {
+            "old": round(old_weight, 3),
+            "new": round(updated.weight, 3),
+            "wins": updated.wins,
+            "losses": updated.losses,
+        }
+
     logger.info(
-        "Sources credited for outcome %s: %s",
-        report.outcome, sorted(credited_sources),
+        "Sources credited for outcome %s (aligned=%s): %s",
+        report.outcome, macro_aligned, sorted(credited_sources),
     )
 
     return MacroOutcomeAck(
         recorded=True,
         sources_credited=sorted(credited_sources),
-        source_weights_updated={},  # Placeholder until weight store is built
+        source_weights_updated=updates,
     )

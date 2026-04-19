@@ -1,29 +1,21 @@
-"""Macro synthesis — Gemini 2.5 Pro via N8N.
+"""Macro synthesis — routed to any configured LLM backend.
 
-Takes all ingested content (newsletters, FRED data, analyst notes, chart reads)
-and produces structured macro positioning analysis through a single LLM call.
+Takes all ingested content (newsletters, FRED, notes, chart reads) and
+produces structured positioning analysis through a single model call.
 
-N8N workflow setup (3 nodes):
-  1. Webhook — POST, path: "macro-analyzer-gemini", response mode: "Respond to Webhook"
-  2. Google Gemini — text/message operation
-     - Model: gemini-2.5-pro (performance tier)
-     - Content: {{ $json.body.prompt }}
-     - Options → System message: {{ $json.body.system_prompt }}
-     - JSON output: ON
-     - Temperature: 0.3
-     - Max output tokens: 16384
-  3. Respond to Webhook — first incoming item
+Default path: direct API to Gemini 2.5 Pro. Escalation: Claude Sonnet.
+Fallback: Ollama local. N8N is optional, not the default.
 """
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import logging
 from datetime import UTC, datetime
 
-import httpx
-
+from macro_positioning.brain.backends import generate
+from macro_positioning.brain.observability import log_brain_call
 from macro_positioning.brain.prompts import MACRO_ANALYSIS_PROMPT, MACRO_SYSTEM_PROMPT
 from macro_positioning.core.models import (
     Evidence,
@@ -39,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Input formatting
+# Input formatting (unchanged — same across all backends)
 # ---------------------------------------------------------------------------
 
 def _format_documents(documents: list[NormalizedDocument]) -> str:
@@ -49,7 +41,6 @@ def _format_documents(documents: list[NormalizedDocument]) -> str:
     blocks = []
     for doc in documents:
         text = doc.cleaned_text or doc.raw_text
-        # Gemini Pro has 1M context — allow 20k per doc
         if len(text) > 20000:
             text = text[:20000] + "\n... [truncated]"
         blocks.append(
@@ -64,7 +55,6 @@ def _format_fred_data(observations: list[MarketObservation]) -> str:
     fred_obs = [o for o in observations if o.source and "fred" in o.source.lower()]
     if not fred_obs:
         return "(No FRED data available)"
-
     lines = []
     for o in fred_obs:
         interp = f" — {o.interpretation}" if o.interpretation else ""
@@ -91,54 +81,15 @@ def _format_notes(notes: list[str]) -> str:
 def _format_chart_reads(chart_reads: list[dict]) -> str:
     if not chart_reads:
         return "(No chart reads available)"
-
     blocks = []
     for i, read in enumerate(chart_reads, 1):
-        asset = read.get("asset", "unknown")
-        tf = read.get("timeframe", "")
-        trend = read.get("trend_direction", "")
-        summary = read.get("summary", "")
         blocks.append(
-            f"Chart {i}: {asset} {tf}\n"
-            f"  Trend: {trend}\n"
-            f"  Read: {summary}"
+            f"Chart {i}: {read.get('asset', 'unknown')} "
+            f"{read.get('timeframe', '')}\n"
+            f"  Trend: {read.get('trend_direction', '')}\n"
+            f"  Read: {read.get('summary', '')}"
         )
     return "\n".join(blocks)
-
-
-# ---------------------------------------------------------------------------
-# N8N webhook call
-# ---------------------------------------------------------------------------
-
-def _call_brain(system_prompt: str, prompt: str, timeout: float = 180.0) -> str:
-    """Send the synthesis request to N8N → Gemini and return raw response text."""
-    webhook_url = settings.n8n_webhook_url
-    if not webhook_url:
-        raise RuntimeError(
-            "N8N webhook URL not configured. Set MPA_N8N_WEBHOOK_URL in .env."
-        )
-
-    payload = {
-        "system_prompt": system_prompt,
-        "prompt": prompt,
-    }
-
-    logger.info("Brain synthesis request → N8N (prompt: %d chars)", len(prompt))
-
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(webhook_url, json=payload)
-        response.raise_for_status()
-
-    data = response.json()
-
-    if isinstance(data, dict):
-        text = data.get("text") or data.get("output") or data.get("content", "")
-        if not text:
-            text = json.dumps(data)
-        return text
-    elif isinstance(data, str):
-        return data
-    return json.dumps(data)
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +134,7 @@ def _parse_theses(data: dict, documents: list[NormalizedDocument]) -> list[Thesi
             for doc in documents[:3]
         ]
 
-        thesis = Thesis(
+        theses.append(Thesis(
             thesis_id=thesis_id,
             thesis=thesis_text,
             theme=t.get("theme", "macro"),
@@ -198,8 +149,7 @@ def _parse_theses(data: dict, documents: list[NormalizedDocument]) -> list[Thesi
             status=ThesisStatus.active,
             source_ids=source_ids,
             evidence=evidence,
-        )
-        theses.append(thesis)
+        ))
 
     return theses
 
@@ -213,15 +163,16 @@ def run_synthesis(
     observations: list[MarketObservation] | None = None,
     analyst_notes: list[str] | None = None,
     chart_reads: list[dict] | None = None,
+    backend: str = "gemini",
 ):
-    """Run one macro synthesis pass. Returns a SynthesisResult."""
+    """Run one macro synthesis pass on the configured backend."""
     from macro_positioning.brain.client import SynthesisResult
 
     observations = observations or []
     analyst_notes = analyst_notes or []
     chart_reads = chart_reads or []
 
-    prompt = MACRO_ANALYSIS_PROMPT.format(
+    user_prompt = MACRO_ANALYSIS_PROMPT.format(
         documents_block=_format_documents(documents),
         fred_block=_format_fred_data(observations),
         market_block=_format_market_obs(observations),
@@ -230,25 +181,63 @@ def run_synthesis(
     )
 
     logger.info(
-        "Brain synthesis: %d docs, %d obs, %d notes, %d charts",
-        len(documents), len(observations), len(analyst_notes), len(chart_reads),
-    )
-
-    raw_text = _call_brain(
-        system_prompt=MACRO_SYSTEM_PROMPT,
-        prompt=prompt,
+        "Brain synthesis [%s]: %d docs, %d obs, %d notes, %d charts",
+        backend, len(documents), len(observations), len(analyst_notes), len(chart_reads),
     )
 
     try:
-        data = json.loads(_strip_fences(raw_text))
+        result = generate(
+            backend=backend,
+            system_prompt=MACRO_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            max_tokens=16384,
+            json_mode=True,
+        )
+    except Exception as e:
+        logger.error("Brain synthesis failed on backend %s: %s", backend, e)
+        log_brain_call(
+            call_type="synthesis",
+            backend=backend,
+            model="",
+            input_size=len(user_prompt),
+            output_size=0,
+            latency_ms=0.0,
+            success=False,
+            error=str(e),
+        )
+        return SynthesisResult(theses=[], model_used=backend)
+
+    try:
+        data = json.loads(_strip_fences(result.text))
     except json.JSONDecodeError as e:
-        logger.error("Brain returned non-JSON response: %s", e)
-        logger.debug("Raw response (first 2000 chars): %s", raw_text[:2000])
-        return SynthesisResult(theses=[])
+        logger.error("Brain returned non-JSON: %s", e)
+        logger.debug("Raw response first 2000 chars: %s", result.text[:2000])
+        log_brain_call(
+            call_type="synthesis",
+            backend=backend,
+            model=result.model,
+            input_size=len(user_prompt),
+            output_size=len(result.text),
+            latency_ms=result.latency_ms,
+            success=False,
+            error=f"JSON parse: {e}",
+        )
+        return SynthesisResult(theses=[], model_used=result.model, latency_ms=result.latency_ms)
 
     theses = _parse_theses(data, documents)
+    logger.info("Brain produced %d theses via %s", len(theses), result.model)
 
-    logger.info("Brain produced %d theses", len(theses))
+    log_brain_call(
+        call_type="synthesis",
+        backend=backend,
+        model=result.model,
+        input_size=len(user_prompt),
+        output_size=len(result.text),
+        latency_ms=result.latency_ms,
+        success=True,
+        theses_count=len(theses),
+    )
 
     return SynthesisResult(
         theses=theses,
@@ -256,4 +245,6 @@ def run_synthesis(
         top_trades=data.get("top_trades", []),
         key_risks=data.get("key_risks", []),
         data_gaps=data.get("data_gaps", []),
+        model_used=result.model,
+        latency_ms=result.latency_ms,
     )

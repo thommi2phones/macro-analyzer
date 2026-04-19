@@ -1,22 +1,11 @@
-"""Chart vision — Gemini 2.5 Pro multimodal via N8N.
+"""Chart / image vision — routed to any configured multimodal backend.
 
-Sends chart screenshots (URL or local file) to Gemini for structured reads:
-trend direction, key levels, patterns, momentum, positioning implications.
-
-N8N workflow setup:
-  1. Webhook — POST, path: "macro-analyzer-vision", response mode: "Respond to Webhook"
-  2. Google Gemini — image/analyze operation
-     - Model: gemini-2.5-pro
-     - Text: {{ $json.body.prompt }}
-     - Input type: url
-     - Image URLs: {{ $json.body.image_url }}
-     - Max output tokens: 4096
-  3. Respond to Webhook — first incoming item
+Default: Gemini 2.5 Pro (native multimodal). Also supports Claude via
+Anthropic SDK. Direct API — no N8N dependency.
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 from datetime import UTC, datetime
@@ -24,6 +13,8 @@ from pathlib import Path
 
 import httpx
 
+from macro_positioning.brain.backends import generate, load_image_bytes
+from macro_positioning.brain.observability import log_brain_call
 from macro_positioning.brain.prompts import CHART_ANALYSIS_PROMPT
 from macro_positioning.core.settings import settings
 
@@ -36,53 +27,25 @@ def _build_context(asset_context: str, additional_context: str) -> str:
         parts.append(f"Asset context: {asset_context}")
     if additional_context:
         parts.append(additional_context)
-    return "\n".join(parts) if parts else ""
+    return "\n".join(parts)
 
 
-def _call_vision(prompt: str, image_payload: str, timeout: float = 90.0) -> dict:
-    """POST to N8N vision webhook and return parsed response."""
-    webhook_url = settings.n8n_vision_webhook_url
-    if not webhook_url:
-        raise RuntimeError(
-            "N8N vision webhook not configured. Set MPA_N8N_VISION_WEBHOOK_URL in .env."
-        )
-
-    payload = {"prompt": prompt, "image_url": image_payload}
-
-    logger.info("Chart vision request → N8N")
-
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(webhook_url, json=payload)
-        response.raise_for_status()
-
-    return _parse_response(response.json())
-
-
-def _parse_response(data) -> dict:
-    if isinstance(data, str):
-        text = data
-    elif isinstance(data, dict):
-        text = data.get("text") or data.get("output") or data.get("content", "")
-        if not text:
-            return data
-    else:
-        return {"raw": str(data)}
-
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
-    text = text.strip()
+def _parse_response(text: str) -> dict:
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[1] if "\n" in t else t[3:]
+    if t.endswith("```"):
+        t = t[:-3]
+    t = t.strip()
 
     try:
-        parsed = json.loads(text)
+        parsed = json.loads(t)
         parsed["analyzed_at"] = datetime.now(UTC).isoformat()
         return parsed
     except json.JSONDecodeError as e:
-        logger.warning("Chart vision returned non-JSON: %s", e)
+        logger.warning("Vision response was not JSON: %s", e)
         return {
-            "raw_text": text,
+            "raw_text": t,
             "analyzed_at": datetime.now(UTC).isoformat(),
             "parse_error": str(e),
         }
@@ -96,45 +59,104 @@ def analyze_chart_url(
     image_url: str,
     asset_context: str = "",
     additional_context: str = "",
+    backend: str = "gemini",
 ) -> dict:
-    """Analyze a chart accessible at a public URL."""
+    """Analyze a chart from a public URL. Fetches bytes then sends to backend."""
     prompt = CHART_ANALYSIS_PROMPT.format(
         context=_build_context(asset_context, additional_context)
     )
-    return _call_vision(prompt, image_url)
+
+    # Fetch image bytes — more reliable than passing URL to each backend
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            r = client.get(image_url)
+            r.raise_for_status()
+            image_bytes = r.content
+            # Infer MIME from content-type header
+            mime = r.headers.get("content-type", "image/png").split(";")[0]
+    except Exception as e:
+        logger.error("Failed to fetch chart URL: %s", e)
+        return {"error": f"Fetch failed: {e}"}
+
+    try:
+        result = generate(
+            backend=backend,
+            system_prompt="You are a macro technical analyst. Respond with valid JSON only.",
+            user_prompt=prompt,
+            image_data=image_bytes,
+            image_mime=mime,
+            temperature=0.2,
+            max_tokens=4096,
+            json_mode=True,
+        )
+    except Exception as e:
+        logger.error("Vision backend %s failed: %s", backend, e)
+        log_brain_call(
+            call_type="vision",
+            backend=backend, model="",
+            input_size=len(image_bytes),
+            output_size=0, latency_ms=0.0,
+            success=False, error=str(e),
+        )
+        return {"error": str(e)}
+
+    parsed = _parse_response(result.text)
+    log_brain_call(
+        call_type="vision",
+        backend=backend, model=result.model,
+        input_size=len(image_bytes),
+        output_size=len(result.text),
+        latency_ms=result.latency_ms,
+        success="error" not in parsed,
+    )
+    return parsed
 
 
 def analyze_chart_file(
     file_path: str | Path,
     asset_context: str = "",
     additional_context: str = "",
+    backend: str = "gemini",
 ) -> dict:
-    """Analyze a chart from a local file (base64-encoded into data URI)."""
-    path = Path(file_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Chart file not found: {path}")
-
-    image_bytes = path.read_bytes()
-    b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    ext = path.suffix.lower()
-    mime_map = {
-        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".gif": "image/gif", ".webp": "image/webp",
-    }
-    mime = mime_map.get(ext, "image/png")
-    data_uri = f"data:{mime};base64,{b64}"
+    """Analyze a chart from a local file."""
+    image_bytes, mime = load_image_bytes(file_path)
 
     prompt = CHART_ANALYSIS_PROMPT.format(
         context=_build_context(asset_context, additional_context)
     )
 
-    logger.info("Chart file analysis: %s (%d KB)", path.name, len(image_bytes) // 1024)
-    return _call_vision(prompt, data_uri, timeout=120.0)
+    logger.info("Chart analysis: %s (%d KB) via %s",
+                Path(file_path).name, len(image_bytes) // 1024, backend)
+
+    try:
+        result = generate(
+            backend=backend,
+            system_prompt="You are a macro technical analyst. Respond with valid JSON only.",
+            user_prompt=prompt,
+            image_data=image_bytes,
+            image_mime=mime,
+            temperature=0.2,
+            max_tokens=4096,
+            json_mode=True,
+        )
+    except Exception as e:
+        logger.error("Vision backend %s failed: %s", backend, e)
+        return {"error": str(e)}
+
+    parsed = _parse_response(result.text)
+    log_brain_call(
+        call_type="vision",
+        backend=backend, model=result.model,
+        input_size=len(image_bytes),
+        output_size=len(result.text),
+        latency_ms=result.latency_ms,
+        success="error" not in parsed,
+    )
+    return parsed
 
 
 def analyze_multiple_charts(charts: list[dict]) -> list[dict]:
-    """Analyze a batch of charts. Each entry: {url or file_path, asset_context?}"""
+    """Batch chart analysis. Each entry: {url or file_path, asset_context?}"""
     results = []
     for chart in charts:
         try:
@@ -149,10 +171,8 @@ def analyze_multiple_charts(charts: list[dict]) -> list[dict]:
                     asset_context=chart.get("asset_context", ""),
                 )
             else:
-                logger.warning("Chart missing 'url' or 'file_path': %s", chart)
                 continue
             results.append(result)
         except Exception as e:
-            logger.error("Chart analysis failed %s: %s", chart, e)
             results.append({"error": str(e), "input": chart})
     return results

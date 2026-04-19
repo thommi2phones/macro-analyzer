@@ -149,6 +149,26 @@ NEWSLETTER_SOURCES: list[NewsletterSource] = [
         priority="secondary",
         tags=["equities", "investing", "newsletter"],
     ),
+    NewsletterSource(
+        source_id="capital_flows",
+        name="Capital Flows",
+        sender_email="capitalflows@substack.com",
+        sender_domain="substack.com",
+        author="Capital Flows",
+        market_focus=["macro", "rates", "fx", "liquidity"],
+        priority="secondary",
+        tags=["macro", "liquidity", "newsletter"],
+    ),
+    NewsletterSource(
+        source_id="stock_analysis_compilation",
+        name="Stock Analysis Compilation",
+        sender_email="stockanalysiscompilation@substack.com",
+        sender_domain="substack.com",
+        author="Stock Analysis Compilation",
+        market_focus=["equities"],
+        priority="secondary",
+        tags=["equities", "newsletter"],
+    ),
 ]
 
 # Lookup by sender email
@@ -197,10 +217,53 @@ class _HTMLTextExtractor(HTMLParser):
 
 
 def html_to_text(html: str) -> str:
-    """Convert HTML email body to readable plain text."""
-    parser = _HTMLTextExtractor()
-    parser.feed(html)
-    return parser.get_text()
+    """Convert HTML email body to readable plain text.
+
+    Uses BeautifulSoup for reliable parsing of modern email HTML (the
+    stdlib HTMLParser silently fails on many newsletter templates).
+    Falls back to the stdlib parser if BS4 is unavailable.
+    Strips common invisible filler chars used by Substack etc. as
+    anti-preview padding (nbsp runs, zero-width joiners, soft hyphens).
+    """
+    if not html:
+        return ""
+
+    # Preferred path: BeautifulSoup
+    try:
+        from bs4 import BeautifulSoup  # type: ignore
+
+        soup = BeautifulSoup(html, "html.parser")
+        # Remove noise elements entirely
+        for tag in soup(["script", "style", "head", "meta", "link", "noscript"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n", strip=True)
+    except ImportError:
+        parser = _HTMLTextExtractor()
+        parser.feed(html)
+        text = parser.get_text()
+
+    # Strip invisible filler characters (Substack, Beehiiv, etc. pad
+    # preview text with these so Gmail preview looks cleaner)
+    _INVISIBLE = (
+        "\u00a0",  # nbsp
+        "\u2007",  # figure space
+        "\u200b",  # zero-width space
+        "\u200c",  # zero-width non-joiner
+        "\u200d",  # zero-width joiner
+        "\u2060",  # word joiner
+        "\u00ad",  # soft hyphen
+        "\u034f",  # combining grapheme joiner
+        "\ufeff",  # BOM / zero-width no-break space
+    )
+    for ch in _INVISIBLE:
+        text = text.replace(ch, " ")
+
+    # Collapse whitespace runs but preserve paragraph breaks
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n[ \t]*\n\s*", "\n\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 # ---------------------------------------------------------------------------

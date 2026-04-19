@@ -2,6 +2,14 @@
 .env
 .env.local
 
+# OAuth credentials and tokens — NEVER commit these
+data/personal_gmail_credentials.json
+data/personal_gmail_token.json
+data/*_credentials.json
+data/*_token.json
+**/client_secret_*.json
+**/*.credentials.json
+
 # Python
 __pycache__/
 *.py[cod]

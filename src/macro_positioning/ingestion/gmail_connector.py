@@ -45,10 +45,12 @@ class NewsletterSource:
     priority: str = "secondary"
     content_type: str = "article"
     tags: list[str] = field(default_factory=list)
+    notes: str = ""   # free-form note, e.g. "mostly video links"
 
 
 # The newsletter sources discovered from your Gmail inbox
 NEWSLETTER_SOURCES: list[NewsletterSource] = [
+    # ═══ CORE — highest trust / primary signal ═══
     NewsletterSource(
         source_id="macromicro",
         name="MacroMicro.me",
@@ -100,6 +102,38 @@ NEWSLETTER_SOURCES: list[NewsletterSource] = [
         tags=["energy", "commodities", "newsletter"],
     ),
     NewsletterSource(
+        source_id="deepvalue_capital",
+        name="DeepValue Capital",
+        sender_email="deepvaluecapitalbykyler@substack.com",
+        sender_domain="substack.com",
+        author="Kyler Johnson",
+        market_focus=["equities", "value"],
+        priority="core",
+        tags=["equities", "value", "newsletter"],
+    ),
+    NewsletterSource(
+        source_id="arch_public",
+        name="Arch Public",
+        sender_email="send@archpublic.com",
+        sender_domain="archpublic.com",
+        author="Arch Public",
+        market_focus=["crypto", "macro"],
+        priority="core",
+        tags=["crypto", "macro", "newsletter"],
+    ),
+    NewsletterSource(
+        source_id="blockworks",
+        name="Blockworks (The Breakdown)",
+        sender_email="newsletter@blockworks.com",
+        sender_domain="blockworks.com",
+        author="Blockworks",
+        market_focus=["crypto", "macro", "digital_assets"],
+        priority="core",
+        tags=["crypto", "macro", "newsletter"],
+    ),
+
+    # ═══ SECONDARY — trusted but lower weight ═══
+    NewsletterSource(
         source_id="qtr_fringe",
         name="QTR's Fringe Finance",
         sender_email="quoththeraven@substack.com",
@@ -118,16 +152,6 @@ NEWSLETTER_SOURCES: list[NewsletterSource] = [
         market_focus=["crypto", "macro", "rates"],
         priority="secondary",
         tags=["crypto", "macro", "newsletter"],
-    ),
-    NewsletterSource(
-        source_id="deepvalue_capital",
-        name="DeepValue Capital",
-        sender_email="deepvaluecapitalbykyler@substack.com",
-        sender_domain="substack.com",
-        author="Kyler Johnson",
-        market_focus=["equities", "value"],
-        priority="secondary",
-        tags=["equities", "value", "newsletter"],
     ),
     NewsletterSource(
         source_id="hidden_market_gems",
@@ -169,7 +193,16 @@ NEWSLETTER_SOURCES: list[NewsletterSource] = [
         priority="secondary",
         tags=["equities", "newsletter"],
     ),
-    # Non-substack sources discovered via Gmail scan
+    NewsletterSource(
+        source_id="weekly_wizdom",
+        name="Weekly Wizdom",
+        sender_email="weeklywizdom@weeklywizdom.com",
+        sender_domain="weeklywizdom.com",
+        author="Weekly Wizdom",
+        market_focus=["crypto", "trade_ideas"],
+        priority="secondary",
+        tags=["crypto", "trade_ideas", "newsletter"],
+    ),
     NewsletterSource(
         source_id="morning_brew",
         name="Morning Brew",
@@ -200,16 +233,8 @@ NEWSLETTER_SOURCES: list[NewsletterSource] = [
         priority="secondary",
         tags=["technical", "newsletter"],
     ),
-    NewsletterSource(
-        source_id="arch_public",
-        name="Arch Public",
-        sender_email="send@archpublic.com",
-        sender_domain="archpublic.com",
-        author="Arch Public",
-        market_focus=["crypto", "macro"],
-        priority="secondary",
-        tags=["crypto", "macro", "newsletter"],
-    ),
+
+    # ═══ EXPERIMENTAL — unproven, may produce noise ═══
     NewsletterSource(
         source_id="wallstreet_io",
         name="Wallstreet.io",
@@ -218,7 +243,9 @@ NEWSLETTER_SOURCES: list[NewsletterSource] = [
         author="Micah @ Wallstreet.io",
         market_focus=["equities", "trading_frameworks"],
         priority="experimental",
-        tags=["equities", "framework", "newsletter"],
+        tags=["equities", "framework", "newsletter", "video_content"],
+        notes="Most emails contain link to video analysis. Text body is brief — "
+              "consider transcribing linked videos in a future iteration.",
     ),
 ]
 

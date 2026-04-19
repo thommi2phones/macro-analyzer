@@ -1,0 +1,52 @@
+[
+  {
+    "source_id": "macro_kol_001",
+    "name": "Example Macro Letter",
+    "source_type": "newsletter",
+    "author": "Example Analyst",
+    "priority": "core",
+    "trust_weight": 0.9,
+    "market_focus": ["macro", "rates", "fx"],
+    "access_notes": "Use RSS or email export for ingestion.",
+    "default_url": "https://example.com/newsletter",
+    "research_style": "Top-down macro with rate and dollar framing.",
+    "validation_focus": ["rates", "usd", "inflation"],
+    "channels": [
+      {
+        "channel_type": "substack",
+        "label": "Newsletter",
+        "url": "https://example.com/newsletter"
+      },
+      {
+        "channel_type": "x",
+        "label": "X feed",
+        "url": "https://x.com/exampleanalyst"
+      }
+    ]
+  },
+  {
+    "source_id": "macro_kol_002",
+    "name": "Example Podcast",
+    "source_type": "podcast",
+    "author": "Example Host",
+    "priority": "secondary",
+    "trust_weight": 0.8,
+    "market_focus": ["macro", "equities", "commodities"],
+    "access_notes": "Ingest episode metadata and transcripts when available.",
+    "default_url": "https://example.com/podcast",
+    "research_style": "Cross-asset interview format focused on narrative shifts.",
+    "validation_focus": ["equities", "commodities", "growth"],
+    "channels": [
+      {
+        "channel_type": "podcast",
+        "label": "Main show",
+        "url": "https://example.com/podcast"
+      },
+      {
+        "channel_type": "youtube",
+        "label": "Video archive",
+        "url": "https://youtube.com/examplepodcast"
+      }
+    ]
+  }
+]

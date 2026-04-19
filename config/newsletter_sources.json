@@ -1,0 +1,192 @@
+[
+  {
+    "source_id": "macromicro",
+    "name": "MacroMicro.me",
+    "source_type": "newsletter",
+    "author": "MacroMicro",
+    "priority": "core",
+    "trust_weight": 0.9,
+    "market_focus": ["macro", "rates", "inflation", "geopolitics", "commodities"],
+    "access_notes": "Ingested via Gmail. Publishes 2-3x per week with macro analysis, spotlight articles, and weekly PDF downloads.",
+    "default_url": "https://en.macromicro.me",
+    "research_style": "Data-driven macro analysis with focus on leading indicators, inflation dynamics, and geopolitical impacts on markets.",
+    "validation_focus": ["rates", "inflation", "growth", "commodities", "geopolitics"],
+    "channels": [
+      {
+        "channel_type": "website",
+        "label": "Main site",
+        "url": "https://en.macromicro.me"
+      },
+      {
+        "channel_type": "manual",
+        "label": "Gmail newsletter",
+        "url": "gmail://search/from:web@mg.macromicro.me"
+      }
+    ]
+  },
+  {
+    "source_id": "stockunlocked",
+    "name": "Stock Unlocked",
+    "source_type": "newsletter",
+    "author": "Stock Unlocked",
+    "priority": "core",
+    "trust_weight": 0.75,
+    "market_focus": ["equities", "crypto", "geopolitics"],
+    "access_notes": "Ingested via Gmail. Publishes weekly 'Money Mondays' with trade ideas, crypto roundup, stock news, and geopolitical coverage.",
+    "default_url": "https://stockunlocked.com",
+    "research_style": "Trade-oriented weekly briefing covering crypto trades, stock picks, and macro/geopolitical context.",
+    "validation_focus": ["equities", "crypto", "geopolitics"],
+    "channels": [
+      {
+        "channel_type": "website",
+        "label": "Main site",
+        "url": "https://stockunlocked.com"
+      },
+      {
+        "channel_type": "manual",
+        "label": "Gmail newsletter",
+        "url": "gmail://search/from:noreply@stockunlocked.com"
+      }
+    ]
+  },
+  {
+    "source_id": "realvision",
+    "name": "Real Vision",
+    "source_type": "newsletter",
+    "author": "Real Vision",
+    "priority": "core",
+    "trust_weight": 0.9,
+    "market_focus": ["macro", "rates", "equities", "commodities", "crypto"],
+    "access_notes": "Ingested via Gmail. Premium macro content covering global markets, rates, and cross-asset themes.",
+    "default_url": "https://realvision.com",
+    "research_style": "Interview-driven macro research with expert guests covering rates, equities, commodities, and crypto.",
+    "validation_focus": ["macro", "rates", "equities", "commodities"],
+    "channels": [
+      {
+        "channel_type": "website",
+        "label": "Main site",
+        "url": "https://realvision.com"
+      },
+      {
+        "channel_type": "manual",
+        "label": "Gmail newsletter",
+        "url": "gmail://search/from:info@realvision.com"
+      },
+      {
+        "channel_type": "youtube",
+        "label": "YouTube",
+        "url": "https://youtube.com/@RealVisionFinance"
+      }
+    ]
+  },
+  {
+    "source_id": "kaoboy_musings",
+    "name": "Kaoboy Musings",
+    "source_type": "newsletter",
+    "author": "Michael Kao",
+    "priority": "core",
+    "trust_weight": 0.85,
+    "market_focus": ["macro", "commodities", "rates", "geopolitics"],
+    "access_notes": "Ingested via Gmail (Substack). Macro commentary and KAOS THEORY podcast by the creator of Urban Kaoberg.",
+    "default_url": "https://urbankaoboy.substack.com",
+    "research_style": "Macro-commodity cross-asset analysis with emphasis on energy, rates, and geopolitical risk.",
+    "validation_focus": ["commodities", "rates", "geopolitics", "energy"],
+    "channels": [
+      {
+        "channel_type": "substack",
+        "label": "Substack",
+        "url": "https://urbankaoboy.substack.com"
+      },
+      {
+        "channel_type": "manual",
+        "label": "Gmail newsletter",
+        "url": "gmail://search/from:urbankaoboy@substack.com"
+      }
+    ]
+  },
+  {
+    "source_id": "doomberg",
+    "name": "Doomberg",
+    "source_type": "newsletter",
+    "author": "Doomberg",
+    "priority": "core",
+    "trust_weight": 0.85,
+    "market_focus": ["commodities", "energy", "macro"],
+    "access_notes": "Ingested via Gmail (Substack). Deep-dive analysis on energy markets, commodities, and macro implications.",
+    "default_url": "https://doomberg.substack.com",
+    "research_style": "Commodity-focused macro analysis, especially energy, with contrarian and evidence-based framing.",
+    "validation_focus": ["energy", "commodities", "macro"],
+    "channels": [
+      {
+        "channel_type": "substack",
+        "label": "Substack",
+        "url": "https://doomberg.substack.com"
+      },
+      {
+        "channel_type": "manual",
+        "label": "Gmail newsletter",
+        "url": "gmail://search/from:doomberg@substack.com"
+      }
+    ]
+  },
+  {
+    "source_id": "qtr_fringe",
+    "name": "QTR's Fringe Finance",
+    "source_type": "newsletter",
+    "author": "Quoth the Raven",
+    "priority": "secondary",
+    "trust_weight": 0.7,
+    "market_focus": ["macro", "equities", "contrarian"],
+    "access_notes": "Ingested via Gmail (Substack). Contrarian macro and equity commentary.",
+    "default_url": "https://quoththeraven.substack.com",
+    "research_style": "Contrarian macro and equity analysis with focus on overlooked risks and narrative challenges.",
+    "validation_focus": ["macro", "equities"],
+    "channels": [
+      {
+        "channel_type": "substack",
+        "label": "Substack",
+        "url": "https://quoththeraven.substack.com"
+      }
+    ]
+  },
+  {
+    "source_id": "bitcoin_layer",
+    "name": "The Bitcoin Layer",
+    "source_type": "newsletter",
+    "author": "The Bitcoin Layer",
+    "priority": "secondary",
+    "trust_weight": 0.7,
+    "market_focus": ["crypto", "macro", "rates"],
+    "access_notes": "Ingested via Gmail (Substack). Bitcoin and macro analysis.",
+    "default_url": "https://thebitcoinlayer.substack.com",
+    "research_style": "Bitcoin-centric macro analysis connecting monetary policy, rates, and crypto markets.",
+    "validation_focus": ["crypto", "rates", "macro"],
+    "channels": [
+      {
+        "channel_type": "substack",
+        "label": "Substack",
+        "url": "https://thebitcoinlayer.substack.com"
+      }
+    ]
+  },
+  {
+    "source_id": "deepvalue_capital",
+    "name": "DeepValue Capital",
+    "source_type": "newsletter",
+    "author": "Kyler Johnson",
+    "priority": "secondary",
+    "trust_weight": 0.65,
+    "market_focus": ["equities", "value"],
+    "access_notes": "Ingested via Gmail (Substack). Value investing analysis and stock picks.",
+    "default_url": "https://deepvaluecapitalbykyler.substack.com",
+    "research_style": "Bottom-up value investing with focus on undervalued equities.",
+    "validation_focus": ["equities"],
+    "channels": [
+      {
+        "channel_type": "substack",
+        "label": "Substack",
+        "url": "https://deepvaluecapitalbykyler.substack.com"
+      }
+    ]
+  }
+]

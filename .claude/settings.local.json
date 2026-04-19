@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:urbankaoberg.com)",
+      "WebFetch(domain:fred.stlouisfed.org)",
+      "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Read(//usr/local/bin/**)",
+      "Bash(brew list:*)",
+      "Bash(/opt/homebrew/bin/python3.13 --version)",
+      "Bash(/opt/homebrew/bin/python3.13 -m pip install httpx pytest)",
+      "Bash(/opt/homebrew/bin/python3.13 -m venv .venv)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -c \":*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(curl -s http://127.0.0.1:8000/api/checklist)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X PATCH \"http://127.0.0.1:8000/api/checklist/gmail-e2e?status=in_progress\")",
+      "Bash(open http://127.0.0.1:8000/dashboard/ops)",
+      "Bash(curl -s \"https://huggingface.co/api/models?search=fingpt&sort=downloads&direction=-1&limit=15\")",
+      "Bash(curl -s \"https://huggingface.co/api/models?search=finance+llm&sort=downloads&direction=-1&limit=15\")",
+      "Bash(curl -s \"https://huggingface.co/api/models?search=financial+alpaca&sort=downloads&direction=-1&limit=10\")",
+      "Bash(curl -s \"https://huggingface.co/api/models?search=finma&sort=downloads&direction=-1&limit=10\")",
+      "WebSearch",
+      "Bash(python -c \"from macro_positioning.llm.gemini_analyzer import GeminiThesisExtractor, analyze_macro, SYSTEM_PROMPT; print\\(''Gemini analyzer module loaded OK''\\); print\\(f''System prompt: {len\\(SYSTEM_PROMPT\\)} chars''\\)\")",
+      "mcp__63f67b1d-4e22-4cff-adfa-0a9d936f4429__get_node_types",
+      "mcp__63f67b1d-4e22-4cff-adfa-0a9d936f4429__validate_workflow",
+      "mcp__63f67b1d-4e22-4cff-adfa-0a9d936f4429__get_suggested_nodes",
+      "mcp__63f67b1d-4e22-4cff-adfa-0a9d936f4429__search_workflows",
+      "mcp__63f67b1d-4e22-4cff-adfa-0a9d936f4429__get_workflow_details",
+      "Bash(python -c \"from macro_positioning.llm.gemini_analyzer import GeminiThesisExtractor, SYSTEM_PROMPT; print\\(''''Module loads OK''''\\)\")",
+      "Bash(python -c \"from macro_positioning.llm.chart_analyzer import analyze_chart_url, analyze_chart_file, analyze_multiple_charts; print\\(''''Chart analyzer module OK''''\\)\")",
+      "Bash(sysctl -n machdep.cpu.brand_string)",
+      "Bash(sysctl -n hw.memsize)",
+      "Read(//Users/thom/Documents/Personal/Code Projects/Macro Analyzer/{print $0/**)",
+      "Bash(system_profiler SPHardwareDataType)"
+    ]
+  }
+}

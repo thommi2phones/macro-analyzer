@@ -1,0 +1,248 @@
+{
+  "items": [
+    {
+      "id": "core-models",
+      "title": "Core Pydantic data models",
+      "detail": "",
+      "category": "pipeline",
+      "priority": "critical",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "sqlite-db",
+      "title": "SQLite persistence layer",
+      "detail": "",
+      "category": "pipeline",
+      "priority": "critical",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "heuristic-extractor",
+      "title": "Heuristic thesis extractor",
+      "detail": "",
+      "category": "pipeline",
+      "priority": "critical",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "fred-provider",
+      "title": "FRED market data provider (50+ series)",
+      "detail": "",
+      "category": "data",
+      "priority": "critical",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "market-validation",
+      "title": "Market validation engine",
+      "detail": "",
+      "category": "pipeline",
+      "priority": "critical",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "memo-generator",
+      "title": "Positioning memo generator",
+      "detail": "",
+      "category": "pipeline",
+      "priority": "high",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "markdown-renderer",
+      "title": "Markdown report renderer",
+      "detail": "",
+      "category": "pipeline",
+      "priority": "high",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "fastapi",
+      "title": "FastAPI REST API",
+      "detail": "",
+      "category": "infra",
+      "priority": "high",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "pipeline-orchestrator",
+      "title": "Pipeline orchestrator (end-to-end)",
+      "detail": "",
+      "category": "pipeline",
+      "priority": "critical",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "gmail-connector",
+      "title": "Gmail connector (10 sources)",
+      "detail": "Module built, needs end-to-end wiring",
+      "category": "data",
+      "priority": "high",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "trust-weights",
+      "title": "Source trust weighting system",
+      "detail": "",
+      "category": "pipeline",
+      "priority": "medium",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "kaoberg-discovery",
+      "title": "Urban Kaoberg API discovery",
+      "detail": "",
+      "category": "data",
+      "priority": "high",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "api-catalogue",
+      "title": "API catalogue docs",
+      "detail": "",
+      "category": "infra",
+      "priority": "medium",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "dashboard",
+      "title": "Dashboard (ops + command center)",
+      "detail": "",
+      "category": "dashboard",
+      "priority": "high",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "gmail-e2e",
+      "title": "Wire Gmail connector end-to-end",
+      "detail": "Connect gmail_connector.fetch_newsletters() to pipeline.run()",
+      "category": "integration",
+      "priority": "critical",
+      "status": "in_progress",
+      "completed_at": null
+    },
+    {
+      "id": "llm-extraction",
+      "title": "LLM macro synthesis (Gemini via N8N)",
+      "detail": "Code built — needs N8N text webhook wired up",
+      "category": "pipeline",
+      "priority": "critical",
+      "status": "in_progress",
+      "completed_at": null
+    },
+    {
+      "id": "scheduled-refresh",
+      "title": "Scheduled refresh loop",
+      "detail": "Cron/scheduler for FRED + newsletter ingestion",
+      "category": "infra",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "z-scores",
+      "title": "Indicator momentum z-scores",
+      "detail": "Rolling z-scores on FRED series for momentum signals",
+      "category": "pipeline",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "source-scoring",
+      "title": "Source scoring system",
+      "detail": "Track accuracy over time, adjust trust weights",
+      "category": "pipeline",
+      "priority": "high",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "finnhub",
+      "title": "Finnhub news connector",
+      "detail": "Per-ticker sentiment (60 calls/min free)",
+      "category": "data",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "gnews-rss",
+      "title": "Google News RSS connector",
+      "detail": "Broad macro headlines, no key needed",
+      "category": "data",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "fmp-prices",
+      "title": "FMP historical price connector",
+      "detail": "OHLCV data for technical overlays",
+      "category": "data",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "alerts",
+      "title": "Alert system (Discord/email)",
+      "detail": "High-conviction thesis change notifications",
+      "category": "infra",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "multi-tf-vote",
+      "title": "Multi-timeframe majority vote",
+      "detail": "Combine short/medium/long signals",
+      "category": "pipeline",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "vision-charts",
+      "title": "Chart analysis via Gemini Vision (N8N)",
+      "detail": "Code built — needs N8N vision webhook wired up",
+      "category": "pipeline",
+      "priority": "high",
+      "status": "in_progress",
+      "completed_at": null
+    },
+    {
+      "id": "websocket",
+      "title": "WebSocket live updates",
+      "detail": "",
+      "category": "dashboard",
+      "priority": "low",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "auth",
+      "title": "Authentication & multi-user",
+      "detail": "",
+      "category": "infra",
+      "priority": "low",
+      "status": "todo",
+      "completed_at": null
+    }
+  ],
+  "updated_at": "2026-04-06T00:20:05.888566+00:00"
+}

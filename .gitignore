@@ -1,0 +1,29 @@
+# Environment and secrets
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Data (keep structure, ignore generated content)
+data/processed/*.md
+*.db
+
+# N8N / runtime logs
+*.log

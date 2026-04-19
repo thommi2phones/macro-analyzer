@@ -1,0 +1,245 @@
+{
+  "contract_version": "1.0.0",
+  "schemas": {
+    "MacroPositioningView": {
+      "$defs": {
+        "GateSuggestion": {
+          "description": "Recommendation to the tactical-executor's decision gate.",
+          "properties": {
+            "allow_long": {
+              "default": true,
+              "title": "Allow Long",
+              "type": "boolean"
+            },
+            "allow_short": {
+              "default": true,
+              "title": "Allow Short",
+              "type": "boolean"
+            },
+            "size_multiplier": {
+              "default": 1.0,
+              "maximum": 2.0,
+              "minimum": 0.0,
+              "title": "Size Multiplier",
+              "type": "number"
+            },
+            "notes": {
+              "default": "",
+              "title": "Notes",
+              "type": "string"
+            }
+          },
+          "title": "GateSuggestion",
+          "type": "object"
+        }
+      },
+      "description": "Per-asset directional macro view. Consumed by tactical decision gate.\n\nEndpoint: GET /positioning/view?asset={ticker}",
+      "properties": {
+        "contract_version": {
+          "default": "1.0.0",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "asset": {
+          "title": "Asset",
+          "type": "string"
+        },
+        "asset_class": {
+          "default": "",
+          "title": "Asset Class",
+          "type": "string"
+        },
+        "direction": {
+          "default": "unknown",
+          "enum": [
+            "bullish",
+            "bearish",
+            "neutral",
+            "mixed",
+            "watchful",
+            "unknown"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 0.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "horizon": {
+          "default": "",
+          "title": "Horizon",
+          "type": "string"
+        },
+        "source_theses": {
+          "description": "Thesis IDs backing this view",
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Theses",
+          "type": "array"
+        },
+        "regime": {
+          "default": "",
+          "title": "Regime",
+          "type": "string"
+        },
+        "last_updated": {
+          "format": "date-time",
+          "title": "Last Updated",
+          "type": "string"
+        },
+        "gate_suggestion": {
+          "$ref": "#/$defs/GateSuggestion"
+        }
+      },
+      "required": [
+        "asset"
+      ],
+      "title": "MacroPositioningView",
+      "type": "object"
+    },
+    "MacroOutcomeReport": {
+      "$defs": {
+        "MacroViewSnapshot": {
+          "description": "Snapshot of the macro view at the time of trade entry.",
+          "properties": {
+            "direction": {
+              "default": "",
+              "title": "Direction",
+              "type": "string"
+            },
+            "confidence": {
+              "default": 0.0,
+              "title": "Confidence",
+              "type": "number"
+            },
+            "source_theses": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Source Theses",
+              "type": "array"
+            }
+          },
+          "title": "MacroViewSnapshot",
+          "type": "object"
+        }
+      },
+      "description": "Trade outcome feedback from tactical \u2192 macro source-scoring.\n\nEndpoint: POST /source-scoring/outcome",
+      "properties": {
+        "contract_version": {
+          "default": "1.0.0",
+          "title": "Contract Version",
+          "type": "string"
+        },
+        "trade_id": {
+          "title": "Trade Id",
+          "type": "string"
+        },
+        "symbol": {
+          "title": "Symbol",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "long",
+            "short"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "entry_timestamp": {
+          "format": "date-time",
+          "title": "Entry Timestamp",
+          "type": "string"
+        },
+        "exit_timestamp": {
+          "format": "date-time",
+          "title": "Exit Timestamp",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "win",
+            "loss",
+            "breakeven"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "pnl_r": {
+          "description": "R-multiple (risk units gained/lost)",
+          "title": "Pnl R",
+          "type": "number"
+        },
+        "macro_view_at_entry": {
+          "$ref": "#/$defs/MacroViewSnapshot"
+        }
+      },
+      "required": [
+        "trade_id",
+        "symbol",
+        "direction",
+        "entry_timestamp",
+        "exit_timestamp",
+        "outcome",
+        "pnl_r",
+        "macro_view_at_entry"
+      ],
+      "title": "MacroOutcomeReport",
+      "type": "object"
+    },
+    "MacroOutcomeAck": {
+      "description": "Response from macro after recording a trade outcome.",
+      "properties": {
+        "recorded": {
+          "title": "Recorded",
+          "type": "boolean"
+        },
+        "sources_credited": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sources Credited",
+          "type": "array"
+        },
+        "source_weights_updated": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Source Weights Updated",
+          "type": "object"
+        }
+      },
+      "required": [
+        "recorded"
+      ],
+      "title": "MacroOutcomeAck",
+      "type": "object"
+    }
+  },
+  "endpoints": {
+    "GET /positioning/view": {
+      "description": "Per-asset macro directional view",
+      "query_params": {
+        "asset": "Ticker symbol (required)",
+        "asset_class": "Optional override"
+      },
+      "response_model": "MacroPositioningView"
+    },
+    "GET /positioning/regime": {
+      "description": "Overall macro regime summary",
+      "response_type": "dict"
+    },
+    "POST /source-scoring/outcome": {
+      "description": "Trade outcome feedback from tactical \u2192 macro",
+      "request_model": "MacroOutcomeReport",
+      "response_model": "MacroOutcomeAck"
+    }
+  }
+}

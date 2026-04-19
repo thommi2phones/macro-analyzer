@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from macro_positioning.core.models import PipelineRunRequest, PipelineRunResult, PositioningMemo, SourceOnboardingRequest, Thesis
 from macro_positioning.core.settings import settings
 from macro_positioning.dashboard.router import router as dashboard_router
+from macro_positioning.integration.endpoints import router as integration_router
 from macro_positioning.db.repository import SQLiteRepository
 from macro_positioning.db.schema import initialize_database
 from macro_positioning.ingestion.source_registry import load_source_registry
@@ -16,6 +17,7 @@ from macro_positioning.services.framework import default_credential_requirements
 
 app = FastAPI(title="Macro Positioning Analyzer", version="0.1.0")
 app.include_router(dashboard_router)
+app.include_router(integration_router)
 
 initialize_database(settings.sqlite_path)
 repository = SQLiteRepository(settings.sqlite_path)
@@ -77,9 +79,10 @@ class BatchChartRequest(BaseModel):
 
 @app.post("/charts/analyze")
 def analyze_chart(request: ChartAnalysisRequest) -> dict:
-    from macro_positioning.llm.chart_analyzer import analyze_chart_url
+    from macro_positioning.brain import build_brain_client
+    brain = build_brain_client()
     try:
-        return analyze_chart_url(
+        return brain.analyze_chart(
             image_url=request.image_url,
             asset_context=request.asset_context,
             additional_context=request.additional_context,
@@ -90,7 +93,7 @@ def analyze_chart(request: ChartAnalysisRequest) -> dict:
 
 @app.post("/charts/analyze/batch")
 def analyze_charts_batch(request: BatchChartRequest) -> list[dict]:
-    from macro_positioning.llm.chart_analyzer import analyze_multiple_charts
+    from macro_positioning.brain.vision import analyze_multiple_charts
     try:
         return analyze_multiple_charts(request.charts)
     except RuntimeError as e:

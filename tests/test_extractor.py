@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from macro_positioning.core.models import ViewDirection
-from macro_positioning.llm.extractor import (
+from macro_positioning.brain.heuristic import (
     HeuristicThesisExtractor,
     infer_assets,
     infer_direction,

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
-import logging
-
+from macro_positioning.brain import BrainClient, build_brain_client
 from macro_positioning.core.models import PipelineContext, PipelineRunResult, RawDocument
 from macro_positioning.core.settings import settings
 from macro_positioning.db.repository import SQLiteRepository
@@ -11,117 +11,103 @@ from macro_positioning.db.schema import initialize_database
 from macro_positioning.ingestion.base import normalize_document
 from macro_positioning.ingestion.sample_sources import sample_context, sample_documents
 from macro_positioning.ingestion.source_registry import load_source_registry, source_trust_weights
-from macro_positioning.llm.extractor import HeuristicThesisExtractor, ThesisExtractor
 from macro_positioning.market.fred_provider import FREDMarketDataProvider
 from macro_positioning.market.providers import MarketDataProvider, StaticMarketDataProvider
 from macro_positioning.market.validation import build_recommendations, validate_theses
-
-logger = logging.getLogger(__name__)
 from macro_positioning.reports.memo import build_positioning_memo
 from macro_positioning.reports.renderers import render_memo_markdown, write_memo_markdown
 
+logger = logging.getLogger(__name__)
+
 
 class PositioningPipeline:
+    """Orchestrates: ingest → Brain synthesis → validate → memo.
+
+    The Brain is injected via BrainClient so the pipeline doesn't care
+    whether synthesis happens locally, via Gemini/N8N, or (Phase 2) via a
+    remote Brain service.
+    """
+
     def __init__(
         self,
         repository: SQLiteRepository,
-        extractor: ThesisExtractor,
+        brain: BrainClient,
         source_weights: dict[str, float] | None = None,
-        use_gemini: bool = False,
     ) -> None:
         self.repository = repository
-        self.extractor = extractor
+        self.brain = brain
         self.source_weights = source_weights or {}
-        self.use_gemini = use_gemini
 
-    def run(self, documents: list[RawDocument], context: PipelineContext | None = None) -> PipelineRunResult:
+    def run(
+        self,
+        documents: list[RawDocument],
+        context: PipelineContext | None = None,
+    ) -> PipelineRunResult:
         context = context or PipelineContext()
-        normalized_documents = [normalize_document(document) for document in documents]
-        for document in normalized_documents:
-            self.repository.save_document(document)
+        normalized = [normalize_document(d) for d in documents]
+        for doc in normalized:
+            self.repository.save_document(doc)
 
-        # Gather market observations first (needed by both paths)
+        # Market observations (FRED live if available, else static)
         provider = _build_market_provider(context)
-        observations = provider.gather([])  # Gather all available data
+        observations = provider.gather([])
         if not observations and context.market_observations:
             logger.warning(
-                "Live market provider returned 0 observations - using %d static context obs.",
+                "Live market provider returned 0 observations - using %d static obs",
                 len(context.market_observations),
             )
             observations = list(context.market_observations)
 
-        # Choose synthesis path
-        if self.use_gemini:
-            theses = self._run_gemini_synthesis(normalized_documents, observations, context)
-        else:
-            theses = self._run_heuristic_extraction(normalized_documents)
+        # Brain synthesis (single entry point — handles Gemini or heuristic fallback)
+        try:
+            result = self.brain.synthesize_macro(
+                documents=normalized,
+                observations=observations,
+                analyst_notes=context.analyst_notes,
+            )
+            theses = result.theses
+            logger.info("Brain produced %d theses", len(theses))
+        except Exception as e:
+            logger.error("Brain synthesis failed, falling back to heuristic: %s", e, exc_info=True)
+            from macro_positioning.brain import HeuristicThesisExtractor
+            extractor = HeuristicThesisExtractor()
+            theses = []
+            for doc in normalized:
+                theses.extend(extractor.extract(
+                    document_id=doc.document_id,
+                    source_id=doc.source_id,
+                    text=doc.cleaned_text,
+                    published_at=doc.published_at,
+                    url=doc.url,
+                ))
 
         for thesis in theses:
             self.repository.save_thesis(thesis)
 
-        validated_theses = validate_theses(theses, observations)
-        recommendations = build_recommendations(validated_theses)
+        validated = validate_theses(theses, observations)
+        recommendations = build_recommendations(validated)
 
         memo = build_positioning_memo(
             theses,
-            validated_theses=validated_theses,
+            validated_theses=validated,
             recommendations=recommendations,
             required_inputs=required_framework_inputs(),
             source_weights=self.source_weights,
         )
         self.repository.save_memo(memo)
-        memo_path = write_outputs(memo, validated_theses, recommendations)
+        memo_path = write_outputs(memo, validated, recommendations)
 
         return PipelineRunResult(
-            documents_ingested=len(normalized_documents),
+            documents_ingested=len(normalized),
             theses_extracted=len(theses),
-            validated_theses=len(validated_theses),
+            validated_theses=len(validated),
             recommendations_generated=len(recommendations),
             memo_id=memo.memo_id,
             memo_path=str(memo_path),
         )
 
-    def _run_heuristic_extraction(self, documents) -> list:
-        """Original per-document keyword extraction."""
-        theses = []
-        for document in documents:
-            theses.extend(
-                self.extractor.extract(
-                    document_id=document.document_id,
-                    source_id=document.source_id,
-                    text=document.cleaned_text,
-                    published_at=document.published_at,
-                    url=document.url,
-                )
-            )
-        return theses
-
-    def _run_gemini_synthesis(self, documents, observations, context) -> list:
-        """Send all content to Gemini for holistic macro synthesis."""
-        from macro_positioning.llm.gemini_analyzer import GeminiThesisExtractor
-
-        analyzer = GeminiThesisExtractor()
-        for doc in documents:
-            analyzer.add_document(doc)
-        analyzer.set_context(
-            observations=observations,
-            notes=context.analyst_notes if context else [],
-        )
-
-        logger.info("Running Gemini macro synthesis on %d documents + %d observations",
-                     len(documents), len(observations))
-
-        try:
-            theses = analyzer.synthesize()
-            logger.info("Gemini produced %d theses", len(theses))
-            return theses
-        except Exception as e:
-            logger.error("Gemini synthesis failed: %s — falling back to heuristic", e, exc_info=True)
-            return self._run_heuristic_extraction(documents)
-
 
 def _build_market_provider(context: PipelineContext) -> MarketDataProvider:
-    """Use FRED when an API key is configured, otherwise fall back to static."""
     if settings.fred_api_key:
         try:
             fred = FREDMarketDataProvider()
@@ -133,40 +119,20 @@ def _build_market_provider(context: PipelineContext) -> MarketDataProvider:
     return StaticMarketDataProvider(context.market_observations)
 
 
-def _has_gemini_credentials() -> bool:
-    """Check if the N8N Gemini webhook is configured."""
-    return bool(settings.n8n_webhook_url)
-
-
-def build_pipeline(use_gemini: bool | None = None) -> PositioningPipeline:
-    """Build a pipeline instance.
-
-    Args:
-        use_gemini: Force Gemini on/off. If None, auto-detect from credentials.
-    """
+def build_pipeline() -> PositioningPipeline:
+    """Build a pipeline wired to the best available Brain backend."""
     initialize_database(settings.sqlite_path)
     repository = SQLiteRepository(settings.sqlite_path)
-    extractor = HeuristicThesisExtractor()
+    brain = build_brain_client()
     weights = _load_default_source_weights()
-
-    if use_gemini is None:
-        use_gemini = _has_gemini_credentials()
-
-    if use_gemini:
-        logger.info("Pipeline configured with Gemini synthesis engine")
-    else:
-        logger.info("Pipeline configured with heuristic extraction (no Gemini credentials)")
-
     return PositioningPipeline(
         repository=repository,
-        extractor=extractor,
+        brain=brain,
         source_weights=weights,
-        use_gemini=use_gemini,
     )
 
 
 def _load_default_source_weights() -> dict[str, float]:
-    """Load trust weights from the example registry if available."""
     for candidate in (
         settings.base_dir / "config" / "sources.example.json",
         Path("config/sources.example.json"),

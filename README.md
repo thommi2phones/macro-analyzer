@@ -7,6 +7,18 @@ This repository is a first-pass scaffold for a research system that:
 - extracts macro theses, horizons, catalysts, and positioning implications,
 - produces auditable synthesis memos for human decision-making.
 
+## Companion project
+
+This repo is the **strategic brain** (macro positioning, weeks-to-months horizon).
+The **tactical brain** lives in a separate repo:
+[Trading-Agent-V1-CODEX](https://github.com/thommi2phones/Trading-Agent-V1-CODEX)
+(TradingView alerts → per-setup LONG/SHORT/WAIT decisions, intraday horizon).
+
+The two systems are intentionally separate codebases connected via a thin
+HTTP integration layer. See
+[docs/integration_with_trading_agent.md](docs/integration_with_trading_agent.md)
+for the contract.
+
 ## What is included
 
 - A FastAPI app with health, ingest, pipeline, and memo endpoints

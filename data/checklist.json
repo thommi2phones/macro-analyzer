@@ -242,6 +242,33 @@
       "priority": "low",
       "status": "todo",
       "completed_at": null
+    },
+    {
+      "id": "integration-contract-doc",
+      "title": "Integration contract with Trading Agent V1",
+      "detail": "See docs/integration_with_trading_agent.md",
+      "category": "integration",
+      "priority": "medium",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "positioning-view-endpoint",
+      "title": "GET /positioning/view?asset={ticker} endpoint",
+      "detail": "Returns directional macro view for a specific ticker (consumed by Trading Agent decision gate)",
+      "category": "integration",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "source-scoring-outcome-endpoint",
+      "title": "POST /source-scoring/outcome endpoint",
+      "detail": "Accepts trade outcomes from Trading Agent, updates source trust weights",
+      "category": "integration",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
     }
   ],
   "updated_at": "2026-04-06T00:20:05.888566+00:00"

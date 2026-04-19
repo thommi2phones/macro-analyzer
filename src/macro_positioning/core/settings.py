@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     base_dir: Path = Field(default_factory=lambda: Path.cwd())
 
     fred_api_key: str = ""
+    finnhub_api_key: str = ""
 
     # LLM Brain — direct APIs (multi-model)
     # Primary synthesis model

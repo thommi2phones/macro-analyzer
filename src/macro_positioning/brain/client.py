@@ -214,19 +214,46 @@ class HeuristicBrainClient:
 def build_brain_client() -> BrainClient:
     """Return the best available Brain client based on configuration.
 
-    Auto-detection:
-      1. If any LLM API key is configured → DirectAPIBrainClient
-      2. Else → HeuristicBrainClient (deterministic fallback)
+    Auto-detection (any one of these triggers direct-API mode):
+      1. Gemini API key configured
+      2. Anthropic API key configured
+      3. Ollama reachable at configured URL (tested)
+      4. N8N webhook URL configured
+    Otherwise falls back to HeuristicBrainClient.
     """
-    if settings.gemini_api_key or settings.anthropic_api_key:
+    has_gemini = bool(settings.gemini_api_key)
+    has_anthropic = bool(settings.anthropic_api_key)
+    has_n8n = bool(settings.n8n_webhook_url)
+    has_ollama = _ollama_reachable()
+
+    if has_gemini or has_anthropic or has_n8n or has_ollama:
+        backends_available = [
+            name for name, avail in [
+                ("gemini", has_gemini),
+                ("anthropic", has_anthropic),
+                ("ollama", has_ollama),
+                ("n8n", has_n8n),
+            ] if avail
+        ]
         logger.info(
-            "Brain: direct API mode "
-            "(primary=%s, vision=%s, escalation=%s)",
+            "Brain: direct API mode — available=%s, primary=%s, vision=%s, escalation=%s",
+            backends_available,
             settings.brain_primary_backend,
             settings.brain_vision_backend,
             settings.brain_escalation_backend,
         )
         return DirectAPIBrainClient()
 
-    logger.info("Brain: heuristic fallback (no LLM credentials)")
+    logger.info("Brain: heuristic fallback (no LLM backends configured)")
     return HeuristicBrainClient()
+
+
+def _ollama_reachable(timeout: float = 0.5) -> bool:
+    """Return True if Ollama is responding at the configured URL."""
+    import httpx
+    try:
+        with httpx.Client(timeout=timeout) as c:
+            r = c.get(f"{settings.ollama_base_url.rstrip('/')}/api/tags")
+            return r.status_code == 200
+    except Exception:
+        return False

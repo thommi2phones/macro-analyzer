@@ -20,6 +20,14 @@ SCHEMA_STATEMENTS = [
         ingested_at TEXT NOT NULL
     )
     """,
+    # Dedup: two documents from the same source with the same URL are the
+    # same story. NULL urls don't collide under SQLite's unique semantics,
+    # so untitled/url-less sources still dedupe via their document_id PK.
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_source_url
+        ON documents (source_id, url)
+        WHERE url IS NOT NULL
+    """,
     """
     CREATE TABLE IF NOT EXISTS theses (
         thesis_id TEXT PRIMARY KEY,
@@ -55,9 +63,41 @@ SCHEMA_STATEMENTS = [
 ]
 
 
+def _dedupe_existing_documents(connection: sqlite3.Connection) -> int:
+    """Remove duplicate (source_id, url) rows keeping the earliest ingested_at.
+
+    Called before creating the unique index so upgrades on databases that
+    accumulated duplicates under the old INSERT OR REPLACE path don't fail.
+    """
+    # Only runs if the documents table already exists.
+    table_exists = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='documents'"
+    ).fetchone()
+    if not table_exists:
+        return 0
+
+    cursor = connection.execute(
+        """
+        DELETE FROM documents
+        WHERE rowid NOT IN (
+            SELECT MIN(rowid)
+            FROM documents
+            WHERE url IS NOT NULL
+            GROUP BY source_id, url
+        )
+        AND url IS NOT NULL
+        """
+    )
+    return cursor.rowcount or 0
+
+
 def initialize_database(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as connection:
-        for statement in SCHEMA_STATEMENTS:
+        # Create base tables first (documents must exist before dedupe).
+        connection.execute(SCHEMA_STATEMENTS[0])
+        # Dedupe any pre-existing duplicates before the unique index lands.
+        _dedupe_existing_documents(connection)
+        for statement in SCHEMA_STATEMENTS[1:]:
             connection.execute(statement)
         connection.commit()

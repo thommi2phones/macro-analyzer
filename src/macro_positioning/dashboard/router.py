@@ -1,15 +1,16 @@
 """FastAPI router for dashboard endpoints.
 
-Serves:
-  - JSON data APIs at /api/dashboard/*
-  - Interactive checklist PATCH at /api/checklist/{id}
-  - Unified HTML dashboard at /dashboard
+Two primary dashboards:
+  - `/positioning` — trader-facing consumer UI (output view)
+  - `/dev` — builder-facing status UI (project/ops view)
+
+Root `/` redirects to `/positioning`. JSON APIs at `/api/dashboard/*`.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from macro_positioning.dashboard.brain_panel import router as brain_panel_router
 from macro_positioning.dashboard.checklist import (
@@ -19,16 +20,15 @@ from macro_positioning.dashboard.checklist import (
     toggle_item,
 )
 from macro_positioning.dashboard.command_data import CommandCenterSnapshot, build_command_snapshot
+from macro_positioning.dashboard.dev_ui import dev_dashboard_html
 from macro_positioning.dashboard.ops_data import OpsSnapshot, build_ops_snapshot
-from macro_positioning.dashboard.templates import command_center_html, ops_dashboard_html
+from macro_positioning.dashboard.output_ui import positioning_dashboard_html
 
 router = APIRouter()
 router.include_router(brain_panel_router)
 
 
-# ---------------------------------------------------------------------------
-# JSON data APIs
-# ---------------------------------------------------------------------------
+# ---- JSON data APIs --------------------------------------------------------
 
 @router.get("/api/dashboard/ops", response_model=OpsSnapshot)
 def ops_data() -> OpsSnapshot:
@@ -47,29 +47,43 @@ def get_checklist() -> Checklist:
 
 @router.patch("/api/checklist/{item_id}")
 def patch_checklist_item(item_id: str, status: str | None = None) -> JSONResponse:
-    """Toggle a checklist item. Optional ?status=done|todo|in_progress query param."""
     item = toggle_item(item_id, new_status=status)
     if item is None:
         return JSONResponse(status_code=404, content={"error": f"Item '{item_id}' not found"})
     return JSONResponse(content=item.model_dump())
 
 
-# ---------------------------------------------------------------------------
-# HTML dashboards
-# ---------------------------------------------------------------------------
+# ---- HTML dashboards -------------------------------------------------------
 
-@router.get("/dashboard/ops", response_class=HTMLResponse)
-def ops_dashboard() -> HTMLResponse:
-    return HTMLResponse(content=ops_dashboard_html())
-
-
-@router.get("/dashboard/command-center", response_class=HTMLResponse)
-def command_center_dashboard() -> HTMLResponse:
-    return HTMLResponse(content=command_center_html())
+@router.get("/positioning", response_class=HTMLResponse)
+def positioning_dashboard() -> HTMLResponse:
+    """Trader-facing output UI — the product."""
+    return HTMLResponse(content=positioning_dashboard_html())
 
 
-@router.get("/dashboard", response_class=HTMLResponse)
-def dashboard_redirect() -> HTMLResponse:
-    return HTMLResponse(
-        content='<html><head><meta http-equiv="refresh" content="0;url=/dashboard/ops"></head></html>'
-    )
+@router.get("/dev", response_class=HTMLResponse)
+def dev_dashboard() -> HTMLResponse:
+    """Builder-facing status UI — checklist, brain activity, system health."""
+    return HTMLResponse(content=dev_dashboard_html())
+
+
+@router.get("/")
+def root_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/positioning", status_code=307)
+
+
+# ---- Legacy redirects (keep old URLs working) ------------------------------
+
+@router.get("/dashboard")
+def dashboard_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/positioning", status_code=307)
+
+
+@router.get("/dashboard/ops")
+def legacy_ops() -> RedirectResponse:
+    return RedirectResponse(url="/dev", status_code=307)
+
+
+@router.get("/dashboard/command-center")
+def legacy_command_center() -> RedirectResponse:
+    return RedirectResponse(url="/positioning", status_code=307)

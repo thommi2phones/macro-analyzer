@@ -255,9 +255,12 @@ def fetch_and_persist(days: int = 7, max_messages: int = 100) -> dict:
     for raw in docs:
         normalized = normalize_document(raw)
         try:
-            repo.save_document(normalized)
-            new_count += 1
-            by_source[raw.source_id] = by_source.get(raw.source_id, 0) + 1
+            inserted = repo.save_document(normalized)
+            if inserted:
+                new_count += 1
+                by_source[raw.source_id] = by_source.get(raw.source_id, 0) + 1
+            else:
+                dup_count += 1
         except Exception as e:
             logger.warning("Failed to persist %s: %s", raw.source_id, e)
 

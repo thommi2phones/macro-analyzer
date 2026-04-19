@@ -16,11 +16,17 @@ class SQLiteRepository:
         connection.row_factory = sqlite3.Row
         return connection
 
-    def save_document(self, document: NormalizedDocument) -> None:
+    def save_document(self, document: NormalizedDocument) -> bool:
+        """Persist a document. Returns True if inserted, False if deduped.
+
+        Uses INSERT OR IGNORE so re-ingesting the same (source_id, url) is
+        a no-op rather than clobbering existing rows (including their
+        original ingested_at timestamp).
+        """
         with self._connect() as connection:
-            connection.execute(
+            cursor = connection.execute(
                 """
-                INSERT OR REPLACE INTO documents (
+                INSERT OR IGNORE INTO documents (
                     document_id, source_id, title, url, published_at, author, content_type,
                     raw_text, cleaned_text, tags_json, ingested_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -40,6 +46,7 @@ class SQLiteRepository:
                 ),
             )
             connection.commit()
+            return cursor.rowcount > 0
 
     def save_thesis(self, thesis: Thesis) -> None:
         with self._connect() as connection:

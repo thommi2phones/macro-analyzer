@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     n8n_vision_webhook_url: str = ""   # vision: Webhook → Gemini image/analyze
     n8n_audio_webhook_url: str = ""    # audio transcription: Webhook → Gemini audio/transcribe
 
+    # Tactical-executor integration (push direction: macro → tactical)
+    tactical_webhook_url: str = ""     # e.g. https://trading-agent-v1-codex.onrender.com/macro/regime-update
+
     # Personal Gmail (separate from any shared project Gmail credentials)
     personal_gmail_client_id: str = ""
     personal_gmail_client_secret: str = ""

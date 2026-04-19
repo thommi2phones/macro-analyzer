@@ -9,6 +9,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import time
 
 from fastapi import APIRouter, Query
 
@@ -25,6 +26,36 @@ from macro_positioning.integration.contracts import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["integration"])
+
+
+# ---------------------------------------------------------------------------
+# In-memory TTL cache for /positioning/view
+# (The tactical decision gate hits this on every setup; no need to recompute
+# from theses every time.)
+# ---------------------------------------------------------------------------
+
+_VIEW_CACHE: dict[str, tuple[float, MacroPositioningView]] = {}
+_VIEW_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+
+def _cache_get(key: str) -> MacroPositioningView | None:
+    hit = _VIEW_CACHE.get(key)
+    if not hit:
+        return None
+    expires_at, view = hit
+    if time.time() >= expires_at:
+        _VIEW_CACHE.pop(key, None)
+        return None
+    return view
+
+
+def _cache_put(key: str, view: MacroPositioningView) -> None:
+    _VIEW_CACHE[key] = (time.time() + _VIEW_CACHE_TTL_SECONDS, view)
+
+
+def invalidate_view_cache() -> None:
+    """Drop all cached views. Called after the pipeline produces new theses."""
+    _VIEW_CACHE.clear()
 
 
 # Ticker → asset class heuristic (extend as needed)
@@ -54,12 +85,17 @@ def positioning_view(
     """Return the current macro directional view for a specific ticker.
 
     Consumed by the tactical-executor decision gate to align tactical
-    entries with the strategic macro bias.
+    entries with the strategic macro bias. Results cached for 5 minutes —
+    the pipeline clears the cache when new theses are produced.
     """
+    effective_class = asset_class or _infer_asset_class(asset)
+    cache_key = f"{asset.upper()}|{effective_class.lower()}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     repo = SQLiteRepository(settings.sqlite_path)
     theses = repo.list_theses()
-
-    effective_class = asset_class or _infer_asset_class(asset)
 
     # Find theses relevant to this asset or asset class
     relevant = []
@@ -75,7 +111,7 @@ def positioning_view(
             relevant.append(t)
 
     if not relevant:
-        return MacroPositioningView(
+        view = MacroPositioningView(
             asset=asset,
             asset_class=effective_class,
             direction="unknown",
@@ -85,6 +121,8 @@ def positioning_view(
                 notes="No macro view for this asset — tactical proceeds unfiltered",
             ),
         )
+        _cache_put(cache_key, view)
+        return view
 
     # Weight-average direction across relevant theses
     direction_scores = {"bullish": 0.0, "bearish": 0.0, "neutral": 0.0,
@@ -122,7 +160,7 @@ def positioning_view(
     if memo and memo.summary:
         regime = memo.summary[:200]
 
-    return MacroPositioningView(
+    view = MacroPositioningView(
         asset=asset,
         asset_class=effective_class,
         direction=dominant,
@@ -132,6 +170,8 @@ def positioning_view(
         regime=regime,
         gate_suggestion=gate,
     )
+    _cache_put(cache_key, view)
+    return view
 
 
 @router.get("/positioning/regime")

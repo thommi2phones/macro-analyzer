@@ -97,6 +97,28 @@ class PositioningPipeline:
         self.repository.save_memo(memo)
         memo_path = write_outputs(memo, validated, recommendations)
 
+        # Cached macro views are now stale — drop them so tactical gets fresh.
+        try:
+            from macro_positioning.integration.endpoints import invalidate_view_cache
+            invalidate_view_cache()
+        except Exception:
+            pass  # cache invalidation is best-effort
+
+        # Regime change detection + optional tactical push.
+        # No-op when tactical_webhook_url is not configured; safe always.
+        try:
+            from macro_positioning.integration.regime_watch import detect_and_push
+            regime_result = detect_and_push(theses, memo)
+            if regime_result.get("changed"):
+                logger.info(
+                    "Regime change detected (severity=%s, pushed=%s): %s",
+                    regime_result.get("severity"),
+                    regime_result.get("pushed"),
+                    regime_result.get("changes"),
+                )
+        except Exception as e:
+            logger.warning("Regime detection failed (non-fatal): %s", e)
+
         return PipelineRunResult(
             documents_ingested=len(normalized),
             theses_extracted=len(theses),

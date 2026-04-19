@@ -152,6 +152,67 @@ def _assess_severity(changes: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Build snapshot from pipeline output
+# ---------------------------------------------------------------------------
+
+def snapshot_from_theses_and_memo(theses, memo) -> RegimeSnapshot:
+    """Given the just-validated theses + memo, derive a RegimeSnapshot.
+
+    Theme → direction bias map comes from the strongest-confidence
+    thesis per theme. Regime text comes from the memo summary.
+    """
+    directional_bias: dict[str, str] = {}
+    top_theses: list[str] = []
+
+    # Sort theses by confidence descending so the first thesis per theme wins
+    sorted_theses = sorted(theses, key=lambda t: t.confidence, reverse=True)
+    seen_themes: set[str] = set()
+    for t in sorted_theses:
+        key = t.theme.strip().lower()
+        if key in seen_themes:
+            continue
+        seen_themes.add(key)
+        directional_bias[key] = t.direction.value if hasattr(t.direction, "value") else str(t.direction)
+        if len(top_theses) < 5:
+            top_theses.append(t.thesis_id)
+
+    regime_text = ""
+    if memo is not None and getattr(memo, "summary", None):
+        regime_text = memo.summary
+
+    return RegimeSnapshot(
+        regime=regime_text,
+        directional_bias=directional_bias,
+        top_theses=top_theses,
+    )
+
+
+def detect_and_push(theses, memo) -> dict:
+    """Run the full detection + push cycle post-pipeline.
+
+    Call this at the end of PositioningPipeline.run() (or equivalent).
+    If a change is detected AND tactical_webhook_url is set, fires the
+    push. Safe to call unconditionally — no-ops when there's nothing new
+    or when the webhook URL isn't configured.
+
+    Returns a dict summarising what happened (for scheduler / pipeline logs).
+    """
+    snapshot = snapshot_from_theses_and_memo(theses, memo)
+    change = detect_regime_change(snapshot)
+    if change is None:
+        return {"changed": False}
+
+    result = push_to_tactical(change)
+    return {
+        "changed": True,
+        "severity": change.severity,
+        "changes": change.changes,
+        "pushed": bool(result),
+        "ack": result,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Webhook push to tactical-executor
 # ---------------------------------------------------------------------------
 

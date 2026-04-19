@@ -23,6 +23,8 @@ from macro_positioning.dashboard.command_data import CommandCenterSnapshot, buil
 from macro_positioning.dashboard.dev_ui import dev_dashboard_html
 from macro_positioning.dashboard.ops_data import OpsSnapshot, build_ops_snapshot
 from macro_positioning.dashboard.output_ui import positioning_dashboard_html
+from macro_positioning.dashboard.tactical_ui import tactical_dashboard_html
+from macro_positioning.integration import tactical_client
 
 router = APIRouter()
 router.include_router(brain_panel_router)
@@ -65,6 +67,18 @@ def positioning_dashboard() -> HTMLResponse:
 def dev_dashboard() -> HTMLResponse:
     """Builder-facing status UI — checklist, brain activity, system health."""
     return HTMLResponse(content=dev_dashboard_html())
+
+
+@router.get("/tactical", response_class=HTMLResponse)
+def tactical_dashboard() -> HTMLResponse:
+    """Read-only inspection view of tactical-executor state."""
+    return HTMLResponse(content=tactical_dashboard_html())
+
+
+@router.get("/api/dashboard/tactical-state")
+def tactical_state() -> dict:
+    """Combined tactical snapshot for the /tactical dashboard."""
+    return tactical_client.fetch_tactical_snapshot()
 
 
 @router.get("/")

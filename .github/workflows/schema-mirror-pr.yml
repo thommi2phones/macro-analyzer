@@ -1,0 +1,90 @@
+name: Schema Mirror PR to Tactical
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'integration_schema/**'
+      - 'src/macro_positioning/integration/contracts.py'
+
+jobs:
+  sync-to-tactical:
+    runs-on: ubuntu-latest
+    name: Auto-open PR on tactical-executor when macro schema changes
+    steps:
+      - name: Checkout macro-analyzer
+        uses: actions/checkout@v4
+        with:
+          path: macro-analyzer
+
+      - name: Checkout tactical-executor
+        uses: actions/checkout@v4
+        with:
+          repository: thommi2phones/Trading-Agent-V1-CODEX
+          token: ${{ secrets.TACTICAL_REPO_PAT }}
+          path: tactical-executor
+          ref: main
+
+      - name: Detect latest schema version
+        id: schema
+        run: |
+          LATEST_SCHEMA=$(ls macro-analyzer/integration_schema/macro_schema_v*.json | sort -V | tail -1)
+          if [ -z "$LATEST_SCHEMA" ]; then
+            echo "::error::No schema file found in macro-analyzer/integration_schema/"
+            exit 1
+          fi
+          VERSION=$(basename "$LATEST_SCHEMA" | sed 's/macro_schema_v\(.*\)\.json/\1/')
+          echo "latest_schema=$LATEST_SCHEMA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected schema version: $VERSION"
+
+      - name: Copy schema + bump CONTRACT_VERSION
+        run: |
+          LATEST_SCHEMA="${{ steps.schema.outputs.latest_schema }}"
+          VERSION="${{ steps.schema.outputs.version }}"
+          cp "$LATEST_SCHEMA" tactical-executor/integration/macro_schema.json
+          # Bump CONTRACT_VERSION in macro_integration.js
+          sed -i "s/const CONTRACT_VERSION = \"[^\"]*\";/const CONTRACT_VERSION = \"$VERSION\";/" tactical-executor/webhook/macro_integration.js
+
+      - name: Check if anything actually changed
+        id: diff
+        working-directory: tactical-executor
+        run: |
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No schema changes to sync."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Schema changes detected, preparing PR."
+          fi
+
+      - name: Create PR on tactical-executor
+        if: steps.diff.outputs.changed == 'true'
+        working-directory: tactical-executor
+        env:
+          GITHUB_TOKEN: ${{ secrets.TACTICAL_REPO_PAT }}
+        run: |
+          VERSION="${{ steps.schema.outputs.version }}"
+          BRANCH="chore/sync-schema-v$VERSION-$(date +%s)"
+          git config user.name "macro-analyzer-bot"
+          git config user.email "bot@macro-analyzer.local"
+          git checkout -b "$BRANCH"
+          git add integration/macro_schema.json webhook/macro_integration.js
+          git commit -m "chore(integration): sync schema v$VERSION from macro-analyzer
+
+This PR was opened automatically by macro-analyzer's schema-mirror-pr
+workflow when the schema was bumped on the macro side.
+
+The tactical CI schema-drift-check will block merging other PRs that
+haven't pulled this change in. Merge this first to keep the contract
+in sync.
+
+Changes:
+- integration/macro_schema.json — updated to v$VERSION
+- webhook/macro_integration.js — CONTRACT_VERSION bumped to $VERSION"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "chore(integration): sync schema v$VERSION from macro-analyzer" \
+            --body "Auto-generated PR from macro-analyzer schema-mirror workflow. Merging this keeps the tactical contract in sync." \
+            --base main \
+            --head "$BRANCH"

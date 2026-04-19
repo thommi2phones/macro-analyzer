@@ -1,35 +1,23 @@
-"""Personal Gmail connector — separate OAuth from any shared project Gmail.
+"""Personal Gmail connector — separate OAuth from shared project Gmail.
 
-The existing gmail_connector.py is generic / could be any Gmail account.
-This module is for THE USER'S PERSONAL ACCOUNT ONLY, with its own
-OAuth client credentials, so it can be used independently from any
-work/shared Gmail tooling.
+Uses the credentials at data/personal_gmail_credentials.json to authenticate
+against the user's personal Gmail and fetch financial newsletters.
 
-Setup required (one-time, manual):
-  1. Create a NEW GCP project (or use existing) separate from other projects.
-  2. Enable the Gmail API on that project.
-  3. Create OAuth 2.0 Client Credentials (type: Desktop app).
-  4. Download the credentials JSON, save as data/personal_gmail_credentials.json
-  5. First run: the OAuth flow opens a browser for consent. Token is cached.
-  6. Subsequent runs: token refresh is automatic.
+One-time setup:
+  1. Credentials JSON must exist at data/personal_gmail_credentials.json
+  2. First run triggers browser-based consent; refresh token cached to
+     data/personal_gmail_token.json
+  3. Subsequent runs are silent — no browser needed
 
-Env vars (alternative to credentials file):
-  MPA_PERSONAL_GMAIL_CLIENT_ID
-  MPA_PERSONAL_GMAIL_CLIENT_SECRET
-  MPA_PERSONAL_GMAIL_REFRESH_TOKEN
-
-TODO(stream-a):
-  - Implement _load_credentials() to read from settings or file
-  - Implement get_gmail_service() using google-auth + google-api-python-client
-  - Implement fetch_messages(query) returning parsed dicts
-  - Wire to gmail_connector's email_to_raw_document() for normalization
-  - Add dedup key based on message_id so re-runs don't bloat DB
+Scope: readonly access only.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import re
 from pathlib import Path
 
 from macro_positioning.core.models import RawDocument
@@ -44,56 +32,167 @@ from macro_positioning.ingestion.gmail_connector import (
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# OAuth + service builder (stub — Stream A to complete)
-# ---------------------------------------------------------------------------
-
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 PERSONAL_CREDENTIALS_PATH = Path("data/personal_gmail_credentials.json")
 
 
-def _load_credentials():
-    """Load personal Gmail OAuth credentials.
+# ---------------------------------------------------------------------------
+# OAuth + service builder
+# ---------------------------------------------------------------------------
+
+def _token_path() -> Path:
+    return Path(settings.personal_gmail_token_path or "data/personal_gmail_token.json")
+
+
+def get_credentials():
+    """Load or create OAuth credentials for the personal Gmail account.
 
     Priority:
-      1. Env vars (MPA_PERSONAL_GMAIL_CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
-      2. Credentials file at data/personal_gmail_credentials.json
-      3. Token cache at settings.personal_gmail_token_path
+      1. Cached refresh token at token_path — silent refresh
+      2. If credentials JSON present but no token → browser-based consent flow
+      3. Raises RuntimeError if neither is available
     """
-    if settings.personal_gmail_client_id and settings.personal_gmail_refresh_token:
-        return {
-            "source": "env",
-            "client_id": settings.personal_gmail_client_id,
-            "client_secret": settings.personal_gmail_client_secret,
-            "refresh_token": settings.personal_gmail_refresh_token,
-        }
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
 
-    if PERSONAL_CREDENTIALS_PATH.exists():
-        data = json.loads(PERSONAL_CREDENTIALS_PATH.read_text())
-        return {"source": "file", "raw": data}
+    token_path = _token_path()
+    creds = None
 
-    raise RuntimeError(
-        "Personal Gmail credentials not configured. "
-        "Set MPA_PERSONAL_GMAIL_* env vars OR place OAuth JSON at "
-        f"{PERSONAL_CREDENTIALS_PATH}. "
-        "See personal_gmail.py docstring for setup."
+    # Cached token?
+    if token_path.exists():
+        try:
+            creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        except Exception as e:
+            logger.warning("Failed to load cached token: %s", e)
+
+    # Valid token?
+    if creds and creds.valid:
+        return creds
+
+    # Expired but refreshable?
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            _save_credentials(creds)
+            return creds
+        except Exception as e:
+            logger.warning("Token refresh failed: %s", e)
+            creds = None
+
+    # No valid credentials — trigger browser consent flow
+    if not PERSONAL_CREDENTIALS_PATH.exists():
+        raise RuntimeError(
+            f"Credentials file not found at {PERSONAL_CREDENTIALS_PATH}. "
+            "See print_setup_instructions() for setup walkthrough."
+        )
+
+    logger.info("Starting browser OAuth flow (one-time)…")
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(PERSONAL_CREDENTIALS_PATH), SCOPES
     )
+    creds = flow.run_local_server(port=0)
+    _save_credentials(creds)
+    logger.info("OAuth complete — token cached to %s", token_path)
+    return creds
+
+
+def _save_credentials(creds) -> None:
+    path = _token_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(creds.to_json())
+    path.chmod(0o600)
 
 
 def get_gmail_service():
-    """Build an authenticated Gmail API service object.
+    """Return an authenticated Gmail API service."""
+    from googleapiclient.discovery import build
 
-    TODO(stream-a): implement using google-auth + googleapiclient.
-    Returns: googleapiclient.discovery.Resource
-    """
-    raise NotImplementedError(
-        "Stream A: implement using google-auth OAuth flow. "
-        "Scopes: ['https://www.googleapis.com/auth/gmail.readonly']. "
-        "Token should cache to settings.personal_gmail_token_path."
-    )
+    creds = get_credentials()
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+def get_profile() -> dict:
+    """Return the authenticated Gmail profile (emailAddress, messagesTotal, etc.)."""
+    service = get_gmail_service()
+    return service.users().getProfile(userId="me").execute()
 
 
 # ---------------------------------------------------------------------------
-# Fetch newsletters
+# Message fetching
+# ---------------------------------------------------------------------------
+
+def search_messages(query: str, max_messages: int = 50) -> list[dict]:
+    """Search Gmail with a query string. Returns list of {id, threadId} stubs."""
+    service = get_gmail_service()
+    messages: list[dict] = []
+    next_page = None
+    while len(messages) < max_messages:
+        remaining = max_messages - len(messages)
+        resp = service.users().messages().list(
+            userId="me",
+            q=query,
+            maxResults=min(remaining, 100),
+            pageToken=next_page,
+        ).execute()
+        messages.extend(resp.get("messages", []) or [])
+        next_page = resp.get("nextPageToken")
+        if not next_page:
+            break
+    return messages[:max_messages]
+
+
+def get_message_full(message_id: str) -> dict:
+    """Fetch a Gmail message with full body payload."""
+    service = get_gmail_service()
+    return service.users().messages().get(
+        userId="me",
+        id=message_id,
+        format="full",
+    ).execute()
+
+
+def _extract_html_body(payload: dict) -> str:
+    """Walk the Gmail MIME tree and return the first HTML body found.
+
+    Falls back to plain text if no HTML part is present.
+    """
+    def decode(data: str) -> str:
+        try:
+            return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    def walk(part: dict) -> tuple[str, str]:
+        """Return (html, text) found in this part and its children."""
+        mime = part.get("mimeType", "")
+        data = part.get("body", {}).get("data", "")
+        html = ""
+        text = ""
+        if data:
+            if mime == "text/html":
+                html = decode(data)
+            elif mime == "text/plain":
+                text = decode(data)
+        for child in part.get("parts", []) or []:
+            ch_html, ch_text = walk(child)
+            html = html or ch_html
+            text = text or ch_text
+        return html, text
+
+    html, text = walk(payload)
+    return html or text
+
+
+def _header(headers: list, name: str) -> str:
+    for h in headers:
+        if h.get("name", "").lower() == name.lower():
+            return h.get("value", "")
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Newsletter fetching
 # ---------------------------------------------------------------------------
 
 def fetch_newsletters(
@@ -101,43 +200,125 @@ def fetch_newsletters(
     sources: list | None = None,
     max_messages: int = 100,
 ) -> list[RawDocument]:
-    """Fetch newsletters from personal Gmail and return RawDocument list.
+    """Fetch newsletters matching configured sources within the look-back window.
 
-    Args:
-        days: Look-back window
-        sources: Specific NewsletterSource list (defaults to all)
-        max_messages: Safety cap per run
-
-    TODO(stream-a):
-      1. Build query via build_gmail_query(sources, days)
-      2. service.users().messages().list(userId='me', q=query).execute()
-      3. For each message ID:
-         - service.users().messages().get(userId='me', id=msg_id, format='full')
-         - Extract headers (From, Subject, Date)
-         - Extract HTML body (walk MIME parts)
-         - Call email_to_raw_document() to normalize
-      4. Dedup by message_id against SQLite documents table
-      5. Return list of RawDocument
+    Returns a list of RawDocument objects ready for the pipeline.
+    Skips messages we can't confidently attribute to a configured source.
     """
-    raise NotImplementedError("Stream A: implement Gmail message fetch + parse")
+    query = build_gmail_query(sources, days=days)
+    logger.info("Searching personal Gmail: %s", query)
+
+    stubs = search_messages(query, max_messages=max_messages)
+    logger.info("Found %d matching messages", len(stubs))
+
+    documents: list[RawDocument] = []
+    for stub in stubs:
+        try:
+            msg = get_message_full(stub["id"])
+            headers = msg.get("payload", {}).get("headers", []) or []
+            subject = _header(headers, "Subject")
+            from_hdr = _header(headers, "From")
+            date_hdr = _header(headers, "Date")
+            body_html = _extract_html_body(msg.get("payload", {}))
+
+            doc = email_to_raw_document(
+                message_id=stub["id"],
+                subject=subject,
+                from_header=from_hdr,
+                date_header=date_hdr,
+                body_html=body_html,
+            )
+            if doc:
+                documents.append(doc)
+        except Exception as e:
+            logger.warning("Failed to fetch/parse message %s: %s", stub.get("id"), e)
+
+    logger.info("Parsed %d newsletter RawDocuments", len(documents))
+    return documents
 
 
-def fetch_and_persist(
-    days: int = 7,
-    max_messages: int = 100,
-) -> dict:
-    """Fetch, normalize, dedup, and persist newsletters. Returns summary dict.
+def fetch_and_persist(days: int = 7, max_messages: int = 100) -> dict:
+    """Fetch + normalize + persist into the SQLite documents table with dedup."""
+    from macro_positioning.db.repository import SQLiteRepository
+    from macro_positioning.db.schema import initialize_database
+    from macro_positioning.ingestion.base import normalize_document
 
-    TODO(stream-a): wire into SQLiteRepository, return:
-      {
-        "fetched": int,
-        "new_documents": int,
-        "duplicates_skipped": int,
-        "parse_failures": int,
-        "sources": {source_id: count}
-      }
+    initialize_database(settings.sqlite_path)
+    repo = SQLiteRepository(settings.sqlite_path)
+
+    docs = fetch_newsletters(days=days, max_messages=max_messages)
+
+    new_count = 0
+    dup_count = 0
+    by_source: dict[str, int] = {}
+
+    for raw in docs:
+        normalized = normalize_document(raw)
+        try:
+            repo.save_document(normalized)
+            new_count += 1
+            by_source[raw.source_id] = by_source.get(raw.source_id, 0) + 1
+        except Exception as e:
+            logger.warning("Failed to persist %s: %s", raw.source_id, e)
+
+    return {
+        "fetched": len(docs),
+        "new_documents": new_count,
+        "duplicates_skipped": dup_count,
+        "sources": by_source,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic helpers
+# ---------------------------------------------------------------------------
+
+def sanity_check() -> dict:
+    """Quick check that OAuth works + show account summary."""
+    profile = get_profile()
+    return {
+        "email": profile.get("emailAddress"),
+        "total_messages": profile.get("messagesTotal"),
+        "total_threads": profile.get("threadsTotal"),
+    }
+
+
+def list_substack_senders(days: int = 30, max_messages: int = 200) -> dict:
+    """Scan recent mail from substack.com and return unique sender counts.
+
+    Useful for discovering new newsletters to add to NEWSLETTER_SOURCES.
     """
-    raise NotImplementedError("Stream A: implement persistence path")
+    query = f"from:substack.com newer_than:{days}d"
+    stubs = search_messages(query, max_messages=max_messages)
+
+    senders: dict[str, dict] = {}
+    service = get_gmail_service()
+
+    for stub in stubs:
+        msg = service.users().messages().get(
+            userId="me", id=stub["id"], format="metadata",
+            metadataHeaders=["From", "Subject"],
+        ).execute()
+        headers = msg.get("payload", {}).get("headers", []) or []
+        from_hdr = _header(headers, "From")
+        match = re.search(r"<([^>]+)>", from_hdr)
+        email_addr = match.group(1).lower() if match else from_hdr.lower().strip()
+        if email_addr not in senders:
+            source = get_source_for_email(from_hdr)
+            senders[email_addr] = {
+                "count": 0,
+                "known": source.source_id if source else None,
+                "display_name": from_hdr.split("<")[0].strip().strip('"'),
+                "sample_subject": _header(headers, "Subject"),
+            }
+        senders[email_addr]["count"] += 1
+
+    return {
+        "query": query,
+        "total_messages": len(stubs),
+        "unique_senders": len(senders),
+        "senders": dict(sorted(senders.items(), key=lambda kv: -kv[1]["count"])),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +326,6 @@ def fetch_and_persist(
 # ---------------------------------------------------------------------------
 
 def print_setup_instructions() -> None:
-    """Print setup instructions to stdout. For use in CLI / interactive help."""
     print("""
 ╔══════════════════════════════════════════════════════════════════════╗
 ║ PERSONAL GMAIL SETUP                                                 ║
@@ -156,7 +336,6 @@ def print_setup_instructions() -> None:
 ║    → https://console.cloud.google.com/projectcreate                  ║
 ║                                                                      ║
 ║ 2. Enable the Gmail API on that project.                             ║
-║    → APIs & Services → Library → search "Gmail API" → Enable         ║
 ║                                                                      ║
 ║ 3. Configure the OAuth consent screen (External, then add your       ║
 ║    personal email as a test user).                                   ║
@@ -167,11 +346,29 @@ def print_setup_instructions() -> None:
 ║ 5. Save the JSON to:                                                 ║
 ║      data/personal_gmail_credentials.json                            ║
 ║                                                                      ║
-║ 6. Run: python -m macro_positioning.cli gmail-setup                  ║
-║    This opens a browser for consent and caches a refresh token.      ║
+║ 6. First fetch_newsletters() call triggers browser consent.          ║
 ║                                                                      ║
-║ 7. Add scope:                                                        ║
+║ 7. Scope requested:                                                  ║
 ║      https://www.googleapis.com/auth/gmail.readonly                  ║
 ║                                                                      ║
 ╚══════════════════════════════════════════════════════════════════════╝
 """)
+
+
+def cli_sanity_check() -> None:
+    """CLI entry point: verify credentials and show profile."""
+    import sys
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    try:
+        result = sanity_check()
+        print("✓ Personal Gmail OAuth working")
+        print(f"  Email: {result['email']}")
+        print(f"  Total messages: {result['total_messages']}")
+        print(f"  Total threads: {result['total_threads']}")
+    except Exception as e:
+        print(f"✗ Sanity check failed: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    cli_sanity_check()

@@ -315,13 +315,25 @@ def build_gmail_query(
 
 
 def get_source_for_email(from_header: str) -> NewsletterSource | None:
-    """Look up the newsletter source for a given From header."""
+    """Look up the newsletter source for a given From header.
+
+    Priority:
+      1. Exact email match (e.g. 'doomberg@substack.com' → doomberg)
+      2. Domain match, but ONLY if the domain is unique to one source.
+         Shared domains like substack.com require an exact email match —
+         otherwise every unknown substack would collide onto the first one.
+    """
     sender_email = _extract_sender_email(from_header)
     source = _SOURCE_BY_EMAIL.get(sender_email)
     if source:
         return source
+
     sender_domain = sender_email.split("@")[-1] if "@" in sender_email else ""
-    for s in NEWSLETTER_SOURCES:
-        if sender_domain == s.sender_domain or sender_domain.endswith(f".{s.sender_domain}"):
-            return s
+    if not sender_domain:
+        return None
+
+    # Count how many sources use this exact domain
+    matching = [s for s in NEWSLETTER_SOURCES if s.sender_domain == sender_domain]
+    if len(matching) == 1:
+        return matching[0]
     return None

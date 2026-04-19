@@ -68,7 +68,37 @@ def morning_run() -> dict:
         logger.error("Google News step failed: %s", e, exc_info=True)
         summary["steps"]["google_news"] = {"status": "error", "error": str(e)}
 
-    # 3. Run pipeline with fresh RSS docs (Gmail already persisted directly)
+    # 3. Podcast episodes — core-tier get full transcription via N8N/Gemini,
+    #    secondary-tier stay show-notes-only
+    try:
+        from macro_positioning.brain.transcription import is_configured as audio_ready
+        from macro_positioning.ingestion import podcast_rss
+
+        transcribe_core = audio_ready()
+        core_pods = [p for p in podcast_rss.PODCAST_SOURCES if p.priority == "core"]
+        sec_pods = [p for p in podcast_rss.PODCAST_SOURCES if p.priority != "core"]
+
+        pod_docs: list = []
+        for p in core_pods:
+            pod_docs.extend(podcast_rss.fetch_podcast(
+                p.source_id, max_items=3, transcribe=transcribe_core,
+            ))
+        for p in sec_pods:
+            pod_docs.extend(podcast_rss.fetch_podcast(
+                p.source_id, max_items=5, transcribe=False,
+            ))
+
+        fresh_docs.extend(pod_docs)
+        summary["steps"]["podcasts"] = {
+            "status": "ok",
+            "core_transcribed": transcribe_core,
+            "documents_fetched": len(pod_docs),
+        }
+    except Exception as e:
+        logger.error("Podcast step failed: %s", e, exc_info=True)
+        summary["steps"]["podcasts"] = {"status": "error", "error": str(e)}
+
+    # 4. Run pipeline with fresh RSS + podcast docs (Gmail already persisted directly)
     try:
         pipeline = build_pipeline()
         result = pipeline.run(fresh_docs)

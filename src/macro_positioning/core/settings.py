@@ -36,9 +36,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "qwen2.5:14b"
 
-    # Legacy / optional N8N (kept for advanced workflows, not primary)
-    n8n_webhook_url: str = ""
-    n8n_vision_webhook_url: str = ""
+    # N8N webhooks → Vertex/Gemini (primary production path — unlimited via N8N)
+    n8n_webhook_url: str = ""          # text synthesis: Webhook → Gemini text/message
+    n8n_vision_webhook_url: str = ""   # vision: Webhook → Gemini image/analyze
+    n8n_audio_webhook_url: str = ""    # audio transcription: Webhook → Gemini audio/transcribe
 
     # Personal Gmail (separate from any shared project Gmail credentials)
     personal_gmail_client_id: str = ""

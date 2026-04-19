@@ -218,8 +218,8 @@
     },
     {
       "id": "vision-charts",
-      "title": "Chart vision (direct Gemini/Claude API)",
-      "detail": "Backend-agnostic via brain.backends \u2014 no N8N",
+      "title": "Chart vision (N8N Gemini image/analyze)",
+      "detail": "Webhook wired. User must create N8N vision workflow if not yet done.",
       "category": "pipeline",
       "priority": "high",
       "status": "in_progress",
@@ -476,7 +476,70 @@
       "priority": "medium",
       "status": "todo",
       "completed_at": null
+    },
+    {
+      "id": "podcast-transcription",
+      "title": "Podcast transcription (N8N audio \u2192 Gemini)",
+      "detail": "Core podcasts get full transcription via transcribe_audio_url(). User must build N8N audio workflow.",
+      "category": "pipeline",
+      "priority": "high",
+      "status": "in_progress",
+      "completed_at": null
+    },
+    {
+      "id": "podcasts-core-tier",
+      "title": "Core podcasts: Forward Guidance, Wolf of All Streets, Real Vision Journey Man",
+      "detail": "Full transcription enabled via brain/transcription.py",
+      "category": "data",
+      "priority": "high",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "podcasts-secondary",
+      "title": "Secondary podcasts: Moonshots, State of Crypto (future)",
+      "detail": "Show notes only. Add Blockworks per-show as follow-up.",
+      "category": "data",
+      "priority": "medium",
+      "status": "in_progress",
+      "completed_at": null
+    },
+    {
+      "id": "milk-road-macro",
+      "title": "Find & add Milk Road Macro (personal Gmail + potential podcast RSS)",
+      "detail": "User subscribed recently. Discover sender email via personal_gmail API scan.",
+      "category": "data",
+      "priority": "medium",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "scheduler-podcasts",
+      "title": "Scheduler: podcasts wired into morning_run",
+      "detail": "Core=transcribe, secondary=show notes. Auto-fetches on cron.",
+      "category": "infra",
+      "priority": "high",
+      "status": "done",
+      "completed_at": null
+    },
+    {
+      "id": "blockworks-per-show",
+      "title": "Blockworks podcast network: pick specific shows (0xResearch, Empire, Lightspeed)",
+      "detail": "Sitemap has 137 entries; don't backfill all. Curate.",
+      "category": "data",
+      "priority": "low",
+      "status": "todo",
+      "completed_at": null
+    },
+    {
+      "id": "audio-chunking",
+      "title": "ffmpeg audio chunking for >1hr episodes",
+      "detail": "Gemini audio cap is ~1hr. Split long episodes. Deferred \u2014 MVP falls back to show notes on long audio.",
+      "category": "infra",
+      "priority": "low",
+      "status": "todo",
+      "completed_at": null
     }
   ],
-  "updated_at": "2026-04-19T17:08:15.284373+00:00"
+  "updated_at": "2026-04-19T22:14:15.014370+00:00"
 }

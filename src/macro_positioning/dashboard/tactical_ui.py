@@ -1,238 +1,417 @@
-"""Tactical-executor standalone inspection dashboard.
+"""Tactical-executor standalone inspection view, rebuilt on shared shell.
 
-READ-ONLY view of tactical state from the tactical-executor's public API.
-Shows active setups, recent decisions with macro gate applied, lifecycle
-states, and health. Used for debugging / inspection — not the operator's
-primary flow (that's /positioning).
-
-Nav: [Positioning]  [Tactical *]  [Dev]
+READ-ONLY pull of tactical state. Sector-card style grid for active setups,
+current agent_packet decision with macro gate applied, recent events table.
 """
 
 from __future__ import annotations
 
+from macro_positioning.dashboard.shell import ICONS, render_shell
+
+
+TACTICAL_CSS = r"""
+.status-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 20px; border-radius: 10px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 13px; color: var(--text-dim);
+}
+.status-banner.ok { border-color: rgba(16, 185, 129, 0.3); background: rgba(16, 185, 129, 0.04); color: var(--green-2); }
+.status-banner.warn { border-color: rgba(245, 158, 11, 0.3); background: rgba(245, 158, 11, 0.04); color: var(--yellow-2); }
+.status-banner.err { border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.04); color: var(--red-2); }
+
+.decision-grid {
+  display: grid; grid-template-columns: 1.3fr 1fr;
+  gap: 18px; margin-bottom: 22px;
+}
+@media (max-width: 900px) { .decision-grid { grid-template-columns: 1fr; } }
+
+.big-action {
+  font-size: 44px; font-weight: 800; letter-spacing: -1.5px;
+  line-height: 1; margin-bottom: 10px;
+}
+.big-action.LONG { color: var(--green-2); }
+.big-action.SHORT { color: var(--red-2); }
+.big-action.WAIT { color: var(--text-dim); }
+
+.dec-meta { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 18px; font-size: 12px; color: var(--text-dim); }
+.dec-meta b { color: var(--text); font-weight: 600; }
+.dec-stats-row {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-bottom: 14px;
+}
+.dec-reasons {
+  font-size: 11px; color: var(--text-dim);
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.reason-pill {
+  font-family: var(--font-mono); font-size: 10px;
+  padding: 3px 8px; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text-dim);
+}
+
+.macro-gate-block {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(139, 92, 246, 0.06));
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  border-radius: 10px; padding: 16px 18px;
+}
+.macro-gate-block .head {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.macro-gate-block .head .lbl {
+  font-size: 10px; letter-spacing: 1.3px; font-weight: 800; text-transform: uppercase;
+  color: var(--accent-2);
+}
+.macro-gate-dir {
+  font-size: 22px; font-weight: 800; letter-spacing: -0.4px; text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.macro-gate-notes {
+  font-size: 12px; color: var(--text-dim); line-height: 1.5;
+}
+.gate-stats {
+  display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap;
+}
+
+/* Sector-card style setup grid (for active setups + recent events) */
+.setup-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.setup-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 10px; padding: 14px 16px;
+  position: relative; overflow: hidden;
+}
+.setup-card.trigger { border-top: 2px solid var(--accent); }
+.setup-card.in_trade { border-top: 2px solid var(--green); }
+.setup-card.tp_zone { border-top: 2px solid var(--purple); }
+.setup-card.watch { border-top: 2px solid var(--text-muted); }
+.setup-card.invalidated { border-top: 2px solid var(--red); opacity: 0.75; }
+.setup-card.closed { border-top: 2px solid var(--text-mute-2); opacity: 0.6; }
+.setup-card-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 10px;
+}
+.setup-symbol {
+  font-family: var(--font-mono); font-size: 18px; font-weight: 800;
+  letter-spacing: 0.5px; text-transform: uppercase;
+}
+.setup-id-chip {
+  font-family: var(--font-mono); font-size: 10px;
+  padding: 3px 8px; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 4px; color: var(--text-muted);
+}
+.setup-stats-row {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  margin: 10px 0;
+}
+.setup-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-top: 10px; border-top: 1px solid var(--border);
+  font-size: 10px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;
+}
+
+.events-table { overflow-x: auto; }
+.empty-pad { padding: 26px; text-align: center; color: var(--text-muted); font-size: 13px; }
+"""
+
 
 def tactical_dashboard_html() -> str:
-    return _TACTICAL_HTML
+    body = f"""
+    <style>{TACTICAL_CSS}</style>
 
+    <div id="loading" class="loading">Loading tactical state…</div>
 
-_TACTICAL_HTML = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Macro Positioning · Tactical</title>
-<style>
-:root {
-  --bg:#0a0d14;--surface:#121824;--surface-hi:#1a2132;--border:#1f2a3a;
-  --border-hi:#2a3852;--text:#e8eef7;--text-dim:#8094b0;--text-muted:#4a5a75;
-  --accent:#5b9cfe;--green:#2ecc71;--red:#ff5a5f;--yellow:#f5b642;
-  --purple:#a679f0;--orange:#ff8642;--teal:#2dd4bf;
-}
-* {margin:0;padding:0;box-sizing:border-box;}
-body {font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
-  background:var(--bg);color:var(--text);line-height:1.5;-webkit-font-smoothing:antialiased;
-  background:linear-gradient(180deg,#0a0d14 0%,#0c1120 100%);}
-.nav {position:sticky;top:0;z-index:50;background:rgba(10,13,20,0.85);
-  backdrop-filter:blur(12px);border-bottom:1px solid var(--border);
-  padding:14px 24px;display:flex;align-items:center;gap:20px;}
-.nav-brand {font-weight:700;font-size:16px;}
-.nav-brand .dot {display:inline-block;width:8px;height:8px;border-radius:50%;
-  background:var(--teal);margin-right:8px;box-shadow:0 0 8px var(--teal);}
-.nav-links {display:flex;gap:4px;margin-left:auto;}
-.nav-link {color:var(--text-dim);text-decoration:none;padding:6px 12px;
-  border-radius:6px;font-size:13px;font-weight:500;}
-.nav-link:hover {color:var(--text);background:var(--surface);}
-.nav-link.active {color:var(--accent);background:rgba(91,156,254,0.08);}
-.container {max-width:1280px;margin:0 auto;padding:28px 24px 80px;}
-.status {padding:10px 14px;border-radius:8px;margin-bottom:20px;font-size:13px;}
-.status-ok {background:rgba(46,204,113,0.08);border:1px solid rgba(46,204,113,0.22);color:var(--green);}
-.status-warn {background:rgba(245,182,66,0.06);border:1px solid rgba(245,182,66,0.22);color:var(--yellow);}
-.status-err {background:rgba(255,90,95,0.06);border:1px solid rgba(255,90,95,0.22);color:var(--red);}
-.kpi-row {display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:22px;}
-.kpi {background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;}
-.kpi .n {font-size:26px;font-weight:700;letter-spacing:-0.5px;line-height:1;}
-.kpi .l {font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;}
-.section {margin-bottom:24px;}
-.section-head {font-size:14px;font-weight:600;color:var(--text-dim);
-  text-transform:uppercase;letter-spacing:0.5px;margin-bottom:12px;padding:0 4px;}
-.card {background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;}
-.decision-grid {display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-@media (max-width:720px){.decision-grid{grid-template-columns:1fr;}}
-.event-row {display:grid;grid-template-columns:90px 60px 90px 1fr 80px;gap:10px;
-  align-items:center;padding:8px 12px;border-bottom:1px solid var(--border);
-  font-size:12px;font-family:'SF Mono',Menlo,monospace;}
-.event-row:last-child {border-bottom:none;}
-.event-time {color:var(--text-muted);}
-.event-symbol {font-weight:600;color:var(--text);}
-.event-stage {font-size:10px;padding:2px 8px;border-radius:3px;text-transform:uppercase;
-  text-align:center;font-weight:600;letter-spacing:0.3px;}
-.stage-watch {background:rgba(128,148,176,0.1);color:var(--text-dim);}
-.stage-trigger {background:rgba(91,156,254,0.12);color:var(--accent);}
-.stage-in_trade {background:rgba(46,204,113,0.14);color:var(--green);}
-.stage-tp_zone {background:rgba(166,121,240,0.14);color:var(--purple);}
-.stage-invalidated {background:rgba(255,90,95,0.12);color:var(--red);}
-.stage-closed {background:rgba(122,133,153,0.08);color:var(--text-muted);}
-.event-bias {font-size:11px;color:var(--text-dim);}
-.confluence {font-size:10px;font-weight:600;padding:2px 7px;border-radius:3px;text-align:center;}
-.conf-HIGH {background:rgba(46,204,113,0.14);color:var(--green);}
-.conf-MEDIUM {background:rgba(245,182,66,0.12);color:var(--yellow);}
-.conf-LOW {background:rgba(128,148,176,0.08);color:var(--text-dim);}
-.dec-box {background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;}
-.dec-row {display:flex;justify-content:space-between;padding:5px 0;font-size:13px;}
-.dec-row .k {color:var(--text-dim);}
-.dec-row .v {font-weight:500;}
-.dec-action {font-size:22px;font-weight:700;letter-spacing:-0.5px;margin-bottom:8px;}
-.action-LONG {color:var(--green);}
-.action-SHORT {color:var(--red);}
-.action-WAIT {color:var(--text-dim);}
-.macro-context {margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text-dim);}
-.empty-msg {color:var(--text-muted);font-size:13px;padding:18px;text-align:center;}
-#loading {text-align:center;padding:60px;color:var(--text-dim);font-size:14px;}
-@media (max-width:640px){.container{padding:14px 12px 60px;}.event-row{grid-template-columns:1fr 1fr;font-size:11px;}}
-</style>
-</head>
-<body>
-<nav class="nav">
-  <span class="nav-brand"><span class="dot"></span>Tactical State</span>
-  <div class="nav-links">
-    <a href="/positioning" class="nav-link">Positioning</a>
-    <a href="/tactical" class="nav-link active">Tactical</a>
-    <a href="/dev" class="nav-link">Dev</a>
-  </div>
-</nav>
-<div class="container">
-<div id="loading">Loading tactical state…</div>
-<div id="content" style="display:none">
-  <div id="status-bar"></div>
-  <div class="kpi-row" id="kpis"></div>
-  <div class="section">
-    <div class="section-head">Latest Decision (with Macro Gate)</div>
-    <div id="decision-box" class="dec-box"><div class="empty-msg">No decision yet.</div></div>
-  </div>
-  <div class="section">
-    <div class="section-head">Recent Events</div>
-    <div class="card" id="events-card"><div class="empty-msg">No events yet.</div></div>
-  </div>
-  <div class="section">
-    <div class="section-head">Lifecycle (active setups)</div>
-    <div class="card" id="lifecycle-card"><div class="empty-msg">No lifecycle data.</div></div>
-  </div>
-</div>
-</div>
-<script>
-async function load(){
-  try {
-    const r = await fetch('/api/dashboard/tactical-state');
-    const data = await r.json();
-    render(data);
-  } catch(e){
-    document.getElementById('loading').textContent='Failed to load: '+e.message;
-  }
-}
-function escapeHtml(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function render(state){
-  document.getElementById('loading').style.display='none';
-  document.getElementById('content').style.display='block';
+    <div id="content" style="display:none">
 
-  // Status bar
-  const sb = document.getElementById('status-bar');
-  if (!state.configured) {
-    sb.innerHTML = '<div class="status status-warn">MPA_TACTICAL_EXECUTOR_URL not configured. Set it in .env to see live tactical state.</div>';
-    return;
-  }
-  if (!state.health || (state.events === null && state.latest_decision === null)) {
-    sb.innerHTML = '<div class="status status-err">Tactical executor unreachable. Check URL and that the tactical service is running.</div>';
-  } else {
-    sb.innerHTML = '<div class="status status-ok">Connected to tactical-executor.</div>';
-  }
+      <div id="status-banner"></div>
 
-  // KPIs
-  const events = state.events || [];
-  const lifecycle = state.lifecycle || {};
-  const decision = state.latest_decision || {};
+      <!-- KPI row -->
+      <div class="kpi-row" style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:22px">
+        <div class="kpi-card kpi-accent">
+          <div class="kpi-label">Active Setups</div>
+          <div id="kpi-setups" class="kpi-value">0</div>
+          <div class="kpi-subvalue">Unique</div>
+        </div>
+        <div class="kpi-card kpi-accent">
+          <div class="kpi-label">At Trigger</div>
+          <div id="kpi-trigger" class="kpi-value">0</div>
+          <div class="kpi-subvalue">Waiting entry</div>
+        </div>
+        <div class="kpi-card kpi-bull">
+          <div class="kpi-label">In Trade</div>
+          <div id="kpi-in-trade" class="kpi-value">0</div>
+          <div class="kpi-subvalue">Live positions</div>
+        </div>
+        <div class="kpi-card kpi-bear">
+          <div class="kpi-label">Closed/Invalid</div>
+          <div id="kpi-closed" class="kpi-value">0</div>
+          <div class="kpi-subvalue">Recent</div>
+        </div>
+        <div class="kpi-card kpi-purple">
+          <div class="kpi-label">Recent Events</div>
+          <div id="kpi-events" class="kpi-value">0</div>
+          <div class="kpi-subvalue">Last 25</div>
+        </div>
+      </div>
 
-  const uniqSetups = new Set();
-  let trigCount = 0, inTradeCount = 0, closedCount = 0;
-  events.forEach(e=>{
-    const p = e.payload || {};
-    if (p.setup_id) uniqSetups.add(p.setup_id);
-    const stage = (p.setup_stage||'').toLowerCase();
-    if (stage === 'trigger') trigCount++;
-    else if (stage === 'in_trade') inTradeCount++;
-    else if (stage === 'closed' || stage === 'invalidated') closedCount++;
-  });
+      <!-- Latest decision + macro gate -->
+      <div class="decision-grid" id="decision-grid" style="display:none">
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-icon">{ICONS['tactical']}</div>
+              <span>Latest Decision</span>
+            </div>
+            <div class="panel-subtitle" id="dec-subtitle">—</div>
+          </div>
+          <div class="panel-body">
+            <div id="big-action" class="big-action">WAIT</div>
+            <div class="dec-meta" id="dec-meta"></div>
+            <div class="dec-stats-row" id="dec-stats"></div>
+            <div class="dec-reasons" id="dec-reasons"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-icon">{ICONS['macro']}</div>
+              <span>Macro Gate</span>
+            </div>
+            <div class="panel-subtitle">Applied to decision</div>
+          </div>
+          <div class="panel-body" id="macro-gate-body">
+            <div class="empty-pad">No macro view attached</div>
+          </div>
+        </div>
+      </div>
 
-  const k = document.getElementById('kpis');
-  const kpis = [
-    {n:uniqSetups.size,l:'Unique Setups',c:'var(--accent)'},
-    {n:trigCount,l:'At Trigger',c:'var(--purple)'},
-    {n:inTradeCount,l:'In Trade',c:'var(--green)'},
-    {n:closedCount,l:'Closed/Inv',c:'var(--text-muted)'},
-    {n:events.length,l:'Recent Events',c:'var(--teal)'},
-  ];
-  kpis.forEach(kp=>{
-    k.innerHTML += '<div class="kpi"><div class="n" style="color:'+kp.c+'">'+kp.n+'</div><div class="l">'+kp.l+'</div></div>';
-  });
+      <!-- Active setups -->
+      <div class="panel" style="margin-bottom:22px">
+        <div class="panel-header">
+          <div class="panel-title">
+            <div class="panel-icon">{ICONS['pulse']}</div>
+            <span>Active Setups</span>
+          </div>
+          <div class="panel-subtitle" id="setups-count">—</div>
+        </div>
+        <div class="panel-body">
+          <div id="setups-grid" class="setup-grid"></div>
+          <div id="setups-empty" class="empty-pad" style="display:none">
+            No active setups. Waiting for TradingView webhooks.
+          </div>
+        </div>
+      </div>
 
-  // Decision box
-  if (decision && decision.ok && decision.decision) {
-    const dec = decision.decision;
-    const ap = decision.agent_packet || {};
-    const mv = decision.macro_view || null;
-    const action = (dec.action||'WAIT').toUpperCase();
-    const reasons = (dec.reason_codes||[]).join(', ');
-    let html = '<div class="dec-action action-'+action+'">'+action+'</div>';
-    html += '<div class="dec-row"><span class="k">Symbol</span><span class="v">'+escapeHtml(ap.symbol||'')+'</span></div>';
-    html += '<div class="dec-row"><span class="k">Setup</span><span class="v">'+escapeHtml(ap.setup_id||'')+'</span></div>';
-    html += '<div class="dec-row"><span class="k">Stage</span><span class="v">'+escapeHtml(ap.stage||'')+'</span></div>';
-    html += '<div class="dec-row"><span class="k">Confidence</span><span class="v">'+escapeHtml(dec.confidence||'')+'</span></div>';
-    html += '<div class="dec-row"><span class="k">Risk tier</span><span class="v">'+escapeHtml(dec.risk_tier||'')+'</span></div>';
-    html += '<div class="dec-row"><span class="k">Direction score</span><span class="v">'+(dec.direction_score||0)+'</span></div>';
-    if (reasons) html += '<div class="dec-row"><span class="k">Reasons</span><span class="v" style="text-align:right;max-width:60%">'+escapeHtml(reasons)+'</span></div>';
-    if (mv && mv.direction) {
-      html += '<div class="macro-context"><strong>Macro context</strong>: '
-          +escapeHtml(mv.direction)+' (conf '+(mv.confidence||0).toFixed(2)+')'
-          +' · gate: '+escapeHtml(mv.gate_suggestion?.notes||'')+'</div>';
-    }
-    document.getElementById('decision-box').innerHTML = html;
-  }
+      <!-- Recent events -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <div class="panel-icon">{ICONS['activity']}</div>
+            <span>Recent Events</span>
+          </div>
+          <div class="panel-subtitle" id="events-count">—</div>
+        </div>
+        <div class="events-table">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width:120px">Time</th>
+                <th style="width:100px">Symbol</th>
+                <th style="width:120px">Stage</th>
+                <th>Pattern</th>
+                <th style="width:90px">Bias</th>
+                <th style="width:100px; text-align:right">Confluence</th>
+              </tr>
+            </thead>
+            <tbody id="events-tbody"></tbody>
+          </table>
+          <div id="events-empty" class="empty-pad" style="display:none">
+            No events yet.
+          </div>
+        </div>
+      </div>
 
-  // Events
-  if (events.length) {
-    const ec = document.getElementById('events-card');
-    ec.innerHTML = '';
-    events.slice(0,25).forEach(e=>{
-      const p = e.payload || {};
-      const ts = new Date(e.received_at||'');
-      const tstr = isNaN(ts.getTime()) ? '' : ts.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
-      const stage = (p.setup_stage||'watch').toLowerCase();
-      const conf = (p.confluence||'LOW').toUpperCase();
-      ec.innerHTML += '<div class="event-row">'
-        +'<span class="event-time">'+tstr+'</span>'
-        +'<span class="event-symbol">'+escapeHtml(p.symbol||'')+'</span>'
-        +'<span class="event-stage stage-'+stage+'">'+stage+'</span>'
-        +'<span class="event-bias">'+escapeHtml(p.pattern_type||'')+' · '+escapeHtml(p.bias||'')+'</span>'
-        +'<span class="confluence conf-'+conf+'">'+conf+'</span>'
-        +'</div>';
-    });
-  }
+    </div>
 
-  // Lifecycle
-  if (lifecycle && lifecycle.setups && lifecycle.setups.length) {
-    const lc = document.getElementById('lifecycle-card');
-    lc.innerHTML = '';
-    lifecycle.setups.slice(0,20).forEach(s=>{
-      lc.innerHTML += '<div class="event-row" style="grid-template-columns:100px 80px 1fr 80px">'
-        +'<span class="event-symbol">'+escapeHtml(s.setup_id||'')+'</span>'
-        +'<span class="event-stage stage-'+(s.current_state||'watch')+'">'+escapeHtml(s.current_state||'')+'</span>'
-        +'<span class="event-bias">'+(s.transition_count||0)+' transitions</span>'
-        +'<span class="event-time">'+((s.anomalies||[]).length)+' anomal</span>'
-        +'</div>';
-    });
-  }
-}
-load();
-</script>
-</body>
-</html>
-"""
+    <script>
+    function escapeHtml(s){{ if(s==null) return ''; return String(s).replace(/[&<>"']/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c])); }}
+
+    async function load(){{
+      try {{
+        const r = await fetch('/api/dashboard/tactical-state');
+        const data = await r.json();
+        render(data);
+      }} catch(e) {{
+        document.getElementById('loading').textContent = 'Failed to load: ' + e.message;
+      }}
+    }}
+
+    function render(state){{
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('content').style.display = 'block';
+
+      const banner = document.getElementById('status-banner');
+      if (!state.configured){{
+        banner.className = 'status-banner warn';
+        banner.innerHTML = '<b>Tactical URL not configured.</b> Set <code>MPA_TACTICAL_EXECUTOR_URL</code> in .env to pull live state.';
+        return;
+      }}
+      if (!state.health || (state.events === null && state.latest_decision === null)){{
+        banner.className = 'status-banner err';
+        banner.textContent = 'Tactical executor unreachable. Check the URL and service health.';
+      }} else {{
+        banner.className = 'status-banner ok';
+        banner.textContent = '● Connected to tactical-executor';
+      }}
+
+      const events = state.events || [];
+      const decision = state.latest_decision || {{}};
+
+      // KPIs
+      const uniq = new Set();
+      let trig = 0, inT = 0, closed = 0;
+      events.forEach(e => {{
+        const p = e.payload || {{}};
+        if (p.setup_id) uniq.add(p.setup_id);
+        const stage = (p.setup_stage || '').toLowerCase();
+        if (stage === 'trigger') trig++;
+        else if (stage === 'in_trade') inT++;
+        else if (stage === 'closed' || stage === 'invalidated') closed++;
+      }});
+      document.getElementById('kpi-setups').textContent = uniq.size;
+      document.getElementById('kpi-trigger').textContent = trig;
+      document.getElementById('kpi-in-trade').textContent = inT;
+      document.getElementById('kpi-closed').textContent = closed;
+      document.getElementById('kpi-events').textContent = events.length;
+
+      // Decision
+      if (decision && decision.decision){{
+        document.getElementById('decision-grid').style.display = 'grid';
+        const d = decision.decision;
+        const ap = decision.agent_packet || {{}};
+        const action = (d.action || 'WAIT').toUpperCase();
+        const big = document.getElementById('big-action');
+        big.textContent = action; big.className = 'big-action ' + action;
+
+        document.getElementById('dec-subtitle').textContent = escapeHtml(ap.symbol || '') + ' · ' + escapeHtml(ap.setup_id || '');
+
+        document.getElementById('dec-meta').innerHTML = [
+          `<span><b>Confidence:</b> ${{escapeHtml(d.confidence || '')}}</span>`,
+          `<span><b>Risk tier:</b> ${{escapeHtml(d.risk_tier || '')}}</span>`,
+          `<span><b>Stage:</b> ${{escapeHtml(ap.stage || '')}}</span>`,
+          `<span><b>Timeframe:</b> ${{escapeHtml(ap.timeframe || '')}}</span>`,
+        ].join('');
+
+        document.getElementById('dec-stats').innerHTML = [
+          `<div class="stat-box"><div class="label">Direction Score</div><div class="value">${{d.direction_score ?? 0}}</div></div>`,
+          `<div class="stat-box"><div class="label">Score</div><div class="value">${{ap.score ?? '—'}}</div></div>`,
+          `<div class="stat-box"><div class="label">Confluence</div><div class="value">${{ap.confluence || '—'}}</div></div>`,
+          `<div class="stat-box"><div class="label">Bias</div><div class="value">${{ap.bias || '—'}}</div></div>`,
+        ].join('');
+
+        document.getElementById('dec-reasons').innerHTML =
+          (d.reason_codes || []).map(r => `<span class="reason-pill">${{escapeHtml(r)}}</span>`).join('');
+
+        // Macro gate
+        const mv = decision.macro_view;
+        const gateBody = document.getElementById('macro-gate-body');
+        if (mv && mv.direction){{
+          const dir = mv.direction.toLowerCase();
+          const gate = mv.gate_suggestion || {{}};
+          gateBody.innerHTML = `
+            <div class="macro-gate-block">
+              <div class="head">
+                <span class="regime-indicator ${{dir}}"></span>
+                <span class="lbl">Macro View</span>
+              </div>
+              <div class="macro-gate-dir" style="color: var(--${{dir === 'bullish' ? 'green-2' : dir === 'bearish' ? 'red-2' : 'text-dim'}})">${{dir}}</div>
+              <div class="macro-gate-notes">${{escapeHtml(gate.notes || '')}}</div>
+              <div class="gate-stats">
+                <div class="stat-box"><div class="label">Conf</div><div class="value">${{((mv.confidence || 0) * 100).toFixed(0)}}%</div></div>
+                <div class="stat-box"><div class="label">Size mul</div><div class="value">${{(gate.size_multiplier || 1).toFixed(2)}}x</div></div>
+                <div class="stat-box"><div class="label">Long</div><div class="value">${{gate.allow_long ? '✓' : '✗'}}</div></div>
+                <div class="stat-box"><div class="label">Short</div><div class="value">${{gate.allow_short ? '✓' : '✗'}}</div></div>
+              </div>
+            </div>`;
+        }}
+      }}
+
+      // Active setups (unique by setup_id, keep most recent event's state)
+      const seen = new Map();
+      for (const e of events){{
+        const p = e.payload || {{}};
+        if (!p.setup_id) continue;
+        if (!seen.has(p.setup_id)) seen.set(p.setup_id, {{ payload: p, received_at: e.received_at }});
+      }}
+      const grid = document.getElementById('setups-grid');
+      const setupsCount = document.getElementById('setups-count');
+      const setups = Array.from(seen.values());
+      setupsCount.textContent = setups.length + ' tracked';
+      if (!setups.length){{
+        document.getElementById('setups-empty').style.display = 'block';
+      }} else {{
+        setups.slice(0, 12).forEach(({{ payload: p, received_at }}) => {{
+          const stage = (p.setup_stage || 'watch').toLowerCase();
+          grid.innerHTML += `
+            <div class="setup-card ${{stage}}">
+              <div class="setup-card-head">
+                <div>
+                  <div class="setup-symbol">${{escapeHtml(p.symbol || '—')}}</div>
+                  <div class="regime-indicator ${{stage === 'trigger' || stage === 'in_trade' ? 'bullish' : stage === 'invalidated' ? 'bearish' : 'neutral'}}" style="margin-top:4px">${{stage.replace('_', ' ')}}</div>
+                </div>
+                <span class="setup-id-chip">${{escapeHtml((p.setup_id || '').slice(0, 12))}}</span>
+              </div>
+              <div class="setup-stats-row">
+                <div class="stat-box"><div class="label">Bias</div><div class="value">${{escapeHtml(p.bias || '—')}}</div></div>
+                <div class="stat-box"><div class="label">Conf</div><div class="value">${{escapeHtml(p.confluence || '—')}}</div></div>
+                <div class="stat-box"><div class="label">Score</div><div class="value">${{p.score ?? '—'}}</div></div>
+              </div>
+              <div class="setup-footer">
+                <span>${{escapeHtml(p.pattern_type || '—')}}</span>
+                <span>${{escapeHtml(p.timeframe || '')}}</span>
+              </div>
+            </div>`;
+        }});
+      }}
+
+      // Events table
+      const tbody = document.getElementById('events-tbody');
+      document.getElementById('events-count').textContent = events.length + ' recent';
+      if (!events.length){{
+        document.getElementById('events-empty').style.display = 'block';
+      }} else {{
+        events.slice(0, 25).forEach(e => {{
+          const p = e.payload || {{}};
+          const t = new Date(e.received_at || '');
+          const tstr = isNaN(t.getTime()) ? '' : t.toLocaleString(undefined, {{ month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }});
+          const stage = (p.setup_stage || 'watch').toLowerCase();
+          const conf = (p.confluence || 'LOW').toUpperCase();
+          tbody.innerHTML += `
+            <tr>
+              <td class="muted mono" style="font-size:11px">${{tstr}}</td>
+              <td><b>${{escapeHtml(p.symbol || '')}}</b></td>
+              <td><span class="regime-indicator ${{stage === 'trigger' || stage === 'in_trade' ? 'bullish' : stage === 'invalidated' ? 'bearish' : 'neutral'}}">${{stage.replace('_', ' ')}}</span></td>
+              <td>${{escapeHtml(p.pattern_type || '—')}}</td>
+              <td>${{escapeHtml(p.bias || '—')}}</td>
+              <td class="num"><span class="pill ${{conf === 'HIGH' ? 'bullish' : conf === 'LOW' ? 'neutral' : 'mixed'}}">${{conf}}</span></td>
+            </tr>`;
+        }});
+      }}
+    }}
+    load();
+    </script>
+    """
+
+    return render_shell(
+        active="tactical",
+        body=body,
+        title="Macro Positioning · Tactical",
+        ticker_tag="Read-only",
+        ticker_label="Tactical state:",
+        ticker_value="Live stream from trading-agent-v1-codex (contract v1.0.0)",
+    )

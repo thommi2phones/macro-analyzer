@@ -1,10 +1,14 @@
 """FastAPI router for dashboard endpoints.
 
-Two primary dashboards:
-  - `/positioning` — trader-facing consumer UI (output view)
-  - `/dev` — builder-facing status UI (project/ops view)
+Routes:
+  /                           redirect → /terminal
+  /terminal                   platform hub (module launcher)
+  /positioning                macro output (operator primary)
+  /tactical                   tactical-executor inspection (read-only)
+  /dev                        builder/ops status
+  /guide                      platform reference
 
-Root `/` redirects to `/positioning`. JSON APIs at `/api/dashboard/*`.
+JSON APIs at /api/dashboard/*.
 """
 
 from __future__ import annotations
@@ -21,9 +25,11 @@ from macro_positioning.dashboard.checklist import (
 )
 from macro_positioning.dashboard.command_data import CommandCenterSnapshot, build_command_snapshot
 from macro_positioning.dashboard.dev_ui import dev_dashboard_html
+from macro_positioning.dashboard.guide_ui import guide_dashboard_html
 from macro_positioning.dashboard.ops_data import OpsSnapshot, build_ops_snapshot
 from macro_positioning.dashboard.output_ui import positioning_dashboard_html
 from macro_positioning.dashboard.tactical_ui import tactical_dashboard_html
+from macro_positioning.dashboard.terminal_hub import terminal_hub_html
 from macro_positioning.integration import tactical_client
 
 router = APIRouter()
@@ -42,6 +48,11 @@ def command_center_data() -> CommandCenterSnapshot:
     return build_command_snapshot()
 
 
+@router.get("/api/dashboard/tactical-state")
+def tactical_state() -> dict:
+    return tactical_client.fetch_tactical_snapshot()
+
+
 @router.get("/api/checklist", response_model=Checklist)
 def get_checklist() -> Checklist:
     return load_checklist()
@@ -57,40 +68,42 @@ def patch_checklist_item(item_id: str, status: str | None = None) -> JSONRespons
 
 # ---- HTML dashboards -------------------------------------------------------
 
+@router.get("/terminal", response_class=HTMLResponse)
+def terminal_hub() -> HTMLResponse:
+    """Platform hub — module launcher."""
+    return HTMLResponse(content=terminal_hub_html())
+
+
 @router.get("/positioning", response_class=HTMLResponse)
 def positioning_dashboard() -> HTMLResponse:
-    """Trader-facing output UI — the product."""
     return HTMLResponse(content=positioning_dashboard_html())
-
-
-@router.get("/dev", response_class=HTMLResponse)
-def dev_dashboard() -> HTMLResponse:
-    """Builder-facing status UI — checklist, brain activity, system health."""
-    return HTMLResponse(content=dev_dashboard_html())
 
 
 @router.get("/tactical", response_class=HTMLResponse)
 def tactical_dashboard() -> HTMLResponse:
-    """Read-only inspection view of tactical-executor state."""
     return HTMLResponse(content=tactical_dashboard_html())
 
 
-@router.get("/api/dashboard/tactical-state")
-def tactical_state() -> dict:
-    """Combined tactical snapshot for the /tactical dashboard."""
-    return tactical_client.fetch_tactical_snapshot()
+@router.get("/dev", response_class=HTMLResponse)
+def dev_dashboard() -> HTMLResponse:
+    return HTMLResponse(content=dev_dashboard_html())
+
+
+@router.get("/guide", response_class=HTMLResponse)
+def guide_dashboard() -> HTMLResponse:
+    return HTMLResponse(content=guide_dashboard_html())
 
 
 @router.get("/")
 def root_redirect() -> RedirectResponse:
-    return RedirectResponse(url="/positioning", status_code=307)
+    return RedirectResponse(url="/terminal", status_code=307)
 
 
 # ---- Legacy redirects (keep old URLs working) ------------------------------
 
 @router.get("/dashboard")
 def dashboard_redirect() -> RedirectResponse:
-    return RedirectResponse(url="/positioning", status_code=307)
+    return RedirectResponse(url="/terminal", status_code=307)
 
 
 @router.get("/dashboard/ops")

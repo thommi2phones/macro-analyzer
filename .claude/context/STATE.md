@@ -1,6 +1,6 @@
 # Current State
 
-_Last updated: 2026-05-09_
+_Last updated: 2026-05-09 (manual-input-layer planning complete)_
 
 ## Active Task
 
@@ -11,8 +11,43 @@ momentum. The data flywheel infrastructure exists (agent_call_log, source_outcom
 training_corpus/) but no learning queries / model retraining wired yet.
 
 Two parallel work tracks:
-1. **Manual input layer** — moved to separate chat session
-2. **ML / learning loop** — needs design + build (this session's open scope)
+1. **Manual input layer** — plan approved, ready to build in a fresh session.
+   Plan at `~/.claude/plans/manual-input-layer-also-hazy-island.md`.
+2. **ML / learning loop** — needs design + build (still open).
+
+## Manual Input Layer — APPROVED PLAN, ready to build
+
+**Cold-start instructions for the next session:**
+1. Read `~/.claude/plans/manual-input-layer-also-hazy-island.md` (full plan).
+2. Read this STATE.md and `.claude/agents/app/CLAUDE.md` (Application Agent scope).
+3. Execute Step 0 first: relocate `/Users/thom/Documents/Personal/Code Projects/trading_agent/`
+   into the macro-analyzer repo as `vendor/trading_agent/` (filesystem move).
+4. Then schema migration → backend (`src/macro_positioning/manual/*`, `api/manual_input.py`)
+   → SPA `/inbox` route → verification per plan §Verification.
+
+**Locked design decisions (do NOT relitigate):**
+- UI = dedicated `/inbox` route (4th tab).
+- Metadata fields per drop: ticker, side, source_author, source_channel, blurb,
+  conviction (1-5), timeframe (1H/4H/1D/1W). Auto-extract via pre_tagger +
+  mention_extractor; user reviews/corrects every field before commit.
+- Author + channel as first-class fields (not free text) — new `input_authors`
+  table because per-author hit-rate tracking is a real product concern.
+- Build Piece 1 only this round (capture + DB + UI, NO LLM call). Piece 2
+  (Gemini vision) wired next session as a one-line flip on a stub that's
+  scaffolded now.
+- Vision backend = Gemini 2.5 Pro via existing `brain/vision.py`. Ported
+  prompt = `config/manual_chart_framework.md` (copy of trading_agent's
+  `config/chart_analysis_framework.md`, 352 lines). Do NOT port Anthropic
+  API call from trading_agent — only its prompt + schema + parsing.
+- Schema changes are append-only: new `input_authors` table; 4 new nullable
+  columns on `documents` (`author_id`, `user_metadata_json`, `attachment_path`,
+  `extracted_features_json`).
+
+**What gets ported from trading_agent (vendor/) into src/macro_positioning/manual/:**
+- `TradeRecord` Pydantic model → `manual/models.py`
+- `chat_analyzer.py` → `manual/chat_parser.py` (LLM call disabled in Piece 1)
+- `image_analyzer.py` prompt + schema → fed into Gemini path in Piece 2
+- `chart_analysis_framework.md` → `config/manual_chart_framework.md`
 
 ## Progress
 
@@ -49,7 +84,7 @@ Two parallel work tracks:
   "LLM stack" entry.
 
 ### Open scope
-- [ ] Manual input layer (drag-drop charts/text → brain) — **separate chat**
+- [ ] Manual input layer (drag-drop charts/text → brain) — **plan approved, build in fresh session**
 - [ ] ML / learning loop infrastructure (see "Next Steps" below)
 - [ ] Real LLM-backed agents (regime + narrative; burns tokens)
 - [ ] Volume + sector_theme scorers (read existing data; no LLM cost)

@@ -4,6 +4,42 @@ Append-only. Never delete entries. Most recent first.
 
 ---
 
+## 2026-05-09 — Manual input layer: relocate trading_agent into repo as vendor/, port not import
+
+**Decision:** When building the manual input layer, first relocate the
+sibling project `/Users/thom/Documents/Personal/Code Projects/trading_agent/`
+into the macro-analyzer repo as `vendor/trading_agent/` (filesystem move,
+preserved as a read-only reference). Then **selectively port** specific
+files into `src/macro_positioning/manual/` rather than importing from
+`vendor/`. Specifically: port `TradeRecord` Pydantic model, `chat_analyzer.py`,
+`image_analyzer.py` prompt + schema, and `chart_analysis_framework.md`.
+Do NOT port `image_analyzer.py`'s Anthropic API call — Piece 2 vision will
+reuse the existing Gemini path in `brain/vision.py`.
+
+Manual input layer also adds: new `input_authors` table for first-class
+author/channel attribution (gap in trading_agent), four nullable columns
+on `documents` (append-only schema change), and a dedicated `/inbox` SPA
+route (4th nav tab). Build Piece 1 only first (capture + DB + UI, no LLM).
+
+**Rationale:** trading_agent has working chart-vision, chat-export parsing,
+a comprehensive `TradeRecord` schema, and a 352-line chart-analysis prompt
+that took real effort to author. Rewriting any of it would be wasteful.
+Vendoring keeps the source next to the work for diff-based porting and
+avoids cross-repo path coupling. Single Gemini vision backend (already
+unlimited on the account) is simpler than two LLM providers in the codebase.
+Author/channel as first-class fields is necessary for the user's stated
+goal of long-term per-author hit-rate tracking — free-text source_id
+won't aggregate.
+
+**Alternatives:** Import trading_agent as a Python package (rejected —
+brittle path coupling, two repos to keep coherent); rewrite from scratch
+in macro_positioning style (rejected — wastes the framework prompt and
+schema work); use Claude Opus for vision per trading_agent's original
+choice (rejected — Gemini is already wired, free, and equally capable for
+chart structure).
+
+---
+
 ## 2026-05-09 — LLM stack: Gemini for vision, separate deep_research slot for narrative; no own-LLM yet
 
 **Decision:** Use Gemini 2.5 Pro (already wired, unlimited on the account)

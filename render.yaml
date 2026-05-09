@@ -1,0 +1,105 @@
+# Render service config — macro-analyzer
+# https://render.com/docs/blueprint-spec
+#
+# Scaffolded ahead of deployment. Not yet deployed; review and flip the
+# `databases:` / `crons:` sections to match the chosen plan tier before
+# `render deploy` (or pushing to a connected repo).
+
+services:
+  # ─── Web service ─────────────────────────────────────────────────────
+  - type: web
+    name: macro-analyzer
+    runtime: python
+    plan: starter         # $7/mo; "free" works for trial but sleeps after 15min idle
+    region: oregon
+    branch: main
+    autoDeploy: true
+
+    # `uv` is not preinstalled on Render's Python runtime. Use pip with the
+    # generated requirements file (see DEPLOYMENT.md for the export step).
+    buildCommand: pip install -r requirements.txt && pip install -e .
+
+    # Render injects $PORT; bind 0.0.0.0 explicitly.
+    startCommand: uvicorn macro_positioning.api.main:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /api/desk/data
+
+    # Persistent disk for SQLite + uploaded chart images. Mounted at
+    # /var/data so the dynamic data/ directory in the project root can
+    # be a symlink or env-var override.
+    disk:
+      name: macro-data
+      mountPath: /var/data
+      sizeGB: 1            # SQLite + a few thousand chart uploads fit easily
+
+    envVars:
+      # Where SQLite + uploads live (persistent disk root).
+      - key: MPA_DATABASE_URL
+        value: sqlite:////var/data/macro_positioning.db
+      - key: MPA_BASE_DIR
+        value: /var/data
+
+      # Single-user bearer auth for the public URL. Generate once with
+      # `python -c "import secrets; print(secrets.token_urlsafe(32))"` and
+      # set in Render dashboard. SPA reads from a same-origin cookie set
+      # at /login (not yet built — see DEPLOYMENT.md "auth stub").
+      - key: MPA_AUTH_TOKEN
+        sync: false        # set in Render dashboard, not in repo
+
+      # LLM keys — set in Render dashboard.
+      - key: MPA_GEMINI_API_KEY
+        sync: false
+      - key: MPA_ANTHROPIC_API_KEY
+        sync: false
+      - key: MPA_FRED_API_KEY
+        sync: false
+
+      # Optional integrations (leave unset until needed).
+      - key: MPA_N8N_WEBHOOK_URL
+        sync: false
+      - key: MPA_N8N_VISION_WEBHOOK_URL
+        sync: false
+      - key: MPA_TACTICAL_WEBHOOK_URL
+        sync: false
+
+      - key: PYTHON_VERSION
+        value: "3.13"
+
+  # ─── Cron: daily price fetch ─────────────────────────────────────────
+  # Render Cron Jobs require the paid plan (~$7/mo each). Until then,
+  # the alternatives are:
+  #   • Run inside the web service via APScheduler (works on free tier
+  #     but sleeps when the service does — bad fit for daily fetches)
+  #   • External: GitHub Actions schedule → curl an authenticated
+  #     /api/cron/score POST endpoint (zero cost, requires the endpoint)
+  #
+  # Flip from `# - type:` to `- type:` when ready and matches MPA plan.
+  # - type: cron
+  #   name: macro-prices-fetch
+  #   runtime: python
+  #   plan: starter
+  #   region: oregon
+  #   branch: main
+  #   schedule: "30 21 * * 1-5"      # 21:30 UTC = 16:30 ET, post-close
+  #   buildCommand: pip install -r requirements.txt && pip install -e .
+  #   startCommand: python -m macro_positioning.cli prices fetch --watchlist
+  #   envVars:
+  #     - fromService:
+  #         name: macro-analyzer
+  #         type: web
+  #         envVarKey: MPA_DATABASE_URL
+  #     - fromService:
+  #         name: macro-analyzer
+  #         type: web
+  #         envVarKey: MPA_BASE_DIR
+
+  # ─── Cron: score run (every 30min during US market hours) ────────────
+  # - type: cron
+  #   name: macro-score-run
+  #   runtime: python
+  #   plan: starter
+  #   region: oregon
+  #   branch: main
+  #   schedule: "*/30 13-21 * * 1-5"  # 13:00–21:00 UTC = 09:00–17:00 ET
+  #   buildCommand: pip install -r requirements.txt && pip install -e .
+  #   startCommand: python -m macro_positioning.cli score run

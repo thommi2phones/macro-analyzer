@@ -1,6 +1,9 @@
 # Data Sources Catalogue
 
-Reference: data sources and API integrations for the Macro Positioning Analyzer, discovered by auditing [Urban Kaoberg](https://urbankaoberg.com/) network traffic and mapped to our pipeline.
+> **Last updated:** 2026-05-09
+> **Cross-references:** `docs/architecture_overview.md §Intelligence Layer`, `docs/architecture.md §Intelligence Layer: Classifier Details`
+
+Reference: data sources and API integrations for the Macro Positioning Analyzer. FRED series catalogue audited against [Urban Kaoberg](https://urbankaoberg.com/) network traffic and expanded to support the intelligence layer classifiers.
 
 ---
 
@@ -17,7 +20,7 @@ Reference: data sources and API integrations for the Macro Positioning Analyzer,
 | **Base URL** | `https://api.stlouisfed.org/fred/series/observations` |
 | **Config** | `MPA_FRED_API_KEY` in `.env` |
 
-Covers the vast majority of macro data: rates, inflation, labor, growth, consumer, housing, fiscal, financial conditions, geopolitical risk indices, and cross-asset correlation inputs.
+51 series fetched across 9 categories. Three categories — **Intelligence Layer** below — are consumed by the classifiers in `macro_indicators.py` before the LLM synthesis call.
 
 #### FRED Series Catalogue
 
@@ -30,14 +33,14 @@ Covers the vast majority of macro data: rates, inflation, labor, growth, consume
 | `DGS2` | 2Y Treasury Yield | % |
 | `DGS30` | 30Y Treasury Yield | % |
 | `T10Y2Y` | 10Y-2Y Spread | bps |
-| `T10YIE` | 10Y Breakeven Inflation | % |
+| `T10YIE` | 10Y Breakeven Inflation | % ← **quadrant classifier (inflation primary)** |
 | `DFII10` | 10Y Real Yield | % |
 
 **Inflation**
 
 | Series ID | Metric | Unit |
 |-----------|--------|------|
-| `CPIAUCSL` | CPI All Urban Consumers | index |
+| `CPIAUCSL` | CPI All Urban Consumers | index ← **quadrant classifier (inflation fallback)** |
 | `PPIACO` | PPI All Commodities | index |
 | `PCEPI` | PCE Price Index | index |
 | `PCEPILFE` | Core PCE Price Index | index |
@@ -55,8 +58,8 @@ Covers the vast majority of macro data: rates, inflation, labor, growth, consume
 
 | Series ID | Metric | Unit |
 |-----------|--------|------|
-| `A191RL1Q225SBEA` | Real GDP QoQ Annualised | % |
-| `INDPRO` | Industrial Production Index | index |
+| `A191RL1Q225SBEA` | Real GDP QoQ Annualised | % ← **quadrant classifier (growth primary)** |
+| `INDPRO` | Industrial Production Index | index ← **quadrant classifier (growth fallback)** |
 | `DGORDER` | Durable Goods Orders | millions $ |
 | `BOPGSTB` | Trade Balance Goods & Services | millions $ |
 
@@ -85,32 +88,36 @@ Covers the vast majority of macro data: rates, inflation, labor, growth, consume
 |-----------|--------|------|
 | `MTSDS133FMS` | Federal Surplus/Deficit | millions $ |
 
-**Financial Conditions**
+**Financial Conditions** ← FCI classifier inputs
+
+| Series ID | Metric | Unit | Classifier role |
+|-----------|--------|------|-----------------|
+| `NFCI` | Chicago Fed NFCI | index | **FCI primary** (used directly) |
+| `ANFCI` | Adjusted NFCI | index | FCI supporting context |
+| `STLFSI4` | St. Louis Fed Financial Stress Index | index | FCI supporting context |
+| `VIXCLS` | VIX | index | FCI sub-indicator (scale: 20.0, weight: 0.05) |
+| `DTWEXBGS` | Trade-Weighted USD | index | Context only |
+| `DFF` | Effective Fed Funds Rate | % | Context only |
+| `SOFR` | SOFR | % | Context only |
+| `TEDRATE` | TED Spread | % | FCI sub-indicator (scale: 0.5, weight: 0.60) |
+| `BAMLH0A0HYM2` | HY OAS Spread | % | FCI sub-indicator (scale: 4.0, weight: 0.20) |
+
+FCI label thresholds: `NFCI > 0.3` → tightening, `< -0.3` → easing, else neutral.
+
+**Geopolitical Risk** ← EPU classifier inputs
 
 | Series ID | Metric | Unit |
 |-----------|--------|------|
-| `NFCI` | Chicago Fed NFCI | index |
-| `ANFCI` | Adjusted NFCI | index |
-| `STLFSI4` | St. Louis Fed Financial Stress Index | index |
-| `VIXCLS` | VIX | index |
-| `DTWEXBGS` | Trade-Weighted USD | index |
-| `DFF` | Effective Fed Funds Rate | % |
-| `SOFR` | SOFR | % |
-| `TEDRATE` | TED Spread | % |
-| `BAMLH0A0HYM2` | HY OAS Spread | % |
+| `USEPUINDXD` | US Economic Policy Uncertainty (daily) | index (~100 = avg) |
+| `GEPUCURRENT` | Global EPU Index | index (~100 = avg) |
+| `EPUTRADE` | Trade Policy Uncertainty | index (~100 = avg) |
+| `EPUFISCAL` | Fiscal Policy Uncertainty | index (~100 = avg) |
+| `EPUMONETARY` | Monetary Policy Uncertainty | index (~100 = avg) |
+| `EMVNATSEC` | Equity Market Vol: National Security | index (~100 = avg) |
 
-**Geopolitical Risk**
+EPU composite = simple average of available series. Level: `> 150` → elevated, `< 80` → low, else moderate. Dominant driver = series with highest absolute deviation from 100.
 
-| Series ID | Metric | Unit |
-|-----------|--------|------|
-| `USEPUINDXD` | US Economic Policy Uncertainty (daily) | index |
-| `GEPUCURRENT` | Global EPU Index | index |
-| `EPUTRADE` | Trade Policy Uncertainty | index |
-| `EPUFISCAL` | Fiscal Policy Uncertainty | index |
-| `EPUMONETARY` | Monetary Policy Uncertainty | index |
-| `EMVNATSEC` | Equity Market Vol: National Security | index |
-
-**Cross-Asset (for correlation matrix)**
+**Cross-Asset (for correlation matrix — planned)**
 
 | Series ID | Metric | Unit |
 |-----------|--------|------|
@@ -127,16 +134,8 @@ Covers the vast majority of macro data: rates, inflation, labor, growth, consume
 | Series ID | Metric | Unit |
 |-----------|--------|------|
 | `FDHBFIN` | Foreign-Held Federal Debt | millions $ |
-| `BOPGSTB` | Trade Balance | millions $ |
 | `BOPBCA` | Current Account Balance | millions $ |
 | `GFDEBTN` | Total Public Debt Outstanding | millions $ |
-
-**Macro Regime** (Growth vs Inflation quadrant)
-
-| Series ID | Use |
-|-----------|-----|
-| `INDPRO` | Growth momentum (3-month change in YoY) |
-| `CPIAUCSL` | Inflation momentum (3-month change in YoY) |
 
 ---
 
@@ -147,7 +146,6 @@ Covers the vast majority of macro data: rates, inflation, labor, growth, consume
 | **Status** | Not yet integrated |
 | **Cost** | Freemium — 250 calls/day free, paid $19-79/month |
 | **Sign-up** | https://site.financialmodelingprep.com/developer/docs |
-| **Rate limit** | 250 calls/day (free), up to 10,000/day (paid) |
 | **Config** | `MPA_FMP_API_KEY` (to be added) |
 
 Used by Urban Kaoberg for historical OHLCV price data on equities, commodities, and FX. Also provides an economic calendar on paid plans.
@@ -157,12 +155,7 @@ Used by Urban Kaoberg for historical OHLCV price data on equities, commodities, 
 - `/api/v3/quote/{symbol}` — real-time (15-min delayed free) quotes
 - `/api/v3/economic_calendar` — economic events (Premium+ only)
 
-**Tickers observed:**
-- Equities: SPY, QQQ, IWM, DIA, EEM, EFA, VTI, XLK, XLF, XLE, XLV, SOXX
-- Commodities: BZUSD, CLUSD, NGUSD, HOUSD, RBUSD, GCUSD, SIUSD, HGUSD, PLUSD, ZCUSX, KEUSX, ZSUSX, LEUSX, GFUSX, HEUSX, KCUSX, CCUSD, SBUSX, CTUSX
-- FX: DX-Y.NYB, EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, USDCAD, NZDUSD, USDSEK, USDNOK, USDMXN
-
-**Free tier gotcha:** 250 calls/day is tight. Fetching all the above tickers daily eats ~45 calls just for prices. Economic calendar requires $49+/month.
+**Free tier gotcha:** 250 calls/day is tight for the full ticker universe.
 
 ---
 
@@ -171,19 +164,11 @@ Used by Urban Kaoberg for historical OHLCV price data on equities, commodities, 
 | | |
 |---|---|
 | **Status** | Not yet integrated |
-| **Cost** | Freemium — 60 calls/minute free, paid $49-99/month |
+| **Cost** | Freemium — 60 calls/minute free |
 | **Sign-up** | https://finnhub.io/register |
-| **Rate limit** | 60 calls/minute (free) |
 | **Config** | `MPA_FINNHUB_API_KEY` (to be added) |
 
-Used by Urban Kaoberg for per-ticker news headlines with AI-classified sentiment. Also provides general market news.
-
-**Key endpoints:**
-- `/api/v1/company-news?symbol={ticker}&from=YYYY-MM-DD&to=YYYY-MM-DD` — ticker-specific news
-- `/api/v1/news?category=general` — general market news (categories: general, forex, crypto, merger)
-- `/api/v1/calendar/economic` — economic events calendar
-
-**Notes:** Free tier includes basic sentiment labels (positive/negative/neutral). Attribution required when displaying data.
+Per-ticker news with AI-classified sentiment. Also general market news.
 
 ---
 
@@ -192,56 +177,67 @@ Used by Urban Kaoberg for per-ticker news headlines with AI-classified sentiment
 | | |
 |---|---|
 | **Status** | Not yet integrated |
-| **Cost** | Free, no API key required |
-| **Rate limit** | Unofficial — poll every 15-30 minutes to be safe |
+| **Cost** | Free, no API key |
+| **Rate limit** | Poll every 15-30 min to be safe |
 
-Used by Urban Kaoberg for broad macro/geopolitical headlines by category, which are then classified by their AI sentiment pipeline.
+Feed pattern: `https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en`
 
-**Feed pattern:**
-```
-https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en
-```
+---
 
-**Useful queries for macro analysis:**
-- `economy macro outlook`
-- `federal reserve interest rates`
-- `inflation CPI PPI`
-- `oil commodities gold`
-- `geopolitics sanctions tariffs`
-- `stock market equities`
-- `currency forex dollar`
+### 5. COT Data (CFTC) — PHASE C, DEFERRED
 
-**Notes:** No sentiment data included — requires own NLP pipeline or LLM classification. No historical data; must poll and store. No SLA.
+| | |
+|---|---|
+| **Status** | Deferred — not built |
+| **Cost** | Free (public domain) |
+| **Source** | CFTC weekly Commitments of Traders reports |
+| **Planned file** | `src/macro_positioning/market/cot_provider.py` |
+
+Urban Kaoberg's commodities module includes COT positioning data (net long/short by commercial vs non-commercial traders). This was identified as one of the 5 Urban Kaoberg intelligence items to adopt.
+
+**Why deferred:** Requires CFTC CSV parsing or a Quandl/commodity_data API connector. The data is weekly and less time-critical than the FRED-based classifiers. Will be prioritized after Phase A (classifiers) and Phase B (SPA dashboard) are validated.
+
+**What it would enable:**
+- For each commodity (crude, gold, natgas, corn, etc.): net speculative positioning as a contrarian/confirmation signal
+- Positioning extremes (>95th percentile) flagged on the asset breakdown view
+- COT data block injected into the synthesis prompt alongside regime/FCI/EPU
 
 ---
 
 ## Urban Kaoberg Platform Reference
 
-The above APIs were discovered by auditing network requests from [urbankaoberg.com](https://urbankaoberg.com/), a macro financial dashboard (beta) by Kaoboy Holdings, LLC.
+[urbankaoberg.com](https://urbankaoberg.com/) — macro financial dashboard (beta) by Kaoboy Holdings, LLC. Used as an architectural reference. Network traffic audit revealed their FRED series list and module structure.
 
-### Platform Module Map
+### What we adopted from Urban Kaoberg (2026-05 sprint)
 
-**Asset Class Tabs:** MACRO, EQUITIES, CREDIT, RATES, FX, COMMODITIES, FUNDS, CRYPTO, Special Sits, PORTFOLIO
+| Urban Kaoberg feature | What we built | Status |
+|---|---|---|
+| Macro Regime quadrant (Goldilocks/Reflation/Stagflation/Deflation) | `classify_growth_inflation_quadrant()` in `macro_indicators.py` | ✅ Built |
+| Financial Conditions Index (NFCI + z-scores) | `compute_fci()` in `macro_indicators.py` | ✅ Built |
+| Geopolitics / EPU risk dashboard | `compute_geopolitical_risk()` in `macro_indicators.py` | ✅ Built |
+| Asset class grouping (EQUITIES / RATES / CREDIT / etc.) | `AssetBreakdown.asset_class` + `_THEME_TO_ASSET_CLASS` in `command_data.py` | ✅ Built |
+| COT data (Forward Curves, Commodity Spreads, COT) | `cot_provider.py` | ⏳ Phase C, deferred |
+
+The three classifiers are injected into the LLM synthesis prompt (`brain/prompts.py`) as structured blocks, so the LLM explicitly references regime, FCI, and EPU when justifying direction and confidence.
+
+### Urban Kaoberg Module Map (reference)
 
 **Macro Analytical Modules:**
 
 | Module | Data Source | Key Content |
 |--------|-------------|-------------|
-| Dashboard (AI) | FRED + FMP | 32+ economic indicators across 8 categories with auto-refresh on release days |
-| Geopolitics | FRED | Risk dashboard with EPU indices, trade/fiscal/monetary uncertainty; sanctions, elections, energy security trackers |
-| Calendar | FMP | Economic events calendar |
-| Fin Conditions | FRED | NFCI, STLFSI, VIX, USD, Fed Funds, SOFR, TED Spread, HY Spreads — with z-scores and percentile rankings |
+| Dashboard (AI) | FRED + FMP | 32+ economic indicators, auto-refresh on release days |
+| Geopolitics | FRED | EPU risk dashboard (trade/fiscal/monetary uncertainty) |
+| Calendar | FMP | Economic events |
+| Fin Conditions | FRED | NFCI, STLFSI, VIX, USD, TED Spread, HY Spreads (z-scores + percentile) |
 | Capital Flows | FRED | Foreign-held debt, trade balance, current account, TIC net flows |
-| Correlations | FRED | Cross-asset correlation matrix (30/60/90-day rolling windows) across equities, rates, FX, commodities |
-| Macro Regime | FRED | Growth vs inflation quadrant (Goldilocks/Reflation/Stagflation/Deflation) with asset class performance expectations |
+| Correlations | FRED | Cross-asset correlation matrix (30/60/90-day rolling) |
+| Macro Regime | FRED | Growth vs inflation quadrant with asset class performance expectations |
 | Trade Signals (AI) | TBD | Appears under construction |
-| News (AI) | Finnhub + Google News RSS + OpenAI | AI-classified headlines with BULLISH/BEARISH/NEUTRAL sentiment |
+| News (AI) | Finnhub + Google News RSS + OpenAI | AI-classified headlines with BULLISH/BEARISH/NEUTRAL |
 
-**Per-Asset Module Types:**
-- Charts (FMP OHLCV data, technical overlays, oscillators)
-- AI Analysis, Screener, Heatmaps, Sectors, Scatter, Volatility, World (equities)
-- Forward Curves, Commodity Spreads, COT, Energy Inventories (commodities)
-- FX Matrix, Rate Differentials, Fair Value, FX Flows (currencies)
+**Per-Asset Modules (commodities specific):**
+- Forward Curves, Commodity Spreads, **COT**, Energy Inventories
 
 ---
 
@@ -249,7 +245,8 @@ The above APIs were discovered by auditing network requests from [urbankaoberg.c
 
 | # | Provider | Cost | Covers | Status |
 |---|----------|------|--------|--------|
-| 1 | **FRED** | Free | Macro indicators, fin conditions, geopolitics, correlations, regime | Integrated |
+| 1 | **FRED** | Free | Macro indicators, fin conditions, geopolitics, regime classifiers | ✅ Integrated |
 | 2 | **Finnhub** | Free (60/min) | Per-ticker news + sentiment | Next |
 | 3 | **Google News RSS** | Free | Broad macro headlines | Next |
 | 4 | **FMP** | Freemium (250/day) | OHLCV prices, economic calendar | Later |
+| 5 | **CFTC COT** | Free | Speculative positioning in commodities/FX/rates | Phase C |

@@ -51,6 +51,92 @@ from macro_brain.agents.regime_classifier.classifier import classify_regime_stub
 
 
 # ---------------------------------------------------------------------------
+# Macro indicator strip — 1-hour in-process cache
+# ---------------------------------------------------------------------------
+
+_INDICATORS_CACHE: dict = {"ts": 0.0, "data": None}
+_INDICATORS_TTL_S = 3600
+
+# Minimal FRED series needed for the three classifiers (avoids fetching all 50+)
+_INDICATOR_FRED_SERIES = {
+    "A191RL1Q225SBEA": ("growth", "Real GDP QoQ Annualised", "%"),
+    "INDPRO":          ("growth", "Industrial Production Index", "index"),
+    "T10YIE":          ("rates", "10Y Breakeven Inflation", "%"),
+    "CPIAUCSL":        ("inflation", "CPI All Urban Consumers", "index"),
+    "NFCI":            ("financial_conditions", "Chicago Fed NFCI", "index"),
+    "ANFCI":           ("financial_conditions", "Adjusted NFCI", "index"),
+    "VIXCLS":          ("financial_conditions", "VIX", "index"),
+    "TEDRATE":         ("financial_conditions", "TED Spread", "%"),
+    "BAMLH0A0HYM2":    ("financial_conditions", "HY OAS Spread", "%"),
+    "USEPUINDXD":      ("geopolitics", "US EPU (daily)", "index"),
+    "GEPUCURRENT":     ("geopolitics", "Global EPU", "index"),
+    "EPUTRADE":        ("geopolitics", "Trade Policy Uncertainty", "index"),
+    "EPUFISCAL":       ("geopolitics", "Fiscal Policy Uncertainty", "index"),
+    "EPUMONETARY":     ("geopolitics", "Monetary Policy Uncertainty", "index"),
+    "EMVNATSEC":       ("geopolitics", "Equity Vol: National Security", "index"),
+}
+
+
+def _build_macro_indicators() -> dict | None:
+    """Fetch FRED + COT data, run classifiers, return indicator strip dict.
+
+    Caches result for 1 hour to avoid FRED round-trips on every dashboard load.
+    Returns None on any failure so the strip silently hides itself.
+    """
+    now = datetime.now(UTC).timestamp()
+    if _INDICATORS_CACHE["ts"] > now - _INDICATORS_TTL_S and _INDICATORS_CACHE["data"] is not None:
+        return _INDICATORS_CACHE["data"]
+
+    try:
+        from macro_positioning.market.fred_provider import FREDMarketDataProvider
+        from macro_positioning.market.macro_indicators import (
+            classify_growth_inflation_quadrant,
+            compute_fci,
+            compute_geopolitical_risk,
+            compute_cot_positioning,
+        )
+        from macro_positioning.market.cot_provider import fetch_cot_readings
+
+        provider = FREDMarketDataProvider(series=_INDICATOR_FRED_SERIES, timeout=10.0)
+        obs = provider.gather(theses=[])
+
+        quadrant = classify_growth_inflation_quadrant(obs)
+        fci = compute_fci(obs)
+        epu = compute_geopolitical_risk(obs)
+
+        cot_readings = fetch_cot_readings()
+        cot = compute_cot_positioning(cot_readings)
+
+        top_extreme = cot.extremes[0] if cot.extremes else None
+
+        result: dict = {
+            "quadrant":         quadrant.quadrant,
+            "growthSignal":     quadrant.growth_signal,
+            "inflationSignal":  quadrant.inflation_signal,
+            "quadrantConf":     quadrant.confidence,
+            "fciLabel":         fci.label,
+            "fciScore":         fci.score,
+            "epuLevel":         epu.level,
+            "epuComposite":     epu.composite_score,
+            "epuDriver":        epu.dominant_driver,
+            "cotTopSignal":     top_extreme.signal if top_extreme else "neutral",
+            "cotTopMarket":     top_extreme.market if top_extreme else None,
+            "cotTopNetPctOi":   top_extreme.net_pct_oi if top_extreme else None,
+            "cotExtremesCount": len(cot.extremes),
+            "cotAsOf":          cot.as_of.isoformat() if cot.as_of else None,
+        }
+
+        _INDICATORS_CACHE["ts"] = now
+        _INDICATORS_CACHE["data"] = result
+        return result
+
+    except Exception as exc:
+        import sys
+        print(f"[desk] macro indicators build failed: {exc}", file=sys.stderr)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Lookup tables
 # ---------------------------------------------------------------------------
 
@@ -87,13 +173,13 @@ _SOURCE_TYPE_DISPLAY = {
 # ---------------------------------------------------------------------------
 
 def build_regime_section() -> dict:
-    """Active regime read with seeded transition + confidenceTrace."""
+    """Active regime read with seeded transition + confidenceTrace + indicator strip."""
     regime = classify_regime_stub(hint_thesis_regime="commodity_expansion")
     bias, sizing, score_mod = _REGIME_BIASES.get(
         regime.framework_regime,
         ("neutral", 1.0, 0),
     )
-    return {
+    out = {
         "framework": {
             "label": _FRAMEWORK_REGIME_LABELS.get(regime.framework_regime, regime.framework_regime),
             "slug": regime.framework_regime,
@@ -126,6 +212,8 @@ def build_regime_section() -> dict:
             },
         ],
     }
+    out["indicators"] = _build_macro_indicators()  # None = strip hides itself
+    return out
 
 
 def build_kpis_section() -> dict:

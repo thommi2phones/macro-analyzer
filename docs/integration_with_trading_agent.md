@@ -1,5 +1,8 @@
 # Integration Contract: Macro Analyzer ↔ Trading Agent V1
 
+> **Last updated:** 2026-05-09
+> **Cross-references:** `docs/architecture_overview.md §Contracts Between Layers`
+
 ## Purpose
 
 This document defines the contract between the **Macro Analyzer** (this repo)
@@ -30,23 +33,27 @@ either can run without the other.
 │  Outputs:            │           │  Outputs:            │
 │  - Directional theses│           │  - LONG/SHORT/WAIT   │
 │  - Positioning memo  │           │  - Per-setup decision│
+│  - Regime quadrant   │           │                      │
+│  - FCI score         │           │                      │
+│  - EPU risk level    │           │                      │
 └──────────┬───────────┘           └──────────┬───────────┘
            │                                   │
            │         INTEGRATION LAYER         │
            │                                   │
            │  ① Macro view → tactical gate     │
            │  ② Trade outcomes → source score  │
+           │  ③ Tactical events → signal annot │
            └───────────────────────────────────┘
 ```
 
-- **Macro Analyzer** tells you *what to be long/short directionally* (commodities bullish, rates bullish, equities bearish).
-- **Trading Agent** tells you *when and how to enter a specific setup* (AAPL long at 182.50, stop 179.80, TP 189).
+- **Macro Analyzer** tells you *what to be long/short directionally* and *what the regime is*.
+- **Trading Agent** tells you *when and how to enter a specific setup*.
 
 ---
 
 ## Why Separate Repos
 
-1. **Different tech stacks** — Python/FastAPI vs Node/Next.js. Merging forces a rewrite.
+1. **Different tech stacks** — Python/FastAPI vs Node.js. Merging forces a rewrite.
 2. **Different cadences** — Macro is batch/on-demand; Trading Agent is real-time webhook-driven.
 3. **Different deployment** — Trading Agent runs 24/7 on Render; Macro Analyzer is local/research.
 4. **Risk isolation** — changes to macro framework can't break live trading.
@@ -54,24 +61,71 @@ either can run without the other.
 
 ---
 
-## The Contract
+## Schema Contract
 
-### Endpoint 1: Macro view → Trading Agent decision gate
+**Contract version:** `1.0.0`
+
+Schema drift is prevented by a GitHub Actions CI pipeline:
+- `schema-export-check` — verifies the schema export matches the codebase on every push to macro-analyzer
+- `schema-mirror-pr` — automatically opens a PR in Trading-Agent-V1-CODEX when the integration schema changes
+- `schema-drift-check` — blocks merge in Trading-Agent-V1-CODEX if it's out of sync with the latest macro-analyzer schema
+
+---
+
+## Implemented: Tactical Snapshot Pull
+
+**Provider:** Trading Agent V1
+**Consumer:** Macro Analyzer (`src/macro_positioning/integration/tactical_client.py`)
+
+Macro Analyzer polls the tactical executor to annotate `ActionableSignal` entries with current setup state. This is a **read-only pull** — macro does not push commands to tactical.
+
+```python
+# tactical_client.fetch_tactical_snapshot()
+GET {TACTICAL_EXECUTOR_URL}/tactical/snapshot
+
+Response:
+{
+  "configured": true,
+  "events": [
+    {
+      "payload": {
+        "symbol": "GLD",
+        "setup_id": "abc123",
+        "setup_stage": "trigger",  # watch | trigger | in_trade | tp_zone
+        "bias": "BULLISH"
+      }
+    }
+  ]
+}
+```
+
+When `tactical_reachable = True`, `ActionableSignal.tactical` is populated with a `TacticalAnnotation`:
+```python
+class TacticalAnnotation(BaseModel):
+    active_setups: int = 0
+    at_entry: int = 0       # setups in "trigger" stage
+    in_trade: int = 0       # setups in "in_trade" stage
+    blocked_by_gate: int = 0
+    latest_stage: str = ""
+```
+
+When unreachable: `CommandCenterSnapshot.tactical_reachable = False`, signals render without annotation.
+
+---
+
+## Planned: Macro View → Tactical Gate
 
 **Provider:** Macro Analyzer
 **Consumer:** Trading Agent V1 (`webhook/decision.js`)
+**Status:** ⏳ Not yet built
 
-#### Request
+### Request
 
 ```http
 GET /positioning/view?asset={ticker}&asset_class={class}
 ```
 
-Params:
-- `asset` — ticker symbol (e.g. `AAPL`, `GLD`, `SPY`)
-- `asset_class` — optional: `equities`, `commodities`, `rates`, `fx`, `crypto`, `credit`
-
-#### Response
+### Response
 
 ```json
 {
@@ -80,12 +134,15 @@ Params:
   "direction": "bearish",
   "confidence": 0.72,
   "horizon": "2-8 weeks",
-  "source_theses": [
-    "thesis_id_1",
-    "thesis_id_2"
-  ],
-  "last_updated": "2026-04-19T14:30:00Z",
-  "regime": "Late-cycle slowdown with cooling inflation",
+  "source_theses": ["thesis_id_1", "thesis_id_2"],
+  "last_updated": "2026-05-09T14:30:00Z",
+  "regime": {
+    "quadrant": "stagflation",
+    "growth_signal": "contracting",
+    "inflation_signal": "elevated",
+    "fci_label": "tightening",
+    "epu_level": "elevated"
+  },
   "gate_suggestion": {
     "allow_long": false,
     "allow_short": true,
@@ -95,9 +152,9 @@ Params:
 }
 ```
 
-#### How Trading Agent uses it
+**Note:** The `regime` block is new vs. original contract design — it surfaces the full quadrant/FCI/EPU context so the tactical side can gate on regime, not just direction. This is a planned addition to the `1.0.0` schema.
 
-In `webhook/decision.js`, after all existing hard gates, add one more call:
+### How Trading Agent uses it
 
 ```javascript
 const macroView = await fetch(
@@ -105,27 +162,17 @@ const macroView = await fetch(
 ).then(r => r.json());
 
 if (packet.bias === 'BULLISH' && !macroView.gate_suggestion.allow_long) {
-  return {
-    action: 'WAIT',
-    confidence: 'LOW',
-    risk_tier: 'BLOCKED',
-    reason_codes: ['macro_disagrees_long'],
-  };
+  return { action: 'WAIT', reason_codes: ['macro_disagrees_long'] };
 }
 ```
 
-- If macro says bearish and setup is long → downgrade confidence or block
-- If macro says bullish and setup is long → confidence stays, maybe upgrade
-- If macro has no view for this asset → allow (graceful fallback)
-
 ---
 
-### Endpoint 2: Trade outcomes → source scoring
+## Planned: Trade Outcomes → Source Scoring
 
-**Provider:** Macro Analyzer
-**Consumer:** Trading Agent V1 (post-trade lifecycle handler)
-
-#### Request
+**Provider:** Macro Analyzer (receives)
+**Consumer:** Trading Agent V1 (sends)
+**Status:** ⏳ Not yet built
 
 ```http
 POST /source-scoring/outcome
@@ -147,36 +194,23 @@ Content-Type: application/json
 }
 ```
 
-Fields:
-- `outcome` — `win`, `loss`, `breakeven`
-- `pnl_r` — R-multiple (risk units gained/lost)
-- `macro_view_at_entry` — snapshot of macro view at trade entry (for attribution)
+When received, Macro Analyzer:
+1. Looks up theses cited in `macro_view_at_entry.source_theses`
+2. Identifies newsletter sources those theses came from
+3. Updates trust weights: if macro agreed + trade won → bump; agreed + lost → slight decrease
+4. Persists to source registry (SQLite)
 
-#### Response
+This creates a feedback loop: **sources that reliably produce profitable macro views get weighted more heavily in future synthesis.**
 
-```json
-{
-  "recorded": true,
-  "sources_credited": ["doomberg", "macromicro"],
-  "source_weights_updated": {
-    "doomberg": { "old": 0.70, "new": 0.72 },
-    "macromicro": { "old": 0.65, "new": 0.66 }
-  }
-}
-```
+---
 
-#### How Macro Analyzer uses it
+## Planned: Regime Change Push (Alert Routing)
 
-When a trade closes, the Trading Agent posts the outcome back. The Macro
-Analyzer:
-1. Looks up the theses cited in `macro_view_at_entry.source_theses`
-2. Identifies the newsletter sources those theses came from
-3. If the macro view agreed with the trade direction and the trade won,
-   those sources get a trust weight bump
-4. If the macro view agreed but the trade lost, slight trust weight decrease
-5. Updates persist to the source registry
+**Provider:** Macro Analyzer (pushes)
+**Consumer:** Trading Agent V1
+**Status:** ⏳ Future extension
 
-This creates a feedback loop: **sources that reliably produce profitable macro views get weighted more heavily in future thesis synthesis.**
+When the regime quadrant flips (e.g. goldilocks → stagflation), Macro Analyzer pushes a notification to Trading Agent to invalidate active setups that no longer agree with the new regime. This is the `applyRegimeUpdate` contract mentioned in architecture planning.
 
 ---
 
@@ -184,12 +218,17 @@ This creates a feedback loop: **sources that reliably produce profitable macro v
 
 | Component | Status |
 |---|---|
-| Integration contract documented (this file) | ✅ Done |
-| `GET /positioning/view` endpoint in Macro Analyzer | ⏳ Todo |
-| `POST /source-scoring/outcome` endpoint in Macro Analyzer | ⏳ Todo |
+| Integration contract documented | ✅ Done |
+| Schema CI pipeline (export-check, mirror-pr, drift-check) | ✅ Done |
+| `tactical_client.fetch_tactical_snapshot()` (pull, read-only) | ✅ Done |
+| `TacticalAnnotation` on `ActionableSignal` | ✅ Done |
+| `CommandCenterSnapshot.tactical_reachable` flag | ✅ Done |
+| `GET /positioning/view` endpoint | ⏳ Todo |
+| `POST /source-scoring/outcome` endpoint | ⏳ Todo |
 | Source scoring update logic | ⏳ Todo |
-| Macro gate call in Trading Agent `decision.js` | ⏳ Todo (in other repo) |
-| Outcome POST call in Trading Agent lifecycle | ⏳ Todo (in other repo) |
+| Macro gate call in Trading Agent `decision.js` | ⏳ Todo (other repo) |
+| Outcome POST in Trading Agent lifecycle | ⏳ Todo (other repo) |
+| Regime change push (alert routing) | ⏳ Future |
 
 ---
 
@@ -197,28 +236,16 @@ This creates a feedback loop: **sources that reliably produce profitable macro v
 
 Both systems **must work without the other**:
 
-- If Trading Agent can't reach Macro Analyzer → trade decisions proceed without the macro gate (log a warning, don't block)
-- If Macro Analyzer never gets outcome data → source weights stay at their defaults (trade history just won't refine them)
-- If `/positioning/view` has no view for a ticker → return `{"direction": "unknown", "gate_suggestion": {"allow_long": true, "allow_short": true}}` so the tactical side isn't blocked
+- If Trading Agent unreachable → `tactical_reachable = False`; macro dashboard renders without tactical annotations; no blocking
+- If Macro Analyzer unreachable → Trading Agent proceeds without macro gate (logs warning, doesn't block trades)
+- If `/positioning/view` has no view for a ticker → return `{"direction": "unknown", "gate_suggestion": {"allow_long": true, "allow_short": true}}`
+- If source scoring endpoint never receives data → source weights stay at defaults
 
 ---
 
 ## Not In Scope
 
-These are intentionally **out of scope** for the integration layer:
-
 - Shared database or data model (each system owns its own persistence)
-- Shared authentication (start with endpoint secrecy + API keys per system)
-- Real-time streaming (polling / request-response is enough for macro-tactical coordination)
-- Unified UI (each system has its own dashboard; a combined view is future work)
-
----
-
-## Future Extensions
-
-When both systems are mature, possible additions:
-
-1. **Unified dashboard** — a third service that queries both APIs and shows macro + tactical in one view
-2. **Shared trade memory vector store** — Trading Agent's trade memory + Macro Analyzer's historical theses in one vector store for retrieval
-3. **Alert routing** — when Macro Analyzer detects a regime change, push to Trading Agent to invalidate active setups that no longer agree
-4. **Auto-position sizing** — Macro confidence + tactical confidence combined into dynamic R-multiplier
+- Shared authentication (API keys per system)
+- Real-time streaming (polling + request-response is sufficient)
+- Unified UI (each system has its own dashboard; combined view is future work)

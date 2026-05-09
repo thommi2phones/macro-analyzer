@@ -51,6 +51,20 @@ positioning output.
 ## Chart Reads (if provided)
 {chart_block}
 
+## Intelligence Layer
+
+**Macro Regime Quadrant**
+{regime_block}
+
+**Financial Conditions**
+{fci_block}
+
+**Geopolitical / Policy Risk (EPU)**
+{epu_block}
+
+**COT Speculative Positioning**
+{cot_block}
+
 ---
 
 Based on ALL of the above, produce your analysis as a JSON object:

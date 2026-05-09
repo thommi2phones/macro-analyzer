@@ -1,5 +1,10 @@
 # Parallel Workstreams — Phase 1 Build
 
+> **Last updated:** 2026-05-09
+> **Status note:** Streams B (Brain) and C (Dashboard) have been largely built in `main` rather than feature branches. The stream model below reflects the original plan; see `.claude/context/STATE.md` for current completion state.
+
+
+
 Multi-agent development plan for Phase 1 of the macro-analyzer. Four
 streams run in parallel on separate branches so 3-4 Claude/Codex instances
 can work simultaneously without stepping on each other.
@@ -57,6 +62,8 @@ is complete and passes tests.
 
 **Goal**: Real multi-model LLM reasoning with observability.
 
+> **2026-05-09 status:** Core synthesis pipeline is live. Gemini 2.5 Pro default, Claude Sonnet escalation, Ollama fallback. Intelligence layer (regime quadrant, FCI, EPU) built in `macro_indicators.py` and injected into prompts. 236 tests passing.
+
 ### Scaffolded files (done — ready to use)
 
 - `src/macro_positioning/brain/client.py` — `BrainClient` interface + factory
@@ -88,6 +95,8 @@ is complete and passes tests.
 
 **Goal**: Operator can see what the Brain is doing.
 
+> **2026-05-09 status:** SPA (React/JSX) live at `web/positioning.jsx`. MacroIndicatorStrip (regime/FCI/EPU tiles) built. Asset breakdown grouped by asset_class. All old HTML routes 307-redirect to SPA. Institutional-terminal aesthetic locked — no blur, no glow, no gradients, no marketing copy.
+
 ### Scaffolded files (done — endpoints ready for frontend)
 
 - `src/macro_positioning/dashboard/brain_panel.py` — JSON endpoints:
@@ -113,6 +122,8 @@ is complete and passes tests.
 ## Stream D — Integration + Ops
 
 **Goal**: Both repos talking live in production.
+
+> **2026-05-09 status:** `tactical_client.py` implemented (read-only pull from Trading-Agent-V1-CODEX). Schema CI pipeline built (export-check, mirror-pr, drift-check). `tactical_reachable` flag + `TacticalAnnotation` on signals. Outbound gate endpoint (`/positioning/view`) and outcome feedback loop (`/source-scoring/outcome`) still pending.
 
 ### Scaffolded files (done — ready to extend)
 

@@ -1,190 +1,224 @@
 # Canonical Architecture: Three-Layer Trading Stack
 
+> **Last updated:** 2026-05-09
+> **Cross-references:** `docs/architecture.md` (core flow detail), `docs/integration_with_trading_agent.md` (contract spec), `docs/data_sources.md` (FRED series catalogue)
+
+---
+
+## Current Reality vs. Original Plan
+
+The original plan described a three-layer stack with the Brain as a *separate repo* to be built. In practice, the Brain has been built **inside** the `macro-analyzer` repo under `src/macro_positioning/brain/`. This is a pragmatic choice for now — the code is cleanly namespaced and can be extracted later if needed. The tactical executor remains in `Trading-Agent-V1-CODEX` (Node.js).
+
+---
+
 ## The Three Layers
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  LAYER 1 — INPUT / INGESTION                                     │
-│  Repo: macro-analyzer (this repo — may be renamed "macro-input") │
+│  LAYER 1 — INPUT / INGESTION + BRAIN                             │
+│  Repo: macro-analyzer (this repo)                                │
 │  Tech: Python / FastAPI / SQLite                                 │
 │                                                                  │
-│  Job: Collect, normalize, and stage data. NOT reason about it.   │
-│  Inputs:                                                         │
-│    - Newsletters (Gmail)                                         │
-│    - FRED economic data                                          │
-│    - Finnhub news + sentiment                                    │
-│    - Google News RSS                                             │
-│    - TradingView alerts                                          │
-│    - Chart screenshots                                           │
-│    - Manual analyst notes                                        │
-│  Output: Structured, enriched data packets for the Brain         │
-│  Contains: Heuristic pre-filters (keyword tagging for routing)   │
-│  No LLM inference here — just ingestion, normalization, staging  │
-└─────────────────────────┬────────────────────────────────────────┘
-                          │
-                          ↓   POST /brain/ingest
-                          │
-┌─────────────────────────┴────────────────────────────────────────┐
-│  LAYER 2 — BRAIN (to be built, new repo)                         │
-│  Repo: macro-brain (new)                                         │
-│  Tech: Python orchestrator + multiple LLM backends               │
+│  Sub-packages:                                                   │
+│    brain/        — LLM orchestration, synthesis, memo            │
+│    ingestion/    — Gmail, RSS, chart screenshots                 │
+│    market/       — FRED provider, macro_indicators classifiers   │
+│    dashboard/    — FastAPI routes + SPA data payloads            │
+│    db/           — SQLite repository                             │
+│    integration/  — tactical_client (outbound to executor)        │
 │                                                                  │
-│  Job: All the thinking happens here.                             │
-│  - Macro text synthesis (reads newsletters + FRED holistically)  │
-│  - Chart vision analysis (reads screenshots for patterns/levels) │
-│  - Cross-asset reasoning (ties themes together)                  │
-│  - Conviction / confidence scoring                               │
-│  - Directional calls per asset class                             │
-│  Output: Thesis objects, directional views, trade candidates     │
-│  Multiple LLMs orchestrated — see "LLM Stack" section            │
+│  Outputs: Thesis objects, memos, CommandCenterSnapshot           │
 └─────────────────────────┬────────────────────────────────────────┘
                           │
-                          ↓   POST /tactical/view
+                          ↓   HTTP pull (tactical_client.py)
+                          │   or future push webhooks
                           │
 ┌─────────────────────────┴────────────────────────────────────────┐
-│  LAYER 3 — TACTICAL / EXECUTION (existing repo, needs revamp)    │
-│  Current: Trading-Agent-V1-CODEX                                 │
-│  Suggested rename: tactical-executor                             │
+│  LAYER 2 — TACTICAL EXECUTOR                                     │
+│  Repo: Trading-Agent-V1-CODEX                                    │
 │  Tech: Node.js / webhook server / Alpaca                         │
 │                                                                  │
 │  Job: Deterministic gates, execution, lifecycle tracking.        │
-│  - Receive Brain's directional views                             │
+│  - Receive directional views from Brain                          │
 │  - Apply risk rules (stop/size/invalidation)                     │
-│  - Gate against Brain's confidence tiers                         │
+│  - Gate against macro confidence tiers                           │
 │  - Route to Alpaca (paper/live)                                  │
-│  - Track state: watch → trigger → in_trade → tp_zone             │
-│  - Post outcomes back to Input layer                             │
-│  No LLM — stays deterministic for auditability                   │
+│  - Track state: watch → trigger → in_trade → tp_zone            │
+│  No LLM — deterministic for auditability                         │
 └──────────────────────────────────────────────────────────────────┘
                           │
                           │  feedback loop
-                          ↓   POST /input/outcome
-                                    (source scoring)
+                          ↓   POST /source-scoring/outcome (planned)
 ```
 
-## Why Three Layers
+---
 
-Separating ingestion, reasoning, and execution into independent services:
+## Intelligence Layer (added 2026-05)
 
-1. **Each layer uses the right tool** — Python for data/LLMs, Node for execution
-2. **Fault isolation** — a bug in the Brain won't break live trading
-3. **Independent scaling** — Brain needs GPU; execution needs always-on webhooks
-4. **Independent iteration** — swap LLMs without touching execution logic
-5. **Each layer has a clean contract** — debuggable, testable, auditable
+> **Reference:** Urban Kaoberg (urbankaoberg.com) audit surfaced how their macro-regime and FCI modules are structured. See `docs/data_sources.md §Urban Kaoberg` for full context and the 5 items adopted.
 
-## LLM Stack (Brain Layer)
+Three structured classifiers in `src/macro_positioning/market/macro_indicators.py` sit between raw FRED data and the LLM synthesis call. They are **pure functions** — `list[MarketObservation] → Pydantic model` — fully testable without network calls.
 
-Different models for different tasks, orchestrated by the Brain service:
+| Classifier | Output model | Primary series | Fallback |
+|---|---|---|---|
+| `classify_growth_inflation_quadrant()` | `GrowthInflationQuadrant` | `A191RL1Q225SBEA` (Real GDP QoQ%), `T10YIE` (10Y breakeven) | `INDPRO`, `CPIAUCSL` |
+| `compute_fci()` | `FCIResult` | `NFCI` (Chicago Fed composite) | `VIXCLS`, `TEDRATE`, `BAMLH0A0HYM2` normalised |
+| `compute_geopolitical_risk()` | `EPURisk` | 6 EPU FRED series avg | — |
 
-| Task | Model | Why |
+**Quadrant matrix:**
+
+| Growth \ Inflation | Elevated (>3%) | Moderate (2–3%) | Subdued (<2%) |
+|---|---|---|---|
+| Expanding (>2.5%) | boom | transitional | goldilocks |
+| Stable (0–2.5%) | transitional | transitional | transitional |
+| Contracting (<0%) | stagflation | transitional | deflation |
+
+**Data flow through the intelligence layer:**
+
+```
+FREDMarketDataProvider.gather()
+        │
+        ↓ list[MarketObservation]
+        ├──→ classify_growth_inflation_quadrant() → regime_quadrant_block (str)
+        ├──→ compute_fci()                        → fci_block (str)
+        └──→ compute_geopolitical_risk()          → epu_block (str)
+                │
+                ↓ three formatted text blocks
+        MACRO_ANALYSIS_PROMPT.format(
+            ...,
+            regime_quadrant_block=,
+            fci_block=,
+            epu_block=,
+        )
+                │
+                ↓
+        LLM synthesis (Gemini 2.5 Pro default / Claude Sonnet escalation / Ollama fallback)
+                │
+                ↓
+        list[Thesis] → SQLite → CommandCenterSnapshot → /api/dashboard/command-center
+```
+
+The same FRED observations also populate `MacroIndicators` in `CommandCenterSnapshot`, which is served to the SPA at `/api/dashboard/desk` for the `MacroIndicatorStrip` component.
+
+---
+
+## LLM Stack (Brain Sub-package)
+
+| Task | Backend | Config |
 |---|---|---|
-| Macro text synthesis | Finance-tuned text LLM OR Gemini 2.5 Flash | Holistic reading of newsletters, thesis formation |
-| Chart / image analysis | Multimodal LLM (Qwen2.5-VL or Gemini 2.5 Flash) | Pattern recognition, level identification |
-| Hawkish/dovish classification | CentralBankRoBERTa (355M) | Fast, specialized Fed language tagging |
-| Reasoning / decision | Same text LLM with structured prompts | Synthesizing across themes |
-| Embeddings / RAG | Sentence transformers or Gemini embeddings | Retrieval over historical theses, trade memory |
+| Macro text synthesis | Gemini 2.5 Pro (default) | `MPA_GEMINI_API_KEY` |
+| Escalation | Claude Sonnet | `MPA_ANTHROPIC_API_KEY` |
+| Local fallback | Ollama | `MPA_OLLAMA_HOST` |
+| Chart vision | Gemini 2.5 Flash (multimodal) | same key |
+
+Backend routing lives in `brain/backends.py`. `brain/synthesis.py` calls `generate(backend=...)` which dispatches to the right provider. N8N was considered as an orchestration layer but is not the default path — direct API calls are used.
+
+---
+
+## Dashboard Architecture
+
+The dashboard is a **Single-Page Application** (SPA), not server-rendered HTML.
+
+```
+web/index.html          — SPA shell, loads React + Babel from CDN
+web/positioning.jsx     — /positioning tab (command center + signals)
+web/styles.css          — shared CSS variables + component styles
+
+FastAPI routes:
+  GET /                 → 307 redirect → /web/index.html
+  GET /positioning      → 307 redirect → /web/index.html
+  GET /dev              → 307 redirect → /web/index.html
+  GET /api/dashboard/desk         → desk_data.build_desk_snapshot()
+  GET /api/dashboard/command-center → command_data.build_command_snapshot()
+  GET /api/dashboard/brain/activity → brain activity log
+  GET /api/dashboard/sources        → source health
+```
+
+Data is injected into `window.MA_DATA` on page load (initial render), then components poll their respective endpoints on a cadence. The old Python HTML-generation pipeline (`output_ui.py`, `tactical_ui.py`, etc.) is still present but redirected — all rendering now happens in React.
+
+---
 
 ## Repository Map
 
 | Repo | Role | Tech | Status |
 |---|---|---|---|
-| `macro-analyzer` ([repo](https://github.com/thommi2phones/macro-analyzer)) | Input layer | Python/FastAPI | Exists — needs trim |
-| `macro-brain` (TBD) | Brain layer | Python + LLMs | To build |
-| `Trading-Agent-V1-CODEX` ([repo](https://github.com/thommi2phones/Trading-Agent-V1-CODEX)) | Tactical/execution | Node.js | Exists — needs revamp + rename |
-| `openclaw-pm` (optional extract) | Human PM/accountability | Node/Telegram bot | Separate concern from brain |
+| `macro-analyzer` | Ingestion + Brain + Dashboard | Python/FastAPI | Active |
+| `Trading-Agent-V1-CODEX` | Tactical executor | Node.js | Active |
 
-## Data Flow
+The `macro-brain` separate repo described in early planning has not been created. Brain logic lives in `src/macro_positioning/brain/`.
+
+---
+
+## Data Flow (Current)
 
 ```
-macro-analyzer              macro-brain              tactical-executor
-      │                          │                          │
-      │  POST /brain/ingest      │                          │
-      │ ────────────────────────▶│                          │
-      │  {newsletters, fred,     │                          │
-      │   charts, notes}         │                          │
-      │                          │                          │
-      │                          │  LLM orchestration       │
-      │                          │  - text synthesis        │
-      │                          │  - chart vision          │
-      │                          │  - reasoning             │
-      │                          │                          │
-      │                          │  POST /tactical/view     │
-      │                          │ ────────────────────────▶│
-      │                          │  {direction, conf,       │
-      │                          │   horizon, asset}        │
-      │                          │                          │
-      │                          │                          │ Gate + risk +
-      │                          │                          │ execute
-      │                          │                          │
-      │  POST /input/outcome     │                          │
-      │ ◀───────────────────────────────────────────────────│
-      │  {trade_id, pnl,         │                          │
-      │   attribution}           │                          │
-      │                          │                          │
-      │ Update source weights    │                          │
+macro-analyzer                                   tactical-executor
+      │                                                 │
+      │  Gmail / RSS / manual notes                    │
+      │  ──────────────────────────                    │
+      │  FREDMarketDataProvider.gather()               │
+      │     → 51 series, 3 classifiers                 │
+      │     → regime_quadrant / FCI / EPU blocks       │
+      │                                                 │
+      │  brain/synthesis.py                            │
+      │     → MACRO_ANALYSIS_PROMPT (with blocks)       │
+      │     → Gemini 2.5 Pro                           │
+      │     → list[Thesis] → SQLite                    │
+      │                                                 │
+      │  command_data.build_command_snapshot()         │
+      │     → CommandCenterSnapshot (+ MacroIndicators)│
+      │     → /api/dashboard/command-center (JSON)     │
+      │                                                 │
+      │  tactical_client.fetch_tactical_snapshot()     │
+      │ ──────────────────────────────────────────────▶│
+      │      GET /tactical/snapshot                    │
+      │ ◀──────────────────────────────────────────────│
+      │      {events, setups, configured: true}        │
+      │                                                 │
+      │  SPA (positioning.jsx)                         │
+      │     → MacroIndicatorStrip (regime/FCI/EPU)     │
+      │     → ActionableSignals (LONG/SHORT/WATCH)     │
+      │     → ThemeCluster heatmap                     │
+      │     → AssetBreakdown (grouped by asset_class)  │
 ```
 
-## Migration Work Required
-
-### Out of macro-analyzer (move to macro-brain)
-- `src/macro_positioning/llm/gemini_analyzer.py`
-- `src/macro_positioning/llm/chart_analyzer.py`
-- The synthesis prompts and LLM orchestration logic
-
-### Stays in macro-analyzer (input layer)
-- FRED provider, Gmail connector, RSS connector
-- SQLite persistence for raw/normalized data
-- Heuristic pre-tagging (keyword routing)
-- Dashboard (ops + command center can remain here for the input-side view)
-
-### New in macro-brain (to build)
-- LLM orchestrator service
-- Model selection / fallback logic
-- Synthesis prompts library
-- Brain-side dashboard showing active theses + reasoning trail
-
-### Revamp in tactical-executor (current Trading-Agent-V1-CODEX)
-- Remove embedded LLM/agent logic (`claude_agent_contract.md` concepts)
-- Add consumer for Brain's `/tactical/view` endpoint
-- Keep deterministic decision engine + lifecycle
-- Extract OpenClaw PM into own repo (or remove)
+---
 
 ## Contracts Between Layers
 
-### Brain pulls from Input
-`GET /data/pending` — Brain polls for new data packets ready for analysis
-`POST /data/ack` — Brain acknowledges consumed packets
+### Macro Analyzer → Tactical Executor (implemented)
 
-### Tactical pulls from Brain
-`GET /positioning/view?asset={ticker}` — per-ticker directional view
-`GET /positioning/regime` — overall macro regime
-`GET /positioning/theses` — active theses with evidence
+`tactical_client.py` in `src/macro_positioning/integration/` polls the tactical executor's HTTP API. Contract version: `1.0.0`.
 
-### Input receives from Tactical
-`POST /source-scoring/outcome` — trade outcomes for source weight feedback
+Schema CI pipeline (GitHub Actions):
+- `schema-export-check` — verifies schema export matches codebase on every push
+- `schema-mirror-pr` — opens a PR in Trading-Agent-V1-CODEX when schema changes
+- `schema-drift-check` — blocks merge if the consumer is out of sync
+
+See `docs/integration_with_trading_agent.md` for full endpoint specs.
+
+### Planned (not yet built)
+
+- `GET /positioning/view?asset={ticker}` — per-asset macro gate for tactical
+- `POST /source-scoring/outcome` — trade outcome feedback loop
+
+---
 
 ## Graceful Degradation
 
-Each layer must work when downstream/upstream is unavailable:
+| Failure | Behavior |
+|---|---|
+| FRED unavailable | Intelligence layer returns empty `MacroIndicators`; synthesis proceeds without blocks (passes `"—"` strings) |
+| Tactical executor unreachable | `CommandCenterSnapshot.tactical_reachable = False`; ActionableSignals still render without TacticalAnnotation |
+| Gemini unavailable | `brain/backends.py` falls back to Claude Sonnet, then Ollama |
+| SQLite locked | Pre-existing issue when a `score run` CLI process holds the DB; kill that process first |
 
-- **Brain down** → Tactical executor uses last-known macro view or defaults to "unknown" (doesn't block)
-- **Tactical down** → Brain still produces views; they just don't get acted on
-- **Input down** → Brain uses cached data; no new analyses
-- **Any layer** can be restarted without cascading failures
-
-## Non-Goals
-
-These are explicitly NOT part of this architecture:
-
-- Shared database between layers
-- Shared authentication (each layer has its own)
-- Real-time streaming (polling + webhooks are sufficient)
-- Unified UI (each layer has its own dashboard; combined view is future work)
-- Brain generating trade ORDERS (only views/theses; orders are Tactical's job)
+---
 
 ## Open Decisions
 
-1. **When to create `macro-brain` repo** — now vs. after input layer stabilizes
-2. **LLM hosting strategy** — API (Gemini via N8N), rented GPU, or GCP Vertex
-3. **Tactical rename timing** — rename `Trading-Agent-V1-CODEX` now or keep name
-4. **OpenClaw PM** — extract into own repo, absorb into Brain, or deprecate
+1. **Extract brain to separate repo** — currently inside macro-analyzer; extract when it needs independent deployment or GPU hosting
+2. **COT data connector** (`cot_provider.py`) — Phase C, deferred; CFTC weekly reports, free public domain
+3. **Tactical executor rename** — `Trading-Agent-V1-CODEX` → `tactical-executor` (pending)
+4. **SSE vs polling** — regime tape currently uses 5-min polling; upgrade to SSE if UX bottleneck
+5. **`/journal` view** — designed in `dashboard_design_brief.md` §3.3, not yet built

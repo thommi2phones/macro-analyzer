@@ -34,6 +34,9 @@ function Positioning({ onOpenReasoning, onOpenTradeForm }) {
       {/* ── Regime tape (sticky) ─────────────────────────── */}
       <RegimeTape regime={D.regime} />
 
+      {/* ── Macro indicator tiles ────────────────────────── */}
+      {D.regime.indicators && <MacroIndicatorStrip ind={D.regime.indicators} />}
+
       {/* KPI strip rendered by app shell — single source of truth */}
 
       {/* ── Hero signals ────────────────────────────────── */}
@@ -131,6 +134,71 @@ function Positioning({ onOpenReasoning, onOpenTradeForm }) {
         </div>
       </section>
 
+    </div>
+  );
+}
+
+// ── Macro indicator strip ──────────────────────────────────────
+const _QUADRANT_COLOR = {
+  boom:        "var(--gold)",
+  goldilocks:  "var(--green)",
+  stagflation: "var(--gold)",
+  deflation:   "var(--red)",
+  transitional:"var(--text-dim)",
+};
+const _FCI_COLOR = { tightening: "var(--red)", neutral: "var(--text-dim)", easing: "var(--green)" };
+const _EPU_COLOR  = { elevated: "var(--red)", moderate: "var(--text-dim)", low: "var(--green)" };
+const _COT_COLOR  = {
+  extreme_long:  "var(--green)",
+  elevated:      "var(--gold)",
+  neutral:       "var(--text-dim)",
+  suppressed:    "var(--gold)",
+  extreme_short: "var(--red)",
+};
+
+function MacroIndicatorStrip({ ind }) {
+  return (
+    <div className="indicator-strip">
+      <div className="ind-tile">
+        <div className="ind-label">REGIME QUADRANT</div>
+        <div className="ind-value" style={{ color: _QUADRANT_COLOR[ind.quadrant] || "var(--text)" }}>
+          {(ind.quadrant || "—").toUpperCase()}
+        </div>
+        <div className="ind-sub">
+          {ind.growthSignal} growth · {ind.inflationSignal} inflation ·{" "}
+          <span className="mono">{ind.quadrantConf ? Math.round(ind.quadrantConf * 100) + "%" : "—"}</span> conf
+        </div>
+      </div>
+      <div className="ind-tile">
+        <div className="ind-label">FIN. CONDITIONS</div>
+        <div className="ind-value" style={{ color: _FCI_COLOR[ind.fciLabel] || "var(--text)" }}>
+          {(ind.fciLabel || "—").toUpperCase()}
+        </div>
+        <div className="ind-sub">
+          FCI <span className="mono">{ind.fciScore != null ? (ind.fciScore >= 0 ? "+" : "") + ind.fciScore.toFixed(3) : "—"}</span>
+        </div>
+      </div>
+      <div className="ind-tile">
+        <div className="ind-label">GEO / POLICY RISK</div>
+        <div className="ind-value" style={{ color: _EPU_COLOR[ind.epuLevel] || "var(--text)" }}>
+          {(ind.epuLevel || "—").toUpperCase()}
+        </div>
+        <div className="ind-sub">
+          EPU <span className="mono">{ind.epuComposite != null ? ind.epuComposite.toFixed(0) : "—"}</span>
+          {ind.epuDriver ? <span className="muted"> · {ind.epuDriver.replace("EPU", "")}</span> : null}
+        </div>
+      </div>
+      <div className="ind-tile">
+        <div className="ind-label">COT POSITIONING</div>
+        <div className="ind-value" style={{ color: _COT_COLOR[ind.cotTopSignal] || "var(--text-dim)" }}>
+          {ind.cotTopSignal ? ind.cotTopSignal.replace(/_/g, " ").toUpperCase() : "—"}
+        </div>
+        <div className="ind-sub">
+          <span className="mono">{ind.cotExtremesCount != null ? ind.cotExtremesCount : "—"}</span> extreme{ind.cotExtremesCount !== 1 ? "s" : ""}
+          {ind.cotTopMarket ? <span className="muted"> · {ind.cotTopMarket}</span> : null}
+          {ind.cotTopNetPctOi != null ? <span className="muted"> {ind.cotTopNetPctOi >= 0 ? "+" : ""}{ind.cotTopNetPctOi.toFixed(1)}%</span> : null}
+        </div>
+      </div>
     </div>
   );
 }

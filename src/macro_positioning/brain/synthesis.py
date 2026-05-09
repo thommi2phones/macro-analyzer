@@ -164,13 +164,21 @@ def run_synthesis(
     analyst_notes: list[str] | None = None,
     chart_reads: list[dict] | None = None,
     backend: str = "gemini",
+    include_cot: bool = True,
 ):
     """Run one macro synthesis pass on the configured backend."""
     from macro_positioning.brain.client import SynthesisResult
+    from macro_positioning.market.macro_indicators import format_prompt_blocks
+    from macro_positioning.market.cot_provider import fetch_cot_readings
 
     observations = observations or []
     analyst_notes = analyst_notes or []
     chart_reads = chart_reads or []
+
+    cot_readings = fetch_cot_readings() if include_cot else []
+    regime_block, fci_block, epu_block, cot_block = format_prompt_blocks(
+        observations, cot_readings
+    )
 
     user_prompt = MACRO_ANALYSIS_PROMPT.format(
         documents_block=_format_documents(documents),
@@ -178,6 +186,10 @@ def run_synthesis(
         market_block=_format_market_obs(observations),
         notes_block=_format_notes(analyst_notes),
         chart_block=_format_chart_reads(chart_reads),
+        regime_block=regime_block,
+        fci_block=fci_block,
+        epu_block=epu_block,
+        cot_block=cot_block,
     )
 
     logger.info(

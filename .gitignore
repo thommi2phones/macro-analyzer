@@ -39,6 +39,11 @@ data/*.zip
 # Claude Code worktrees (per-session scratch, not source)
 .claude/worktrees/
 
+# Manual-input seed corpus (142MB of binary chart screenshots) — staging
+# area on disk, not source. Drained into documents via /api/manual/ingest
+# in Piece 2. See DECISIONS 2026-05-09 entry.
+manual_entry/
+
 # N8N / runtime logs
 *.log
 

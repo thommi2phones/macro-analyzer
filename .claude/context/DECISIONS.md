@@ -4,6 +4,40 @@ Append-only. Never delete entries. Most recent first.
 
 ---
 
+## 2026-05-09 — manual_entry/baseline_seed/ as the seed corpus location; vendor/ is source-only
+
+**Decision:** The trading_agent's 392 chart screenshots (the foundational
+set its chart-vision behaviors were derived from) live at
+`manual_entry/baseline_seed/` in the main repo root. The `manual_entry/`
+folder is a filesystem-only capture surface — root-level loose images are
+the user's staging area; subfolders (`baseline_seed/`, future categorized
+batches) hold curated sets. NOT git-tracked (142MB).
+
+Separately, `vendor/trading_agent/` contains only the 2.3MB of source code
+needed for porting (analysis/, agent/, signals/, config/, docs/, top-level
+scripts) — explicitly excludes `dashboard/node_modules`, `trade_images/`,
+`data_cache/`, `logs/`, `.git`. Reference-only; do not import.
+
+Piece 2 bootstrap will programmatically drain `manual_entry/baseline_seed/`
+through `/api/manual/ingest`, attributing all 392 images to a synthetic
+author `archive:trading_agent_baseline`. Until Piece 2 ships, nothing in
+`manual_entry/` has a `documents` row.
+
+**Rationale:** Two distinct concerns — read-only training corpus (large,
+filesystem-natural) vs. source-code reference (small, code-natural).
+Conflating them puts 142MB of binaries next to Python files. User
+explicitly framed the trade_images as "the foundational knowledge base
+the trading_agent's behaviors were derived from" — that's training corpus
+material, not vendor source.
+
+**Alternatives:** Move trade_images into `vendor/trading_agent/trade_images/`
+(rejected — bloats the vendored ref); leave at original
+`trading_agent/trade_images/` indefinitely (rejected — user wants single
+location for manual stuff); put under `data/manual_corpus/seed/` (rejected
+— user explicitly created `manual_entry/` and that's the right name).
+
+---
+
 ## 2026-05-09 — Manual input layer: relocate trading_agent into repo as vendor/, port not import
 
 **Decision:** When building the manual input layer, first relocate the

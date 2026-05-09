@@ -63,5 +63,17 @@ class Settings(BaseSettings):
             raise ValueError("Only sqlite URLs are supported in the current scaffold.")
         return self.base_dir / self.database_url.removeprefix(prefix)
 
+    # ── Manual input layer ──────────────────────────────────────────────
+    # Where chart screenshots and other manual attachments land. Created
+    # lazily by the processor on first save.
+
+    @property
+    def upload_dir(self) -> Path:
+        return self.base_dir / "uploads"
+
+    @property
+    def chart_upload_dir(self) -> Path:
+        return self.upload_dir / "charts"
+
 
 settings = Settings()

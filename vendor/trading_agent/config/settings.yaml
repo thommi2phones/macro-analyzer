@@ -1,0 +1,97 @@
+# ── Trading Agent Configuration ───────────────────────────────────────────────
+
+anthropic:
+  model: "claude-opus-4-6"
+
+data:
+  provider: "alpaca"         # yfinance | alpaca
+  realtime_stream: true      # use Alpaca websocket for live bars (alpaca only)
+  cache_dir: "./data_cache"
+  cache_ttl_minutes: 5
+
+# ── Watchlists ────────────────────────────────────────────────────────────────
+watchlists:
+  stocks:
+    - TSLA
+    - AMD
+    - AAPL
+    - NVDA
+    - DNN
+    - URNM
+    - SPY
+    - QQQ
+  crypto:
+    - BTC/USD
+    - ETH/USD
+    - XRP/USD
+    - SOL/USD
+    - DOGE/USD
+    - HBAR/USD
+    - SUI/USD
+  metals:
+    - XAUUSD    # Gold
+    - XAGUSD    # Silver
+    - XPDUSD    # Palladium
+    - XPTUSD    # Platinum
+
+# ── Scanner ───────────────────────────────────────────────────────────────────
+scanner:
+  scan_interval_minutes: 2       # TESTING: was 15
+  lookback_bars: 200          # bars of OHLCV history to fetch per timeframe
+  min_confidence: 0.55        # minimum MTF-adjusted confidence to alert/trade
+
+# ── Scan Profiles (Multi-Timeframe) ───────────────────────────────────────────
+# required_majority: fraction of timeframes that must agree (0.0–1.0)
+# e.g. 0.60 on 5 TFs → need 3/5 to fire; on 3 TFs → need 2/3
+scan_profiles:
+  macro:
+    name: "Macro / Long-term Trend"
+    timeframes: ["1d", "1wk", "1mo"]
+    required_majority: 0.67       # 2 of 3 must agree
+    min_confidence: 0.65
+
+  swing:
+    name: "Swing / Medium-term"
+    timeframes: ["4h", "12h", "1d", "1wk"]
+    required_majority: 0.60       # 3 of 5 must agree
+    min_confidence: 0.55
+
+  intra:
+    name: "Intraday / Short Swing"
+    timeframes: ["15m", "1h", "4h"]
+    required_majority: 0.67       # 2 of 3 must agree
+    min_confidence: 0.60
+
+# ── Execution ─────────────────────────────────────────────────────────────────
+execution:
+  mode: "paper"               # paper | live
+  paper_balance: 100000.0
+  max_position_pct: 0.05      # max 5% of portfolio per trade
+  stop_loss_pct: 0.02         # 2% stop loss
+  take_profit_pct: 0.04       # 4% take profit (2:1 R:R)
+
+# ── Alerts ────────────────────────────────────────────────────────────────────
+alerts:
+  discord:
+    enabled: true
+  email:
+    enabled: false
+
+# ── Render Webhook (TradingView → Render → Agent) ────────────────────────────
+render_webhook:
+  enabled: true
+  url: "https://trading-agent-v1-codex.onrender.com"
+  inbox_dir: "./signals/inbox"
+  state_file: "./data/render_poll_state.json"
+  poll_limit: 50
+  signal_routing:
+    HIGH: "execute"     # auto-execute on paper
+    MEDIUM: "alert"     # Discord/log alert only
+    LOW: "alert"        # Discord/log alert only
+
+# ── Trade History Analysis ────────────────────────────────────────────────────
+trade_history:
+  images_dir: "./trade_images"
+  chat_exports_dir: "./chat_exports"
+  data_file: "./data/trade_history.json"
+  insights_file: "./data/trade_insights.json"

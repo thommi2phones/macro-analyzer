@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from macro_positioning.core.models import PipelineRunRequest, PipelineRunResult, PositioningMemo, SourceOnboardingRequest, Thesis
 from macro_positioning.core.settings import settings
+from macro_positioning.api.manual_input import router as manual_input_router
 from macro_positioning.dashboard.desk_routes import router as desk_router
 from macro_positioning.dashboard.router import router as dashboard_router
 from macro_positioning.integration.endpoints import router as integration_router
@@ -57,6 +58,7 @@ async def _bearer_auth(request: Request, call_next):
 app.include_router(desk_router)
 app.include_router(dashboard_router)
 app.include_router(integration_router)
+app.include_router(manual_input_router)
 
 initialize_database(settings.sqlite_path)
 repository = SQLiteRepository(settings.sqlite_path)

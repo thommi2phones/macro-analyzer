@@ -339,6 +339,24 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_narrative_snapshots_asof
         ON narrative_snapshots (asof DESC)
     """,
+    # ─── Manual input layer ───────────────────────────────────────────────
+    # Per-author/channel attribution for chart screenshots and text drops
+    # the user pastes into the /inbox route. See plans/manual-input-layer.
+    """
+    CREATE TABLE IF NOT EXISTS input_authors (
+        author_id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        channel TEXT,
+        channel_type TEXT,
+        notes TEXT,
+        first_seen_at TEXT,
+        last_seen_at TEXT
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_input_authors_last_seen
+        ON input_authors (last_seen_at DESC)
+    """,
 ]
 
 
@@ -351,6 +369,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("agent_call_log", "call_type", "TEXT"),
     ("agent_call_log", "quality_score", "REAL"),
     ("agent_call_log", "model_version", "TEXT"),
+    ("documents", "author_id", "TEXT"),
+    ("documents", "user_metadata_json", "TEXT"),
+    ("documents", "attachment_path", "TEXT"),
+    ("documents", "extracted_features_json", "TEXT"),
 ]
 
 
@@ -421,6 +443,6 @@ def initialize_database(database_path: Path) -> None:
         for statement in SCHEMA_STATEMENTS[1:]:
             connection.execute(statement)
         # Apply column-add migrations for tables that existed before
-        # call_type / quality_score / model_version were introduced.
+        # new columns were introduced.
         _apply_added_columns(connection)
         connection.commit()

@@ -1,0 +1,9 @@
+.mcp.json
+.env
+logs/
+data/
+data_cache/
+__pycache__/
+*.pyc
+.DS_Store
+.openclaw/

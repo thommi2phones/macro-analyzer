@@ -1,0 +1,131 @@
+# ── Scan Rules ────────────────────────────────────────────────────────────────
+# Each rule defines conditions that, when all met, generate a trading signal.
+#
+# Condition types:
+#   threshold      – indicator operator value         (e.g. rsi_14 < 30)
+#   cross          – fast crosses slow (above|below) in last N bars
+#   price_vs_ind   – close operator indicator         (e.g. close > ema_20)
+#   volume_spike   – volume > multiplier * volume_sma_20
+#   breakout       – close breaks above|below rolling high|low
+#
+# Operators: < <= > >= == !=
+# Timeframes: 1m 5m 15m 30m 1h 4h 1d 1wk
+
+rules:
+
+  # ── Bullish signals ──────────────────────────────────────────────────────────
+
+  - name: "RSI Oversold Bounce"
+    description: "RSI below 30 with price holding above key MA – potential reversal"
+    signal: "buy"
+    confidence: 0.70
+    timeframes: ["1d", "4h", "1h"]
+    conditions:
+      - type: threshold
+        indicator: rsi_14
+        operator: "<"
+        value: 30
+      - type: price_vs_ind
+        operator: ">"
+        indicator: ema_50
+
+  - name: "MACD Bullish Cross"
+    description: "MACD line crosses above signal line with above-average volume"
+    signal: "buy"
+    confidence: 0.65
+    timeframes: ["1d", "1h"]
+    conditions:
+      - type: cross
+        fast: macd
+        slow: macd_signal
+        direction: above
+        lookback: 3
+      - type: volume_spike
+        multiplier: 1.5
+
+  - name: "EMA 9/20 Bullish Cross"
+    description: "Fast EMA crosses above slow EMA – momentum shift"
+    signal: "buy"
+    confidence: 0.60
+    timeframes: ["1d", "1h", "15m"]
+    conditions:
+      - type: cross
+        fast: ema_9
+        slow: ema_20
+        direction: above
+        lookback: 2
+
+  - name: "Bollinger Band Lower Touch"
+    description: "Price touches lower BB band while RSI oversold – mean reversion"
+    signal: "buy"
+    confidence: 0.62
+    timeframes: ["1d", "1h"]
+    conditions:
+      - type: price_vs_ind
+        operator: "<="
+        indicator: bb_lower
+      - type: threshold
+        indicator: rsi_14
+        operator: "<"
+        value: 35
+
+  - name: "Breakout with Volume"
+    description: "Price breaks 20-bar high with significant volume surge"
+    signal: "buy"
+    confidence: 0.68
+    timeframes: ["1d", "1h"]
+    conditions:
+      - type: breakout
+        direction: above
+        period: 20
+      - type: volume_spike
+        multiplier: 2.0
+
+  # ── Bearish signals ──────────────────────────────────────────────────────────
+
+  - name: "RSI Overbought"
+    description: "RSI above 70 – potential sell/short signal"
+    signal: "sell"
+    confidence: 0.65
+    timeframes: ["1d", "4h", "1h"]
+    conditions:
+      - type: threshold
+        indicator: rsi_14
+        operator: ">"
+        value: 70
+
+  - name: "MACD Bearish Cross"
+    description: "MACD line crosses below signal line"
+    signal: "sell"
+    confidence: 0.63
+    timeframes: ["1d", "1h"]
+    conditions:
+      - type: cross
+        fast: macd
+        slow: macd_signal
+        direction: below
+        lookback: 3
+
+  - name: "Death Cross"
+    description: "50 EMA crosses below 200 EMA – long-term bearish"
+    signal: "sell"
+    confidence: 0.80
+    timeframes: ["1d"]
+    conditions:
+      - type: cross
+        fast: ema_50
+        slow: ema_200
+        direction: below
+        lookback: 5
+
+  - name: "Breakdown with Volume"
+    description: "Price breaks 20-bar low with significant volume"
+    signal: "sell"
+    confidence: 0.68
+    timeframes: ["1d", "1h"]
+    conditions:
+      - type: breakout
+        direction: below
+        period: 20
+      - type: volume_spike
+        multiplier: 2.0

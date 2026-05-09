@@ -44,6 +44,9 @@ data/*.zip
 # in Piece 2. See DECISIONS 2026-05-09 entry.
 manual_entry/
 
+# Manual-input chart uploads (user-generated runtime content, not source)
+uploads/
+
 # N8N / runtime logs
 *.log
 

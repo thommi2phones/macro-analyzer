@@ -25,7 +25,9 @@ from macro_positioning.ingestion.source_lifecycle import (
     summarize_sources,
 )
 from macro_positioning.pipelines.run_pipeline import build_pipeline
+from macro_positioning.prices.fetcher import fetch_and_persist as fetch_prices_persist
 from macro_positioning.scoring.runner import run_scoring_pass
+from macro_positioning.scoring.watchlist_resolver import resolve_watchlist
 
 
 def _parse_feed_arg(raw: str) -> tuple[str, str]:
@@ -152,6 +154,32 @@ def cmd_sources_retag(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_prices_fetch(args: argparse.Namespace) -> int:
+    """Fetch + persist daily OHLCV bars for tickers (yfinance default)."""
+    if args.ticker:
+        tickers = list(args.ticker)
+    elif args.watchlist:
+        # Resolve current watchlist (anchors + theme tickers for current regime)
+        # Mention extraction skipped here — we just need the set to fetch.
+        # Use a default regime; runner re-resolves at scoring time anyway.
+        resolved = resolve_watchlist(framework_regime="commodity_led_inflation")
+        tickers = [e.ticker for e in resolved.entries]
+    else:
+        print("Provide --watchlist or --ticker T (repeatable)", file=sys.stderr)
+        return 2
+
+    result = fetch_prices_persist(tickers, days=args.days)
+    print(f"Price fetch via {result.provider}")
+    print(f"  Requested      : {result.tickers_requested}")
+    print(f"  With data      : {result.tickers_with_data}")
+    print(f"  Bars persisted : {result.bars_persisted}")
+    if result.failures:
+        print(f"  Failures       : {len(result.failures)}")
+        for f in result.failures[:8]:
+            print(f"    - {f.get('ticker'):<6}: {f.get('error')}")
+    return 0 if not result.failures else 1
+
+
 def cmd_score_run(args: argparse.Namespace) -> int:
     """Run a scoring pass: resolve watchlist (anchors + themes + mentions),
     score each ticker via macro_brain orchestrator, persist to trade_scores.
@@ -248,6 +276,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_retag.add_argument("--add", action="append", default=None, help="repeatable: tag to add")
     p_retag.add_argument("--remove", action="append", default=None, help="repeatable: tag to remove")
     p_retag.set_defaults(func=cmd_sources_retag)
+
+    # ---- prices -------------------------------------------------------------
+    p_prices = sub.add_parser("prices", help="fetch + persist daily OHLCV bars")
+    prices_sub = p_prices.add_subparsers(dest="prices_command", required=True)
+
+    p_pf = prices_sub.add_parser("fetch", help="fetch daily prices for tickers (yfinance)")
+    g = p_pf.add_mutually_exclusive_group(required=False)
+    g.add_argument("--watchlist", action="store_true", help="fetch every ticker in active watchlist (anchors + themes)")
+    p_pf.add_argument("--ticker", action="append", default=None, help="repeatable: bare ticker (URA, BTC, DXY)")
+    p_pf.add_argument("--days", type=int, default=200, help="history depth (default 200, enough for 200DMA)")
+    p_pf.set_defaults(func=cmd_prices_fetch)
 
     # ---- scoring ------------------------------------------------------------
     p_score = sub.add_parser("score", help="run brain scoring against the active watchlist")

@@ -274,6 +274,35 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_decisions_decided_at
         ON decisions (decided_at DESC)
     """,
+    # ─── Live prices: daily OHLCV per ticker ──────────────────────────────
+    # Populated by the prices/fetcher.py batch + the `prices fetch` CLI.
+    # Keyed on ticker (string) rather than asset_id (FK) so we can fetch
+    # before assets row exists; the scoring runner writes assets first
+    # then trade_scores so this stays consistent.
+    """
+    CREATE TABLE IF NOT EXISTS prices (
+        price_id TEXT PRIMARY KEY,
+        ticker TEXT NOT NULL,
+        observed_at TEXT NOT NULL,        -- ISO date (YYYY-MM-DD) for daily; ISO datetime for intraday
+        timeframe TEXT NOT NULL DEFAULT '1D',
+        open REAL,
+        high REAL,
+        low REAL,
+        close REAL NOT NULL,
+        volume INTEGER,
+        provider TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+    )
+    """,
+    # One bar per (ticker, observed_at, timeframe) — re-fetches replace via INSERT OR REPLACE
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_prices_ticker_observed
+        ON prices (ticker, observed_at, timeframe)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_prices_ticker_observed_desc
+        ON prices (ticker, observed_at DESC)
+    """,
 ]
 
 
@@ -308,6 +337,17 @@ def _dedupe_existing_documents(connection: sqlite3.Connection) -> int:
 def initialize_database(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as connection:
+        # WAL mode = concurrent reads + single writer without lock contention.
+        # Critical when the FastAPI server is reading desk_data while a CLI
+        # score-pass writes to trade_scores. Default rollback-journal mode
+        # would lock the whole DB on writes and stall both sides.
+        # Persists in the file's pragma so we only need to set it once.
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        # Wait up to 5s for any in-flight writer rather than failing fast
+        # with `database is locked`. Safe with WAL because contention
+        # windows are short.
+        connection.execute("PRAGMA busy_timeout=5000")
         # Create base tables first (documents must exist before dedupe).
         connection.execute(SCHEMA_STATEMENTS[0])
         # Dedupe any pre-existing duplicates before the unique index lands.

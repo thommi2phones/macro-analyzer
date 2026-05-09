@@ -81,10 +81,14 @@ def test_compose_reasoning_trail_lists_stub_components():
     setup = _full_psych_setup(regime=classify_regime_stub())
     result = compose(setup)
     stubs = result.reasoning_trail["stub_components"]
-    # Phase 4 stubs: liquidity, sector_theme, technical, volume, relative_strength
+    # Remaining stubs after technical_structure went real (Phase 6c):
+    # liquidity, sector_theme, volume_flow, relative_strength.
     assert "liquidity_alignment" in stubs
     assert "sector_theme_strength" in stubs
-    assert "technical_structure" in stubs
+    assert "volume_flow_confirmation" in stubs
+    assert "relative_strength" in stubs
+    # technical_structure is no longer a stub (real heuristic now)
+    assert "technical_structure" not in stubs
 
 
 def test_compose_grade_threshold_alignment():

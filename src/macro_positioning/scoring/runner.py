@@ -31,6 +31,8 @@ from pydantic import BaseModel, Field
 
 from macro_positioning.core.settings import settings
 from macro_positioning.db.schema import initialize_database
+from macro_positioning.prices.fetcher import load_recent_prices
+from macro_positioning.prices.technicals import compute_technical_features
 from macro_positioning.scoring.watchlist_resolver import (
     ResolvedWatchlist,
     WatchlistEntry,
@@ -220,7 +222,18 @@ def run_scoring_pass(
             documents=recent_docs,
         )
 
-        # 4 + 5. Score each + persist
+        # 4. Pre-load all prices BEFORE opening a write transaction.
+        # Mixing reads + writes inside a single BEGIN can deadlock when
+        # helpers open their own connections (see prices/fetcher.py).
+        ticker_features: dict[str, dict] = {}
+        for entry in resolved.entries:
+            try:
+                bars = load_recent_prices(entry.ticker, days=200, conn=conn)
+                ticker_features[entry.ticker] = compute_technical_features(bars)
+            except Exception as exc:
+                ticker_features[entry.ticker] = {"n_bars": 0}
+
+        # 5. Score each + persist
         errors: list[dict] = []
         scored_count = 0
         persisted_count = 0
@@ -231,19 +244,36 @@ def run_scoring_pass(
         try:
             for entry in resolved.entries:
                 try:
+                    feats = ticker_features.get(entry.ticker, {"n_bars": 0})
+                    last_close = feats.get("close")
+                    atr14 = feats.get("atr14")
+
+                    # Synthesize entry/stop/target from price + ATR
+                    # Convention: entry = current close; stop = 2x ATR
+                    # below; target = entry + 3R (for a 3:1 R/R prior).
+                    # Once we add side-aware logic (LONG vs SHORT), this
+                    # heuristic gets directionally specific.
+                    if last_close and atr14 and atr14 > 0:
+                        entry_zone = float(last_close)
+                        stop_loss = float(last_close - 2 * atr14)
+                        risk = entry_zone - stop_loss
+                        target = float(entry_zone + 3 * risk)
+                    else:
+                        entry_zone = None
+                        stop_loss = None
+                        target = None
+
                     setup = SetupContext(
                         setup_id=f"setup-{entry.ticker.lower()}-{run_id[:8]}",
                         asset_ticker=entry.ticker,
                         asset_class=entry.asset_class or "equity",
-                        setup_type="",  # leave blank; brain will treat as neutral
+                        setup_type="",
                         active_regime=regime,
-                        # Light defaults — the brain stubs the components we
-                        # don't have data for. Once we add live price fetch,
-                        # these become real.
-                        entry_zone=None,
-                        stop_loss=None,
-                        target=None,
+                        entry_zone=entry_zone,
+                        stop_loss=stop_loss,
+                        target=target,
                         psychology_state={},
+                        technical_features=feats,
                     )
                     score = compose(setup)
                     scored_count += 1

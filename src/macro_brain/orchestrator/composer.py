@@ -28,6 +28,7 @@ from macro_brain.agents.psychology_evaluator.evaluator import (
 from macro_brain.agents.regime_classifier.classifier import (
     score_macro_alignment_from_regime,
 )
+from macro_brain.agents.technical_scorer.scorer import score_technical_structure
 from macro_brain.orchestrator.feature_vector import (
     assign_grade,
     assign_position_size_tier,
@@ -163,8 +164,8 @@ def compose(setup: SetupContext) -> TradeScore:
     # Sector theme — STUB (sector_theme_scorer agent not yet built)
     sub_scores.append(_stub_subscore("sector_theme_strength"))
 
-    # Technical structure — STUB (technical_scorer not yet built)
-    sub_scores.append(_stub_subscore("technical_structure"))
+    # Technical structure — REAL heuristic over price-derived features
+    sub_scores.append(score_technical_structure(setup))
 
     # Volume flow — STUB (volume_analyzer not yet built)
     sub_scores.append(_stub_subscore("volume_flow_confirmation"))

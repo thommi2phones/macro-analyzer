@@ -25,6 +25,7 @@ from macro_positioning.ingestion.source_lifecycle import (
     summarize_sources,
 )
 from macro_positioning.pipelines.run_pipeline import build_pipeline
+from macro_positioning.scoring.runner import run_scoring_pass
 
 
 def _parse_feed_arg(raw: str) -> tuple[str, str]:
@@ -151,6 +152,33 @@ def cmd_sources_retag(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_score_run(args: argparse.Namespace) -> int:
+    """Run a scoring pass: resolve watchlist (anchors + themes + mentions),
+    score each ticker via macro_brain orchestrator, persist to trade_scores.
+    """
+    summary = run_scoring_pass(
+        framework_regime_hint=args.regime_hint,
+        persist=not args.dry_run,
+        docs_window_days=args.window,
+    )
+    print(f"Scoring pass {summary.run_id[:8]}")
+    print(f"  Regime    : {summary.framework_regime} (thesis: {summary.thesis_regime})")
+    print(f"  Watchlist : {summary.watchlist_size} tickers")
+    print(f"  Scored    : {summary.scored}{' (dry-run, not persisted)' if args.dry_run else f' (persisted: {summary.persisted})'}")
+    if summary.mention_summary:
+        print(f"  Mentions  :")
+        for window, info in sorted(summary.mention_summary.items()):
+            top_str = ", ".join(f"{t['ticker']}({t['docs']})" for t in info.get("top_5", []))
+            print(f"    {window:>3}d : {info.get('total_docs_scanned', 0)} docs scanned, "
+                  f"{info.get('tickers_above_threshold', 0)} tickers above threshold "
+                  f"{f'· top: {top_str}' if top_str else ''}")
+    if summary.errors:
+        print(f"  Errors    : {len(summary.errors)}")
+        for err in summary.errors[:5]:
+            print(f"    - {err.get('ticker')}: {err.get('error')}")
+    return 0 if not summary.errors else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="macro-positioning",
@@ -220,6 +248,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_retag.add_argument("--add", action="append", default=None, help="repeatable: tag to add")
     p_retag.add_argument("--remove", action="append", default=None, help="repeatable: tag to remove")
     p_retag.set_defaults(func=cmd_sources_retag)
+
+    # ---- scoring ------------------------------------------------------------
+    p_score = sub.add_parser("score", help="run brain scoring against the active watchlist")
+    score_sub = p_score.add_subparsers(dest="score_command", required=True)
+
+    p_run = score_sub.add_parser("run", help="resolve watchlist + score each ticker + persist")
+    p_run.add_argument("--regime-hint", default=None, help="override thesis regime (e.g. 'commodity_expansion')")
+    p_run.add_argument("--dry-run", action="store_true", help="compute but don't persist to trade_scores")
+    p_run.add_argument("--window", type=int, default=90, help="document lookback days for mention extraction")
+    p_run.set_defaults(func=cmd_score_run)
 
     return parser
 

@@ -1,0 +1,110 @@
+{
+  "$schema_version": "1.1",
+  "description": "Anchor watchlist — tickers ALWAYS scored regardless of regime or feed mentions. Covers every macro-influenced sector so the dashboard always has live signal across the full landscape. Joined at runtime with regime-aligned theme tickers (config/asset_themes.json) and mention-extracted tickers from recent documents to form the active scoring set. See src/macro_positioning/scoring/watchlist_resolver.py.",
+
+  "$resolution_rules": {
+    "anchors_always_included": true,
+    "theme_tickers_when_regime_aligned": true,
+    "mention_extraction_windows_days": [7, 30, 90],
+    "mention_extraction_top_n_per_window": 10,
+    "minimum_mention_count_per_window": 3
+  },
+
+  "$organization": "Anchors are organized by macro sector. Every typical macro-influenced sector has at least one continuously-monitored anchor so the operator sees a complete tape every morning, not just the themes the regime currently favors.",
+
+  "anchors": [
+    {
+      "$_section": "Broad market & risk-on/off references",
+      "_": "These set the baseline regime read."
+    },
+    { "ticker": "SPY",  "name": "S&P 500 ETF",          "asset_class": "index",     "sector": "broad_market",     "rationale": "Broad-market reference; regime confirmation" },
+    { "ticker": "QQQ",  "name": "Nasdaq 100 ETF",       "asset_class": "index",     "sector": "tech_index",       "rationale": "Tech/AI proxy; liquidity-wave indicator" },
+    { "ticker": "IWM",  "name": "Russell 2000 ETF",     "asset_class": "index",     "sector": "small_cap",        "rationale": "Risk-on breadth + small-cap leadership signal" },
+    { "ticker": "VIX",  "name": "Volatility Index",     "asset_class": "vol",       "sector": "volatility",       "rationale": "Risk-regime input" },
+
+    {
+      "$_section": "Rates & currency — liquidity layer",
+      "_": "Per macro_thesis_v3: liquidity sets the timing."
+    },
+    { "ticker": "TLT",  "name": "20+ Year Treasury",    "asset_class": "bond",      "sector": "rates_long",       "rationale": "Duration / rate-trend gauge" },
+    { "ticker": "IEF",  "name": "7-10 Year Treasury",   "asset_class": "bond",      "sector": "rates_belly",      "rationale": "Belly of the curve" },
+    { "ticker": "DXY",  "name": "Dollar Index",         "asset_class": "currency",  "sector": "fx",               "rationale": "Liquidity + commodity-regime input" },
+    { "ticker": "UUP",  "name": "Dollar Bullish ETF",   "asset_class": "currency",  "sector": "fx",               "rationale": "Tradeable DXY proxy" },
+
+    {
+      "$_section": "Energy — structural layer (oil, gas, uranium)",
+      "_": "Sits at the intersection of geopolitics, industrial demand, AI capex, and inflation."
+    },
+    { "ticker": "USO",  "name": "United States Oil",    "asset_class": "commodity", "sector": "energy_oil",       "rationale": "WTI crude proxy" },
+    { "ticker": "UCO",  "name": "ProShares 2x Crude",   "asset_class": "commodity", "sector": "energy_oil",       "rationale": "Leveraged oil bets" },
+    { "ticker": "UNG",  "name": "United States Nat Gas","asset_class": "commodity", "sector": "energy_gas",       "rationale": "Natural gas / LNG / power demand" },
+    { "ticker": "XLE",  "name": "Energy Sector ETF",    "asset_class": "equity",    "sector": "energy_equity",    "rationale": "Cross-regime: structural + cyclical" },
+    { "ticker": "XOP",  "name": "S&P Oil & Gas E&P",    "asset_class": "equity",    "sector": "energy_equity",    "rationale": "Higher-beta E&P sub-sector" },
+    { "ticker": "URA",  "name": "Uranium Miners ETF",   "asset_class": "commodity", "sector": "energy_uranium",   "rationale": "Energy security / nuclear renaissance / structural thesis anchor" },
+    { "ticker": "URNM", "name": "Sprott Uranium Miners","asset_class": "commodity", "sector": "energy_uranium",   "rationale": "Tighter uranium-pure play" },
+
+    {
+      "$_section": "Precious metals & miners — debasement / scarcity",
+      "_": "Hard-asset anchor per macro_thesis_v3."
+    },
+    { "ticker": "GLD",  "name": "SPDR Gold",            "asset_class": "commodity", "sector": "metals_gold",      "rationale": "Hard-asset / debasement anchor" },
+    { "ticker": "SLV",  "name": "iShares Silver",       "asset_class": "commodity", "sector": "metals_silver",    "rationale": "Industrial + monetary metal — higher beta to gold" },
+    { "ticker": "GDX",  "name": "Gold Miners ETF",      "asset_class": "equity",    "sector": "metals_miners",    "rationale": "Operating-leverage on gold; confirmation when miners lead bullion" },
+    { "ticker": "GDXJ", "name": "Junior Gold Miners",   "asset_class": "equity",    "sector": "metals_miners",    "rationale": "Higher-beta junior miners — risk-on within the metals trade" },
+    { "ticker": "SILJ", "name": "Junior Silver Miners", "asset_class": "equity",    "sector": "metals_miners",    "rationale": "Junior silver — paired with SLV breakouts" },
+
+    {
+      "$_section": "Industrial metals — China demand / supply stress",
+      "_": "Copper especially as a real-economy + AI-grid demand signal."
+    },
+    { "ticker": "COPX", "name": "Copper Miners ETF",    "asset_class": "equity",    "sector": "metals_industrial","rationale": "Copper proxy — Dr. Copper, AI/grid electrification beneficiary" },
+    { "ticker": "CPER", "name": "United States Copper", "asset_class": "commodity", "sector": "metals_industrial","rationale": "Direct copper exposure (futures-backed)" },
+    { "ticker": "FCX",  "name": "Freeport-McMoRan",     "asset_class": "equity",    "sector": "metals_industrial","rationale": "Copper bellwether single-name" },
+
+    {
+      "$_section": "Agriculture — fertilizer / weather / geopolitics",
+      "_": "Difficult by design; rewards the prepared per macro_thesis_v3."
+    },
+    { "ticker": "DBA",  "name": "Invesco Ag ETF",       "asset_class": "commodity", "sector": "agriculture",      "rationale": "Broad ag basket — diversified read" },
+    { "ticker": "MOO",  "name": "VanEck Agribusiness",  "asset_class": "equity",    "sector": "agriculture",      "rationale": "Agribusiness equities — fertilizer/seed/equipment exposure" },
+    { "ticker": "WEAT", "name": "Teucrium Wheat",       "asset_class": "commodity", "sector": "agriculture",      "rationale": "Wheat — geopolitical sensitivity" },
+    { "ticker": "CORN", "name": "Teucrium Corn",        "asset_class": "commodity", "sector": "agriculture",      "rationale": "Corn — fuel + feed demand" },
+
+    {
+      "$_section": "Defense — early-signal / cycle play",
+      "_": "Spending moves before market prices conflict per macro_thesis_v3."
+    },
+    { "ticker": "ITA",  "name": "Aerospace & Defense",  "asset_class": "equity",    "sector": "defense",          "rationale": "Defense-cycle thesis anchor" },
+    { "ticker": "PPA",  "name": "Invesco Aero & Def",   "asset_class": "equity",    "sector": "defense",          "rationale": "Alt aero+defense ETF" },
+
+    {
+      "$_section": "Crypto — liquidity beta + scarcity",
+      "_": "BTC + majors per asset_themes.json crypto theme."
+    },
+    { "ticker": "BTC",  "name": "Bitcoin",              "asset_class": "crypto",    "sector": "crypto_btc",       "rationale": "Liquidity-beta + scarcity anchor" },
+    { "ticker": "ETH",  "name": "Ethereum",             "asset_class": "crypto",    "sector": "crypto_eth",       "rationale": "Smart-contract beta; crypto leadership confirmation" },
+    { "ticker": "SOL",  "name": "Solana",               "asset_class": "crypto",    "sector": "crypto_alt",       "rationale": "High-beta L1 — alt cycle indicator" },
+    { "ticker": "MSTR", "name": "MicroStrategy",        "asset_class": "equity",    "sector": "crypto_proxy",     "rationale": "Equity proxy with BTC treasury exposure — leverage signal" },
+
+    {
+      "$_section": "Tech / AI — liquidity beneficiary + structural destination",
+      "_": "AI is hardware + power + compute, not just software (per macro_thesis_v3)."
+    },
+    { "ticker": "SMH",  "name": "VanEck Semis",         "asset_class": "equity",    "sector": "tech_semis",       "rationale": "Semis ETF — AI capex tape" },
+    { "ticker": "NVDA", "name": "Nvidia",               "asset_class": "equity",    "sector": "tech_ai",          "rationale": "AI bellwether single-name" },
+
+    {
+      "$_section": "Sector ETFs — full macro tape",
+      "_": "One ticker per major SPDR sector so the operator sees rotation across the full landscape every morning."
+    },
+    { "ticker": "XLF",  "name": "Financials",           "asset_class": "equity",    "sector": "financials",       "rationale": "Banks + spread-sensitive read" },
+    { "ticker": "XLK",  "name": "Technology",           "asset_class": "equity",    "sector": "tech_broad",       "rationale": "Broad tech exposure" },
+    { "ticker": "XLU",  "name": "Utilities",            "asset_class": "equity",    "sector": "utilities",        "rationale": "Bond proxy + power demand (AI)" },
+    { "ticker": "XLV",  "name": "Healthcare",           "asset_class": "equity",    "sector": "healthcare",       "rationale": "Defensive rotation read" },
+    { "ticker": "XLY",  "name": "Consumer Discretionary","asset_class": "equity",   "sector": "consumer_disc",    "rationale": "Risk-on consumer signal" },
+    { "ticker": "XLP",  "name": "Consumer Staples",     "asset_class": "equity",    "sector": "consumer_staples", "rationale": "Defensive rotation" },
+    { "ticker": "XLI",  "name": "Industrials",          "asset_class": "equity",    "sector": "industrials",      "rationale": "Cyclical real-economy gauge" },
+    { "ticker": "XLB",  "name": "Materials",            "asset_class": "equity",    "sector": "materials",        "rationale": "Industrial inputs + commodity beta" },
+    { "ticker": "XLRE", "name": "Real Estate",          "asset_class": "equity",    "sector": "real_estate",      "rationale": "Rate + duration sensitivity" }
+  ]
+}

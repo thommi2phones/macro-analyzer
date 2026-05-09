@@ -30,7 +30,7 @@
 
     "podcast": ["narrative_synthesizer"],
 
-    "manual": ["narrative_synthesizer", "regime_classifier"],
+    "manual": ["narrative_synthesizer", "regime_classifier", "sector_theme_scorer", "technical_scorer"],
     "high_priority": ["narrative_synthesizer", "regime_classifier", "sector_theme_scorer"]
   },
 

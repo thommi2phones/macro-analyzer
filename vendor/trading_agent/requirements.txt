@@ -1,0 +1,23 @@
+# ── Core ──────────────────────────────────────────────────────────────────────
+anthropic>=0.40.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+pydantic>=2.0.0
+requests>=2.31.0
+
+# ── Market Data & Broker ──────────────────────────────────────────────────────
+yfinance>=0.2.40          # free fallback historical data
+alpaca-py>=0.35.0         # Alpaca trading + market data + websocket streaming
+
+# ── Data Processing ───────────────────────────────────────────────────────────
+pandas>=2.0.0
+numpy>=1.24.0
+
+# ── Scheduling ────────────────────────────────────────────────────────────────
+apscheduler>=3.10.4
+
+# ── Backtesting ───────────────────────────────────────────────────────────────
+# The built-in backtester works without vectorbt.
+# Install vectorbt for richer stats (Sharpe curves, heatmaps, etc.):
+#   pip install vectorbt
+# vectorbt>=0.26.0

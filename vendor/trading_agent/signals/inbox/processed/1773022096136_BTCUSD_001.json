@@ -1,0 +1,45 @@
+{
+  "source": "tradingview_webhook",
+  "received_at": "2026-03-09T02:07:04.571Z",
+  "event_id": "1773022024570-5eqkb2",
+  "setup_id": "BTCUSD_001",
+  "symbol": "BTCUSD",
+  "timeframe": "1",
+  "stage": "watch",
+  "bias": "BULLISH",
+  "confluence": "HIGH",
+  "score": 3,
+  "pattern": {
+    "manual_type": "flag",
+    "manual_bias": "bearish",
+    "manual_confirmed": true,
+    "auto_type": "bear_flag",
+    "auto_conf": 0.75,
+    "auto_bias": "bearish",
+    "auto_aligned": true
+  },
+  "levels": {
+    "entry": 0,
+    "stop": 0,
+    "tp1": 0,
+    "tp2": 0,
+    "tp3": 0,
+    "near_entry": false,
+    "hit_entry": false,
+    "hit_stop": false,
+    "hit_tp1": false,
+    "hit_tp2": false,
+    "hit_tp3": false
+  },
+  "momentum": {
+    "rsi": 27.3737061253,
+    "macd_hist": -16.4706266666,
+    "squeeze_release": false
+  },
+  "mismatch_flags": [
+    "no_fib_confluence",
+    "bias_conflict"
+  ],
+  "missing_fields": [],
+  "accepted": true
+}

@@ -39,6 +39,9 @@ data/*.zip
 # Claude Code worktrees (per-session scratch, not source)
 .claude/worktrees/
 
+# Manual-input chart uploads (user-generated runtime content, not source)
+uploads/
+
 # N8N / runtime logs
 *.log
 

@@ -1,0 +1,24 @@
+[project]
+name = "trading-agent"
+version = "0.1.0"
+description = "Autonomous trading agent with chart scanning, Claude vision analysis, and Alpaca execution"
+requires-python = ">=3.11"
+
+dependencies = [
+    "anthropic>=0.40.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.1",
+    "pydantic>=2.0.0",
+    "requests>=2.31.0",
+    "yfinance>=0.2.40",
+    "alpaca-py>=0.35.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "apscheduler>=3.10.4",
+]
+
+[project.optional-dependencies]
+backtest = ["vectorbt>=0.26.0"]
+
+[project.scripts]
+trading-agent = "main:main"

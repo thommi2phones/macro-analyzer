@@ -40,6 +40,9 @@ function App() {
           <button className={`nav-tab ${view === "dev" ? "on" : ""}`} onClick={() => setView("dev")}>
             <span className="tab-num">/03</span>dev
           </button>
+          <button className={`nav-tab ${view === "inbox" ? "on" : ""}`} onClick={() => setView("inbox")}>
+            <span className="tab-num">/04</span>inbox
+          </button>
         </nav>
         <div className="topbar-spacer"></div>
         <div className="topbar-right">
@@ -80,6 +83,7 @@ function App() {
       )}
       {view === "journal" && <Journal />}
       {view === "dev" && <Dev />}
+      {view === "inbox" && <Inbox />}
 
       <DrillSheet
         open={!!openSig}

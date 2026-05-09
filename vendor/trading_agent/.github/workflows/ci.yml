@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main, auto/bootstrap-ops]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check imports
+        run: python -c "
+          from agent.loop import TradingAgent;
+          from agent.health import start_health_server;
+          from backtesting.engine import Backtester;
+          from signals.generator import SignalGenerator;
+          from analysis.scanner import Scanner;
+          from analysis.mtf_scanner import MTFScanner;
+          from execution.paper_trading import PaperTrader;
+          from execution.alpaca_broker import AlpacaBroker;
+          from alerts.discord import send_signal;
+          from alerts.email_alert import send_signal;
+          print('All imports OK')
+          "
+
+      - name: Validate config loading
+        run: python -c "
+          import yaml;
+          cfg = yaml.safe_load(open('config/settings.yaml'));
+          assert 'watchlists' in cfg;
+          assert 'scanner' in cfg;
+          assert 'execution' in cfg;
+          rules = yaml.safe_load(open('config/rules.yaml'));
+          assert 'rules' in rules;
+          print(f'Config OK: {len(rules[\"rules\"])} rules')
+          "
+
+      - name: Smoke test - scanner init
+        run: python -c "
+          from analysis.scanner import Scanner;
+          s = Scanner('config/rules.yaml');
+          print(f'Scanner OK: {len(s.rules)} rules loaded')
+          "
+
+      - name: Smoke test - backtester init
+        run: python -c "
+          from backtesting.engine import Backtester;
+          b = Backtester('config/rules.yaml');
+          print(f'Backtester OK: {len(b._scanner.rules)} rules')
+          "
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t trading-agent:ci .
+
+      - name: Test container starts
+        run: |
+          docker run --rm -d --name ta-test \
+            -e ANTHROPIC_API_KEY=test \
+            trading-agent:ci python3 -c "
+            from agent.loop import TradingAgent;
+            from agent.health import start_health_server;
+            print('Container OK')
+            "

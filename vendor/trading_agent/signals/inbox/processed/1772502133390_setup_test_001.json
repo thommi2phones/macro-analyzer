@@ -1,0 +1,44 @@
+{
+  "source": "tradingview_webhook",
+  "received_at": "2026-03-03T01:41:49.659Z",
+  "event_id": "1772502109658-n7exav",
+  "setup_id": "setup_test_001",
+  "symbol": "BTCUSDT",
+  "timeframe": "240",
+  "stage": "trigger",
+  "bias": "BULLISH",
+  "confluence": "HIGH",
+  "score": 9,
+  "pattern": {
+    "manual_type": "falling_wedge",
+    "manual_bias": "bullish",
+    "manual_confirmed": true,
+    "auto_type": "none",
+    "auto_conf": 0,
+    "auto_bias": "neutral",
+    "auto_aligned": false
+  },
+  "levels": {
+    "entry": 67500,
+    "stop": 65200,
+    "tp1": 72000,
+    "tp2": null,
+    "tp3": null,
+    "near_entry": false,
+    "hit_entry": false,
+    "hit_stop": false,
+    "hit_tp1": false,
+    "hit_tp2": false,
+    "hit_tp3": false
+  },
+  "momentum": {
+    "rsi": 62.1,
+    "macd_hist": 220.5,
+    "squeeze_release": true
+  },
+  "mismatch_flags": [
+    "taxonomy_incomplete"
+  ],
+  "missing_fields": [],
+  "accepted": true
+}

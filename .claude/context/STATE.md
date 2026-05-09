@@ -1,53 +1,91 @@
 # Current State
 
-_Last updated: 2026-05-09 (manual-input-layer planning complete)_
+_Last updated: 2026-05-09 (manual-input Piece 1 shipped in worktree, awaiting merge)_
 
 ## Active Task
 
 Macro Analyzer is past Phase 6d. Live SPA dashboard at http://127.0.0.1:8000/ shows
 real scored watchlist (66 tickers) driven by live yfinance prices, time-weighted
-mention extraction, and a real heuristic technical scorer with EMA + multi-horizon
-momentum. The data flywheel infrastructure exists (agent_call_log, source_outcomes,
-training_corpus/) but no learning queries / model retraining wired yet.
+mention extraction, real heuristic technical scorer, **plus four heuristic scorers
+(volume/sector/RS/liquidity) replacing the neutral-0.5 stubs.** Score spread now 14..72.
 
-Two parallel work tracks:
-1. **Manual input layer** — plan approved, ready to build in a fresh session.
-   Plan at `~/.claude/plans/manual-input-layer-also-hazy-island.md`.
-2. **ML / learning loop** — needs design + build (still open).
+Data flywheel: `agent_call_log`, `source_outcomes`, `training_corpus/` collect data;
+**`learning/` package (items 1–3) now consumes** — source attribution dual-lens,
+score-outcome Spearman ρ, mention precision@k. Surfacing into SPA still PM-side todo.
 
-## Manual Input Layer — APPROVED PLAN, ready to build
+Coordination model: this repo runs PM + multiple parallel worker chats. Briefs at
+`.claude/context/briefs/`. PM owns schema, `desk_data.py` SPA contract, and
+`.claude/context/*` upkeep; workers own feature implementation in declared territory.
 
-**Cold-start instructions for the next session:**
-1. Read `~/.claude/plans/manual-input-layer-also-hazy-island.md` (full plan).
-2. Read this STATE.md and `.claude/agents/app/CLAUDE.md` (Application Agent scope).
-3. Execute Step 0 first: relocate `/Users/thom/Documents/Personal/Code Projects/trading_agent/`
-   into the macro-analyzer repo as `vendor/trading_agent/` (filesystem move).
-4. Then schema migration → backend (`src/macro_positioning/manual/*`, `api/manual_input.py`)
-   → SPA `/inbox` route → verification per plan §Verification.
+Active worker chats:
+1. **Manual input layer** — Piece 1 **SHIPPED** in worktree `intelligent-colden-e8af58`,
+   not yet merged to main. Verified live in browser. Plan at
+   `~/.claude/plans/manual-input-layer-also-hazy-island.md`. Piece 2 (Gemini
+   chart vision) deferred to a future session — stub at `manual/vision.py`
+   raises `NotImplementedError("enabled in Piece 2")`.
+2. **LLM agents** (regime + narrative) — worktree spun up, not yet started.
 
-**Locked design decisions (do NOT relitigate):**
-- UI = dedicated `/inbox` route (4th tab).
-- Metadata fields per drop: ticker, side, source_author, source_channel, blurb,
-  conviction (1-5), timeframe (1H/4H/1D/1W). Auto-extract via pre_tagger +
-  mention_extractor; user reviews/corrects every field before commit.
-- Author + channel as first-class fields (not free text) — new `input_authors`
-  table because per-author hit-rate tracking is a real product concern.
-- Build Piece 1 only this round (capture + DB + UI, NO LLM call). Piece 2
-  (Gemini vision) wired next session as a one-line flip on a stub that's
-  scaffolded now.
-- Vision backend = Gemini 2.5 Pro via existing `brain/vision.py`. Ported
-  prompt = `config/manual_chart_framework.md` (copy of trading_agent's
-  `config/chart_analysis_framework.md`, 352 lines). Do NOT port Anthropic
-  API call from trading_agent — only its prompt + schema + parsing.
-- Schema changes are append-only: new `input_authors` table; 4 new nullable
-  columns on `documents` (`author_id`, `user_metadata_json`, `attachment_path`,
-  `extracted_features_json`).
+Recently shipped worker hand-backs (just merged):
+- **Heuristic scorers** — `7eb7c73` merged via `claude/elegant-shirley-b652e2`.
+- **ML learning loop items 1–3** — `85e186a` merged via `claude/gallant-albattani-b210c8`.
 
-**What gets ported from trading_agent (vendor/) into src/macro_positioning/manual/:**
-- `TradeRecord` Pydantic model → `manual/models.py`
-- `chat_analyzer.py` → `manual/chat_parser.py` (LLM call disabled in Piece 1)
-- `image_analyzer.py` prompt + schema → fed into Gemini path in Piece 2
-- `chart_analysis_framework.md` → `config/manual_chart_framework.md`
+## Manual Input Layer — Piece 1 SHIPPED (worktree, pre-merge)
+
+**Branch:** `claude/intelligent-colden-e8af58` · last commit on this work
+is uncommitted on disk in worktree `.claude/worktrees/intelligent-colden-e8af58/`.
+
+**What landed end-to-end (verified in browser via Claude-in-Chrome):**
+- New SPA route `/04 inbox` with drop-zone, paste-from-clipboard, metadata
+  form (ticker, side, conviction 1–5, timeframe 1H/4H/1D/1W, note,
+  author + channel + channel_type), preview card, and "Recent drops"
+  history table with pending-vision badge.
+- API: `POST /api/manual/preview` (no persistence), `POST /api/manual/ingest`
+  (multipart, optional file), `GET /api/manual/inputs`, `GET /api/manual/authors`.
+- Schema: `input_authors` table + 4 nullable cols on `documents`
+  (`author_id`, `user_metadata_json`, `attachment_path`,
+  `extracted_features_json`). Idempotent ALTER via PRAGMA table_info check.
+- Backend package `src/macro_positioning/manual/`: models, authors, chat_parser
+  (heuristic only), processor, vision (Piece 2 stub).
+- Pre-tagger + mention_extractor reused unchanged. `config/source_routing.json`
+  now maps `manual` → `[narrative_synthesizer, regime_classifier, sector_theme_scorer, technical_scorer]`.
+- File storage: `uploads/charts/YYYY-MM/{uuid}.{ext}` (relative to base_dir).
+- New dep: `python-multipart>=0.0.9` in `pyproject.toml`.
+- Author slug format: `{channel-slug}:{display-slug}` e.g. `bwatch-chat:capo`.
+  `input_authors.author_id` is the primary key; submission count is computed
+  by joining `documents` on `author_id`.
+- 263/263 tests still pass.
+
+**Vendoring decision (changed from plan):** instead of moving 978MB
+`trading_agent/` wholesale into `vendor/`, I copied only **2.3MB of source**
+(excluded `dashboard/node_modules`, `trade_images`, `data_cache`, `logs`,
+`.git`). Saved as `vendor/trading_agent/` with `VENDORED.md` documenting
+provenance. Original `trading_agent/` left intact at sibling path; user
+can clean up later.
+
+**Foundational seed corpus relocated:** the 392 `trade_images/` (142MB,
+the trading_agent's chart-vision baseline) copied to
+`manual_entry/baseline_seed/` (root of main repo, not in worktree). Folder
+renamed by user from "Manual Entry" → `manual_entry` for code-friendliness.
+README at `manual_entry/README.md`. **Piece 2 bootstrap plan:** drain these
+images through `/api/manual/ingest` programmatically, attribute to synthetic
+author `archive:trading_agent_baseline`. **Not yet wired** — needs Piece 2.
+
+**Piece 2 todo (next session — single-function flip):**
+1. Implement `manual/vision.py::analyze_manual_chart()` — currently raises
+   `NotImplementedError`. Wire to existing `brain/vision.py` Gemini path,
+   feed `config/manual_chart_framework.md` (already copied) as the prompt,
+   parse response into `TradeRecord` (model already defined in `manual/models.py`).
+   Wrap the call in `logging_wrapper` per logging contract.
+2. Build a worker that drains `documents` rows where
+   `tags_json.pending_vision = true`, calls `analyze_manual_chart`, writes
+   the result to `extracted_features_json`, clears the flag.
+3. Build the bootstrap script for `manual_entry/baseline_seed/` →
+   `/api/manual/ingest`.
+
+**Per-author hit-rate tracking (deferred):** the schema supports it
+(`input_authors.author_id` foreign-keyed via `documents.author_id`), but
+needs closed trades + `source_outcomes` joins. Wire after the ML learning
+loop has trade outcomes flowing.
 
 ## Progress
 
@@ -57,6 +95,10 @@ Two parallel work tracks:
 - [x] Phase 6 slice B: dynamic watchlist (anchors + theme + mentions) + scoring runner — `da526a6`
 - [x] Phase 6c: live prices via yfinance + real technical scorer + WAL — `30360e7`
 - [x] Phase 6d: time-weighted scoring (signals + prices + score history dScore) — `2ea99c7`
+- [x] Macro intelligence layer: regime quadrant + FCI + EPU + COT into prompt + SPA strip — `cbfb3d4`
+- [x] Worker-chat briefs + PM/worker split — `12f5a46`
+- [x] Heuristic scorers (volume_flow, sector_theme, relative_strength, liquidity) — `7eb7c73`
+- [x] ML learning loop items 1–3 (source attribution, score-outcome ρ, mention precision) — `85e186a`
 
 ### What's REAL today
 - 66-ticker watchlist scored every `score run`, persisted in `trade_scores`
@@ -65,17 +107,23 @@ Two parallel work tracks:
 - Mention extractor recency-decayed (macro half-life = window length)
 - Source-freshness multiplier dampens mentions from cold sources
 - dScore (today vs prior pass) shows on hero cards + watchlist
-- 263/263 tests passing
+- 364/364 tests passing
+- Live score spread: 14..72 across 66 tickers (real per-ticker variance from
+  volume_flow + relative_strength; theme + liquidity fall back to neutral
+  where input data missing)
+- `learning/` package: source attribution dual-lens (closed-trade P&L +
+  per-mention forward returns), Spearman ρ score-outcome correlation,
+  mention precision@k. Surfaced via CLI: `learning {attribution,signals,
+  signal-history,correlation,mention-precision}`. Not yet on the SPA.
 
 ### What's STUBBED (explicit by-design)
-- liquidity_alignment scorer — neutral 0.5
-- sector_theme_strength scorer — neutral 0.5
-- volume_flow_confirmation scorer — neutral 0.5 (volume column persisted)
-- relative_strength scorer — neutral 0.5
-- regime_classifier — keyword-hint stub, not LLM-backed
-- narrative_synthesizer — passthrough stub
+- regime_classifier — keyword-hint stub, not LLM-backed (llm-agents worker)
+- narrative_synthesizer — passthrough stub (llm-agents worker)
 - chart_vision — passthrough stub (manual input chat owns wiring it
   to Gemini 2.5 Pro via existing `brain/vision.py` path)
+- `_heuristic_log.with_log()` is a no-op shim. Pending PM-side schema
+  decision: add `agent_call_log.call_type` discriminator so heuristic
+  rows don't pollute the LLM training filter.
 
 ### Future agent slot (designed, not built)
 - **deep_research** — Perplexity Deep Research / OpenAI deep-research
@@ -84,12 +132,20 @@ Two parallel work tracks:
   "LLM stack" entry.
 
 ### Open scope
-- [ ] Manual input layer (drag-drop charts/text → brain) — **plan approved, build in fresh session**
-- [ ] ML / learning loop infrastructure (see "Next Steps" below)
-- [ ] Real LLM-backed agents (regime + narrative; burns tokens)
-- [ ] Volume + sector_theme scorers (read existing data; no LLM cost)
+- [x] Manual input layer Piece 1 — capture + DB + UI shipped (worktree pre-merge)
+- [ ] Manual input layer Piece 2 — Gemini chart vision + baseline_seed bootstrap
+- [ ] LLM agents (regime + narrative on Gemini) — worker brief + worktree ready,
+      not started. Brief: `.claude/context/briefs/llm-agents.md`
+- [ ] ML / learning loop items 4–7 (quality_score, regime accuracy, retraining
+      triggers, model_version) — items 4 + 7 need PM schema additions first
+- [ ] Surface `learning/` outputs into SPA (`sourceLeaderboard` on `/journal`,
+      correlation panel on `/dev`) — PM job, not worker
 - [ ] Intraday timeframes (4h/12h) — needs intraday yfinance fetch
-- [ ] Deploy macro-analyzer to Render
+- [ ] Render deployment + mobile-responsive SPA pass — POC target ~2 weeks,
+      mobile usable ~1 month (~30% interface time). Stick with Render
+      (D-2026-05-08-003); reject Vercel (would force SQLite→Postgres + cron rewrite)
+- [ ] `agent_call_log.call_type` discriminator (heuristic vs LLM) — schema
+      change PM owes the heuristic-scorers worker
 
 ## Files Touched This Session
 

@@ -584,10 +584,89 @@ def build_process_scorecard_section() -> dict:
 def build_source_leaderboard_section() -> list[dict]:
     """Source attribution leaderboard for /journal.
 
+    Dual-lens fed from learning/source_attribution.py:
+      - closed-trade P&L attribution (attribution_30d) → real attribUsd / trades
+      - per-mention forward-return tracking (signal_attribution) → weight from
+        30d hit_rate when no closed trades yet (so the panel fills before the
+        first close)
+
     Schema (per data.mock.js sourceLeaderboard[]):
       name, weight, dWeight, attribUsd, trades, tags
     """
-    return []
+    if not settings.sqlite_path.exists():
+        return []
+
+    try:
+        from macro_positioning.learning.source_attribution import (
+            attribution_30d,
+            signal_attribution,
+        )
+    except Exception:
+        return []
+
+    with sqlite3.connect(settings.sqlite_path) as conn:
+        try:
+            closed = attribution_30d(conn)
+            signals = signal_attribution(conn)
+        except Exception:
+            return []
+
+        sources = {s.source_id: s for s in load_sources(include_archived=False)}
+
+    def _name(source_id: str) -> str:
+        s = sources.get(source_id)
+        return s.name if s else source_id
+
+    def _tags(source_id: str, fallback: list[str]) -> list[str]:
+        s = sources.get(source_id)
+        if s and s.routing_tags:
+            return list(s.routing_tags)
+        return fallback or []
+
+    by_source: dict[str, dict] = {}
+
+    for row in signals:
+        sid = row["source_id"]
+        h30 = row.get("horizons", {}).get(30) or {}
+        h7 = row.get("horizons", {}).get(7) or {}
+        # Prefer 30d hit_rate; fall back to 7d when 30d has no price data yet.
+        hr = h30.get("hit_rate") if h30.get("n_with_price_data") else h7.get("hit_rate") or 0.0
+        weight = max(0.0, min(1.0, float(hr or 0.0)))
+        by_source[sid] = {
+            "name": _name(sid),
+            "weight": round(weight, 2),
+            "dWeight": 0.0,
+            "attribUsd": 0,
+            "trades": 0,
+            "tags": _tags(sid, row.get("verticals", [])),
+        }
+
+    for row in closed:
+        sid = row["source_id"]
+        entry = by_source.setdefault(
+            sid,
+            {
+                "name": _name(sid),
+                "weight": 0.0,
+                "dWeight": 0.0,
+                "attribUsd": 0,
+                "trades": 0,
+                "tags": _tags(sid, []),
+            },
+        )
+        # source_outcomes rows expose pnl % only (no per-trade notional yet);
+        # surface weighted_pnl_pct in basis-points-ish units so the column has
+        # signed magnitude. Replace with real USD once outcome notional lands.
+        entry["attribUsd"] = int(round(float(row.get("weighted_pnl_pct", 0) or 0) * 100))
+        entry["trades"] = int(row.get("n_outcomes", 0) or 0)
+        # Closed-trade hit rate trumps signal-derived weight when available:
+        # positive weighted_pnl_pct → 0.5..1, negative → 0..0.5.
+        wpp = float(row.get("weighted_pnl_pct", 0) or 0)
+        entry["weight"] = round(max(0.0, min(1.0, 0.5 + wpp / 200.0)), 2)
+
+    rows = list(by_source.values())
+    rows.sort(key=lambda r: (r["attribUsd"], r["weight"]), reverse=True)
+    return rows[:20]
 
 
 def build_thesis_changelog_section() -> list[dict]:

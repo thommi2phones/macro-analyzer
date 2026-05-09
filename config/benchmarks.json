@@ -1,0 +1,16 @@
+{
+  "$schema_version": "1.0",
+  "description": "Benchmark mapping for relative_strength scorer. Maps an asset_class to the ticker whose 20d return defines the baseline. Falls back to default for any class not listed.",
+  "default": "SPY",
+  "by_asset_class": {
+    "equity": "SPY",
+    "index": "SPY",
+    "small_cap": "IWM",
+    "crypto": "BTC-USD",
+    "currency": "DXY",
+    "fx": "DXY",
+    "commodity": "GLD",
+    "bond": "TLT",
+    "vol": "SPY"
+  }
+}

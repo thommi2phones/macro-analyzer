@@ -22,13 +22,17 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+from macro_brain.agents.liquidity_alignment.scorer import score_liquidity_alignment
 from macro_brain.agents.psychology_evaluator.evaluator import (
     score_psychology_execution_quality,
 )
 from macro_brain.agents.regime_classifier.classifier import (
     score_macro_alignment_from_regime,
 )
+from macro_brain.agents.relative_strength.scorer import score_relative_strength
+from macro_brain.agents.sector_theme_scorer.scorer import score_sector_theme_strength
 from macro_brain.agents.technical_scorer.scorer import score_technical_structure
+from macro_brain.agents.volume_analyzer.scorer import score_volume_flow_confirmation
 from macro_brain.orchestrator.feature_vector import (
     assign_grade,
     assign_position_size_tier,
@@ -157,24 +161,23 @@ def compose(setup: SetupContext) -> TradeScore:
     # Macro alignment — derived from active regime + setup type
     sub_scores.append(score_macro_alignment_from_regime(setup))
 
-    # Liquidity alignment — STUB (depends on regime_classifier reading
-    # liquidity_state out of FRED; lands with full regime classifier)
-    sub_scores.append(_stub_subscore("liquidity_alignment"))
+    # Liquidity alignment — REAL heuristic over FRED NFCI snapshot
+    sub_scores.append(score_liquidity_alignment(setup))
 
-    # Sector theme — STUB (sector_theme_scorer agent not yet built)
-    sub_scores.append(_stub_subscore("sector_theme_strength"))
+    # Sector theme — REAL heuristic over preloaded theme mention rollup
+    sub_scores.append(score_sector_theme_strength(setup))
 
     # Technical structure — REAL heuristic over price-derived features
     sub_scores.append(score_technical_structure(setup))
 
-    # Volume flow — STUB (volume_analyzer not yet built)
-    sub_scores.append(_stub_subscore("volume_flow_confirmation"))
+    # Volume flow — REAL heuristic over volume features
+    sub_scores.append(score_volume_flow_confirmation(setup))
 
     # Risk/reward — REAL heuristic
     sub_scores.append(_compute_risk_reward_subscore(setup))
 
-    # Relative strength — STUB
-    sub_scores.append(_stub_subscore("relative_strength"))
+    # Relative strength — REAL heuristic vs benchmark
+    sub_scores.append(score_relative_strength(setup))
 
     # Psychology — REAL heuristic
     sub_scores.append(score_psychology_execution_quality(setup))

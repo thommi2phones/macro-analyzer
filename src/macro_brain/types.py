@@ -167,6 +167,23 @@ class SetupContext(BaseModel):
     technical_features: dict = Field(default_factory=dict)
     volume_features: dict = Field(default_factory=dict)
 
+    # Theme rollup for sector_theme_strength scorer.
+    # Shape: {"theme_signals": {theme_key: weighted_mention_score, ...},
+    #         "asset_themes": [theme_key, ...] for THIS ticker,
+    #         "scale": float (75th-percentile theme score this pass, used
+    #                  to normalize tanh)}
+    theme_signals: dict = Field(default_factory=dict)
+
+    # Benchmark-relative return inputs for relative_strength scorer.
+    # Shape: {"ticker_pct20d": float, "benchmark_pct20d": float,
+    #         "benchmark_ticker": str}
+    relative_strength_features: dict = Field(default_factory=dict)
+
+    # Macro liquidity snapshot for liquidity_alignment scorer.
+    # Shape: {"nfci_latest": float | None, "nfci_4w_change": float | None,
+    #         "regime_bullish": bool, "source": str}
+    liquidity_features: dict = Field(default_factory=dict)
+
     # User psychology checklist state (per framework §12)
     psychology_state: dict = Field(default_factory=dict)
 

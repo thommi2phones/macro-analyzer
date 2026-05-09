@@ -151,18 +151,16 @@ _TIER_LOOKUP = {"tier_1": 1, "tier_2": 2, "tier_3": 3, "avoid": 4}
 
 
 def _load_latest_scores() -> list[dict]:
-    """Pull the most-recent trade_score per asset, joining technical_setups
-    + assets so we get the ticker in one query.
+    """Pull the most-recent + previous trade_score per asset, joining
+    technical_setups + assets, so we can compute dScore (today vs prior
+    pass) without a second query.
 
-    Filters: only the most recent score per asset (within last 24h) — older
-    runs are stale; the dashboard cares about TODAY.
+    The window function ranks scores by scored_at DESC; rn=1 is current,
+    rn=2 is prior. Outer LEFT JOIN brings rn=2 onto the rn=1 row.
     """
     if not settings.sqlite_path.exists():
         return []
     with sqlite3.connect(settings.sqlite_path) as conn:
-        # Pick the most recent score per asset:
-        #   1) inner subquery ranks scores by scored_at DESC partitioned by asset
-        #   2) outer query keeps rn=1 and joins back up to asset for the ticker
         cur = conn.execute(
             """
             WITH ranked AS (
@@ -189,18 +187,28 @@ def _load_latest_scores() -> list[dict]:
                     ) AS rn
                 FROM trade_scores ts
                 JOIN technical_setups tset ON tset.setup_id = ts.setup_id
+            ),
+            current AS (
+                SELECT * FROM ranked WHERE rn = 1
+            ),
+            prior AS (
+                SELECT asset_id,
+                       adjusted_total_score AS prior_score,
+                       scored_at AS prior_scored_at
+                FROM ranked WHERE rn = 2
             )
             SELECT
-                r.score_id, r.scored_at, r.adjusted_total_score, r.raw_total_score,
-                r.macro_alignment_score, r.liquidity_score, r.sector_theme_score,
-                r.technical_structure_score, r.volume_flow_score, r.risk_reward_score,
-                r.relative_strength_score, r.psychology_score,
-                r.grade, r.position_size_tier, r.reasoning_trail_json,
-                a.ticker, a.asset_name, a.asset_class
-            FROM ranked r
-            JOIN assets a ON a.asset_id = r.asset_id
-            WHERE r.rn = 1
-            ORDER BY r.adjusted_total_score DESC
+                c.score_id, c.scored_at, c.adjusted_total_score, c.raw_total_score,
+                c.macro_alignment_score, c.liquidity_score, c.sector_theme_score,
+                c.technical_structure_score, c.volume_flow_score, c.risk_reward_score,
+                c.relative_strength_score, c.psychology_score,
+                c.grade, c.position_size_tier, c.reasoning_trail_json,
+                a.ticker, a.asset_name, a.asset_class,
+                p.prior_score, p.prior_scored_at
+            FROM current c
+            JOIN assets a ON a.asset_id = c.asset_id
+            LEFT JOIN prior p ON p.asset_id = c.asset_id
+            ORDER BY c.adjusted_total_score DESC
             """
         )
         rows = cur.fetchall()
@@ -211,6 +219,8 @@ def _load_latest_scores() -> list[dict]:
             trail = json.loads(r[14]) if r[14] else {}
         except Exception:
             trail = {}
+        prior_score = r[18]
+        d_score = (r[2] - prior_score) if prior_score is not None else 0
         out.append({
             "score_id": r[0],
             "scored_at": r[1],
@@ -230,6 +240,9 @@ def _load_latest_scores() -> list[dict]:
             "ticker": r[15],
             "name": r[16],
             "asset_class": r[17],
+            "prior_score": prior_score,
+            "prior_scored_at": r[19],
+            "d_score": d_score,
         })
     return out
 
@@ -296,7 +309,7 @@ def build_hero_signals_section() -> list[dict]:
             "name": r["name"] or r["ticker"],
             "side": _side_from_tier(r["tier"]),
             "score": r["score"],
-            "scorePrev": r["raw_score"],  # placeholder until we track score history
+            "scorePrev": r["prior_score"] if r["prior_score"] is not None else r["score"],
             "tier": _tier_str(r["tier"]),
             "setup": "watchlist scoring pass",
             "regimeFit": r["trail"].get("active_framework_regime", "unknown"),
@@ -331,7 +344,7 @@ def build_watchlist_section() -> list[dict]:
             "assetClass": r["asset_class"],
             "side": _side_from_tier(r["tier"]),
             "score": r["score"],
-            "dScore": 0,  # placeholder until score history tracked
+            "dScore": r["d_score"],
             "tier": _tier_str(r["tier"]),
             "regime": "fit" if r["macro"] >= 12 else ("mix" if r["macro"] >= 6 else "off"),
             "tech": _grade_letter(r["tech"], 20),

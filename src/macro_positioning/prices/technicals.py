@@ -5,13 +5,22 @@ trivial to test, and easy to reason about. We have N≤200 bars per ticker;
 manual loops are fine.
 
 Indicators:
-  - Simple moving average (SMA) for any window
+  - Simple moving average (SMA)
+  - Exponential moving average (EMA) — recency-weighted, the preferred
+    trend-following indicator for active traders
   - Average true range (ATR) over 14 bars
   - Relative strength index (RSI) over 14 bars
+  - Multi-horizon price momentum: 1d / 3d / 5d / 20d / 60d % change
+    (approximates daily / 3-day / weekly / monthly / cycle trend)
   - % distance from MA
   - Higher highs / higher lows over a window
-  - Above/below MA
+  - Above/below SMA + EMA
   - Recent breakout / failed breakout flags
+
+INTRADAY note: this module operates on whatever bars it's given. With
+daily bars (current default), windows are in trading days. Intraday
+support (4h/12h) needs the price fetcher to get intraday data first —
+the math here is timeframe-agnostic. See `prices/provider.py` TODO.
 
 Output is a flat dict of float/bool features the technical_scorer
 heuristic consumes (per framework §5).
@@ -33,6 +42,38 @@ def sma(closes: list[float], window: int) -> float | None:
     if len(closes) < window or window <= 0:
         return None
     return sum(closes[-window:]) / window
+
+
+def ema(closes: list[float], window: int) -> float | None:
+    """Exponential moving average over `window`. None if too few bars.
+
+    Recency-weighted: the most recent close gets weight α = 2/(window+1).
+    EMA reacts faster to price changes than SMA — preferred for trend
+    following per the trading framework's §5 momentum guidance.
+    """
+    if len(closes) < window or window <= 0:
+        return None
+    alpha = 2.0 / (window + 1)
+    # Seed with SMA of the first `window` closes (Wilder/standard convention)
+    seed = sum(closes[:window]) / window
+    val = seed
+    for c in closes[window:]:
+        val = alpha * c + (1 - alpha) * val
+    return val
+
+
+def pct_change(closes: list[float], lookback: int) -> float | None:
+    """% change of the most recent close vs `lookback` bars ago.
+
+    Returns 0.0 for very small bases (avoids spurious infinities).
+    None when too few bars.
+    """
+    if len(closes) <= lookback or lookback <= 0:
+        return None
+    base = closes[-(lookback + 1)]
+    if abs(base) < 1e-9:
+        return 0.0
+    return (closes[-1] - base) / base
 
 
 def pct_from(price: float, reference: float | None) -> float | None:
@@ -162,24 +203,46 @@ def compute_technical_features(bars: list[PriceBar]) -> dict:
     ma20_v = sma(closes, 20)
     ma50_v = sma(closes, 50)
     ma200_v = sma(closes, 200)
+    ema20_v = ema(closes, 20)
+    ema50_v = ema(closes, 50)
+    ema200_v = ema(closes, 200)
 
     return {
         "n_bars": len(bars),
         "close": last,
+        # SMAs (lagging, smoother)
         "ma20": ma20_v,
         "ma50": ma50_v,
         "ma200": ma200_v,
         "pct_from_ma20": pct_from(last, ma20_v),
         "pct_from_ma50": pct_from(last, ma50_v),
         "pct_from_ma200": pct_from(last, ma200_v),
+        # EMAs (recency-weighted, faster trend signal)
+        "ema20": ema20_v,
+        "ema50": ema50_v,
+        "ema200": ema200_v,
+        "pct_from_ema20": pct_from(last, ema20_v),
+        "pct_from_ema50": pct_from(last, ema50_v),
+        "pct_from_ema200": pct_from(last, ema200_v),
+        # Volatility / momentum primitives
         "atr14": atr(bars, 14),
         "rsi14": rsi(closes, 14),
+        # Multi-horizon momentum (approximates daily / 3-day / weekly /
+        # monthly / cycle trend strength on daily bars)
+        "pct_change_1d": pct_change(closes, 1),
+        "pct_change_3d": pct_change(closes, 3),
+        "pct_change_5d": pct_change(closes, 5),    # ≈ weekly
+        "pct_change_20d": pct_change(closes, 20),  # ≈ monthly
+        "pct_change_60d": pct_change(closes, 60),  # ≈ quarterly / cycle
+        # Structure
         "higher_highs": higher_highs(highs, 20),
         "higher_lows": higher_lows(lows, 20),
         "lower_highs": lower_highs(highs, 20),
         "lower_lows": lower_lows(lows, 20),
         "above_ma50": (ma50_v is not None and last > ma50_v),
         "above_ma200": (ma200_v is not None and last > ma200_v),
+        "above_ema20": (ema20_v is not None and last > ema20_v),
+        "above_ema50": (ema50_v is not None and last > ema50_v),
         "recent_breakout": recent_breakout(highs, 20),
         "recent_breakdown": recent_breakdown(lows, 20),
     }

@@ -157,24 +157,43 @@ def resolve_watchlist(
                 )
 
     # Stream 3: mention extraction (only if documents provided)
+    # Time-weighted: each mention counts according to recency × source
+    # freshness. Tickers rank by weighted_score, not raw doc count.
     mention_summary: dict[int, dict] = {}
     if documents is not None:
-        # Materialize once so we can re-iterate per window
         docs_list = list(documents)
         for window in mention_windows:
-            wm: WindowMentions = count_mentions(docs_list, window_days=window, now=now)
+            # Half-life = window length: at the cutoff, weight is 0.5.
+            # MACRO-APPROPRIATE — older content is still meaningful.
+            # Examples (within their windows):
+            #   30d window: doc 14d ago → 0.72; 30d ago → 0.50
+            #   90d window: doc 30d ago → 0.79; 60d ago → 0.63; 90d → 0.50
+            # Don't compress half-life below window length — that biases
+            # toward news-cycle noise instead of macro themes.
+            half_life = float(window)
+            wm: WindowMentions = count_mentions(
+                docs_list,
+                window_days=window,
+                now=now,
+                half_life_days=half_life,
+            )
             top = [c for c in wm.counts if c.docs_with_mention >= mention_min_count][:mention_top_n]
             for c in top:
                 _add(
                     entries,
                     c.ticker,
-                    origin=f"mentions:{window}d:{c.docs_with_mention}",
+                    origin=f"mentions:{window}d:w{c.weighted_score:.1f}",
                 )
             mention_summary[window] = {
                 "total_docs_scanned": wm.total_docs_scanned,
+                "half_life_days": wm.half_life_days,
                 "tickers_above_threshold": len(top),
                 "top_5": [
-                    {"ticker": c.ticker, "docs": c.docs_with_mention}
+                    {
+                        "ticker": c.ticker,
+                        "docs": c.docs_with_mention,
+                        "weighted": c.weighted_score,
+                    }
                     for c in top[:5]
                 ],
             }

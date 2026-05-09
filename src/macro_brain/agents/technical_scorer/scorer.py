@@ -9,14 +9,16 @@ Framework rules (from config/trading_framework.json `market_structure_signals`):
 - bearish_structure: lower_highs && lower_lows && resistance_retests_fail → -12
 - neutral_structure: range_bound or trend_unclear → -5
 
-We add MA-position context per framework §5 "Bullish Structure" notes:
-- price above 50DMA + 200DMA = strong
-- price above 50DMA only = moderate
-- price below 50DMA = weak
-
-And recent breakout / breakdown:
-- recent_breakout && above_ma50 = +0.1 to value
-- recent_breakdown && below_ma50 = -0.1 to value
+We layer in:
+- MA position (above SMA50 + SMA200 = strong; below both = weak)
+- EMA position — recency-weighted; faster signal of trend change.
+  Rising sequence (close > EMA20 > EMA50) is a textbook bullish
+  alignment per §5.
+- Recent breakout / breakdown (20-bar pierce)
+- Multi-horizon momentum: 5d (weekly), 20d (monthly), 60d (cycle).
+  All-positive momentum stack = strong trend; mixed = mean-reversion
+  risk; all-negative = downtrend.
+- RSI extremes (>80 or <20) as mean-reversion guards
 
 Output value is 0..1 flat; orchestrator weights to 0..20.
 """
@@ -50,17 +52,23 @@ def score_technical_structure(setup: SetupContext) -> SubScore:
     lower_lows = bool(feats.get("lower_lows"))
     above_50 = bool(feats.get("above_ma50"))
     above_200 = bool(feats.get("above_ma200"))
+    above_ema20 = bool(feats.get("above_ema20"))
+    above_ema50 = bool(feats.get("above_ema50"))
     breakout = bool(feats.get("recent_breakout"))
     breakdown = bool(feats.get("recent_breakdown"))
     rsi14 = feats.get("rsi14")
 
-    # Base: structure pattern
+    pct5 = feats.get("pct_change_5d")    # weekly
+    pct20 = feats.get("pct_change_20d")  # monthly
+    pct60 = feats.get("pct_change_60d")  # quarterly / cycle
+
+    # ─── Base: structure pattern ──────────────────────────────────────
     if higher_highs and higher_lows:
         structure_v = 0.85
-        note = "Bullish structure (higher highs + higher lows)."
+        note = "Bullish structure (HH+HL)."
     elif lower_highs and lower_lows:
         structure_v = 0.15
-        note = "Bearish structure (lower highs + lower lows)."
+        note = "Bearish structure (LH+LL)."
     elif higher_highs or higher_lows:
         structure_v = 0.6
         note = "Mixed/improving structure."
@@ -69,36 +77,60 @@ def score_technical_structure(setup: SetupContext) -> SubScore:
         note = "Mixed/deteriorating structure."
     else:
         structure_v = 0.5
-        note = "Range-bound / unclear structure."
+        note = "Range-bound."
 
-    # MA position adjustment
+    # ─── SMA position ─────────────────────────────────────────────────
     if above_50 and above_200:
-        structure_v = min(1.0, structure_v + 0.10)
+        structure_v += 0.07
     elif above_50 and not above_200:
-        structure_v = min(1.0, structure_v + 0.03)
+        structure_v += 0.02
     elif not above_50 and above_200:
-        structure_v = max(0.0, structure_v - 0.03)
-    else:  # below both
-        structure_v = max(0.0, structure_v - 0.10)
+        structure_v -= 0.02
+    else:
+        structure_v -= 0.07
 
-    # Recent breakout / breakdown nudges
+    # ─── EMA alignment (recency-weighted; faster trend signal) ───────
+    if above_ema20 and above_ema50:
+        structure_v += 0.05
+        note += " Above EMA20+EMA50."
+    elif not above_ema20 and not above_ema50:
+        structure_v -= 0.05
+
+    # ─── Multi-horizon momentum ──────────────────────────────────────
+    momentums = [m for m in (pct5, pct20, pct60) if m is not None]
+    if len(momentums) == 3:
+        positives = sum(1 for m in momentums if m > 0)
+        avg_mom = sum(momentums) / 3
+        if positives == 3:
+            structure_v += 0.08
+            note += f" Momentum stack +++ (avg {avg_mom*100:+.1f}%)."
+        elif positives == 0:
+            structure_v -= 0.08
+            note += f" Momentum stack --- (avg {avg_mom*100:+.1f}%)."
+        elif positives == 2:
+            structure_v += 0.03
+        elif positives == 1:
+            structure_v -= 0.03
+
+    # ─── Recent breakout / breakdown ──────────────────────────────────
     if breakout and above_50:
-        structure_v = min(1.0, structure_v + 0.10)
-        note += " Recent breakout above 20-bar high."
+        structure_v += 0.08
+        note += " Recent breakout."
     elif breakdown and not above_50:
-        structure_v = max(0.0, structure_v - 0.10)
-        note += " Recent breakdown below 20-bar low."
+        structure_v -= 0.08
+        note += " Recent breakdown."
 
-    # Overbought / oversold guard — extreme RSI is risk-of-mean-reversion
-    rsi_signal = 0.0
+    # ─── RSI extremes guard ──────────────────────────────────────────
     if rsi14 is not None:
         if rsi14 > 80:
-            rsi_signal = -0.05
+            structure_v -= 0.05
             note += f" RSI {rsi14:.0f} extended."
         elif rsi14 < 20:
-            rsi_signal = -0.05
+            structure_v -= 0.05
             note += f" RSI {rsi14:.0f} oversold."
-        structure_v = max(0.0, min(1.0, structure_v + rsi_signal))
+
+    # Clamp
+    structure_v = max(0.0, min(1.0, structure_v))
 
     return SubScore(
         component="technical_structure",
@@ -110,9 +142,14 @@ def score_technical_structure(setup: SetupContext) -> SubScore:
             "lower_lows": float(lower_lows),
             "above_ma50": float(above_50),
             "above_ma200": float(above_200),
+            "above_ema20": float(above_ema20),
+            "above_ema50": float(above_ema50),
             "recent_breakout": float(breakout),
             "recent_breakdown": float(breakdown),
             "rsi14": float(rsi14) if rsi14 is not None else 0.0,
+            "pct_change_5d": float(pct5) if pct5 is not None else 0.0,
+            "pct_change_20d": float(pct20) if pct20 is not None else 0.0,
+            "pct_change_60d": float(pct60) if pct60 is not None else 0.0,
             "n_bars": float(n),
         },
         notes=note,

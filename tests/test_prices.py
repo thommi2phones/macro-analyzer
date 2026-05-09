@@ -17,10 +17,12 @@ from macro_positioning.prices.symbol_map import (
 from macro_positioning.prices.technicals import (
     atr,
     compute_technical_features,
+    ema,
     higher_highs,
     higher_lows,
     lower_highs,
     lower_lows,
+    pct_change,
     pct_from,
     recent_breakdown,
     recent_breakout,
@@ -222,3 +224,88 @@ def test_compute_features_short_history():
 def test_compute_features_empty():
     feats = compute_technical_features([])
     assert feats == {"n_bars": 0}
+
+
+# ---------------------------------------------------------------------------
+# EMA
+# ---------------------------------------------------------------------------
+
+def test_ema_too_few_returns_none():
+    assert ema([1, 2, 3], 5) is None
+
+
+def test_ema_constant_series_equals_constant():
+    """EMA of a constant series == the constant."""
+    closes = [100.0] * 50
+    assert ema(closes, 20) == pytest.approx(100.0)
+
+
+def test_ema_accelerating_uptrend_above_sma():
+    """EMA reacts faster to recent moves than SMA. On a *linear* uptrend
+    EMA == SMA (math identity), but on an accelerating series (curve up)
+    EMA should be clearly higher because recent bars get more weight."""
+    # Accelerating: y = i^1.5 — recent bars climb faster
+    closes = [float(i) ** 1.5 for i in range(1, 41)]
+    sma_v = sma(closes, 20)
+    ema_v = ema(closes, 20)
+    assert ema_v is not None and sma_v is not None
+    assert ema_v > sma_v
+
+
+# ---------------------------------------------------------------------------
+# pct_change
+# ---------------------------------------------------------------------------
+
+def test_pct_change_basic():
+    closes = [100, 105, 110]
+    assert pct_change(closes, 1) == pytest.approx(110 / 105 - 1)
+    assert pct_change(closes, 2) == pytest.approx(0.10)
+
+
+def test_pct_change_too_few_returns_none():
+    assert pct_change([100, 101], 5) is None
+
+
+def test_pct_change_zero_lookback_returns_none():
+    assert pct_change([100, 105], 0) is None
+
+
+def test_pct_change_handles_zero_base():
+    closes = [0.0, 5.0]
+    # base near zero → 0.0 (avoids inf)
+    assert pct_change(closes, 1) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# Multi-horizon momentum in compute_technical_features
+# ---------------------------------------------------------------------------
+
+def test_compute_features_includes_momentum_horizons():
+    bars = _make_bars([100 + i for i in range(70)])
+    feats = compute_technical_features(bars)
+    assert feats["pct_change_1d"] is not None
+    assert feats["pct_change_5d"] is not None
+    assert feats["pct_change_20d"] is not None
+    assert feats["pct_change_60d"] is not None
+    # Steady linear uptrend → all positive
+    assert feats["pct_change_5d"] > 0
+    assert feats["pct_change_20d"] > 0
+    assert feats["pct_change_60d"] > 0
+
+
+def test_compute_features_includes_ema():
+    bars = _make_bars([100 + i for i in range(60)])
+    feats = compute_technical_features(bars)
+    assert feats["ema20"] is not None
+    assert feats["ema50"] is not None
+    assert feats["above_ema20"] is True
+    assert feats["above_ema50"] is True
+
+
+def test_compute_features_downtrend_momentum_negative():
+    bars = _make_bars([200 - i for i in range(70)])
+    feats = compute_technical_features(bars)
+    assert feats["pct_change_5d"] < 0
+    assert feats["pct_change_20d"] < 0
+    assert feats["pct_change_60d"] < 0
+    assert feats["above_ema50"] is False

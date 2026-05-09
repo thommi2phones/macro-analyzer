@@ -13,6 +13,7 @@ from macro_positioning.scoring.mention_extractor import (
     count_mentions,
     extract_tickers_from_text,
     get_allowlist,
+    recency_weight,
 )
 
 
@@ -161,3 +162,69 @@ def test_count_mentions_total_docs_scanned():
     result = count_mentions(docs, window_days=7, now=NOW)
     # 'a' and 'b' are within window; 'c' is outside
     assert result.total_docs_scanned == 2
+
+
+# ---------------------------------------------------------------------------
+# Recency weighting (time-weighted scoring per Phase 6d)
+# ---------------------------------------------------------------------------
+
+def test_recency_weight_at_zero_age_is_one():
+    assert recency_weight(0, half_life_days=30) == pytest.approx(1.0)
+
+
+def test_recency_weight_at_half_life_is_half():
+    assert recency_weight(30, half_life_days=30) == pytest.approx(0.5)
+    assert recency_weight(14, half_life_days=14) == pytest.approx(0.5)
+
+
+def test_recency_weight_at_double_half_life_is_quarter():
+    assert recency_weight(60, half_life_days=30) == pytest.approx(0.25)
+
+
+def test_recency_weight_negative_age_clamped_to_zero():
+    # Future-dated content shouldn't blow weight up to >1
+    assert recency_weight(-5, half_life_days=30) == pytest.approx(1.0)
+
+
+def test_recency_weight_no_half_life_returns_one():
+    assert recency_weight(100, half_life_days=0) == 1.0
+    assert recency_weight(100, half_life_days=-1) == 1.0
+
+
+def test_count_mentions_weighted_score_decays():
+    """Two docs mentioning URA: one today, one 30d ago. With 30d half-life
+    the weighted_score should be ~1.5 (1.0 + 0.5), not 2.0."""
+    docs = [
+        {"source_id": "a", "title": "", "cleaned_text": "URA", "published_at": NOW.isoformat()},
+        {"source_id": "b", "title": "", "cleaned_text": "URA", "published_at": (NOW - timedelta(days=30)).isoformat()},
+    ]
+    result = count_mentions(
+        docs, window_days=60, now=NOW, half_life_days=30,
+        apply_source_freshness=False,  # isolate recency effect
+    )
+    ura = next(c for c in result.counts if c.ticker == "URA")
+    assert ura.docs_with_mention == 2
+    assert ura.weighted_score == pytest.approx(1.5, abs=0.01)
+
+
+def test_count_mentions_recency_ranks_above_quantity():
+    """A ticker with 1 fresh mention should outrank one with 2 stale mentions
+    when half-life is short."""
+    docs = [
+        {"source_id": "a", "title": "", "cleaned_text": "URA", "published_at": NOW.isoformat()},  # fresh
+        {"source_id": "b", "title": "", "cleaned_text": "GLD", "published_at": (NOW - timedelta(days=50)).isoformat()},  # stale
+        {"source_id": "c", "title": "", "cleaned_text": "GLD", "published_at": (NOW - timedelta(days=55)).isoformat()},  # stale
+    ]
+    result = count_mentions(
+        docs, window_days=60, now=NOW, half_life_days=14,
+        apply_source_freshness=False,
+    )
+    # GLD has 2 docs but both very stale; URA has 1 fresh.
+    # Sort is by weighted_score → URA first.
+    assert result.counts[0].ticker == "URA"
+
+
+def test_count_mentions_window_summary_includes_half_life():
+    docs = [{"source_id": "x", "title": "", "cleaned_text": "URA", "published_at": NOW.isoformat()}]
+    result = count_mentions(docs, window_days=30, now=NOW, half_life_days=14)
+    assert result.half_life_days == 14

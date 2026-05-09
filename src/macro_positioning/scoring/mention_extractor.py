@@ -16,17 +16,30 @@ Design constraints:
   Not match: "URA" inside a longer word, lowercase 'ura', commas/periods
   glued mid-word.
 - Counts dedupe within a document — three mentions of URA in one
-  Doomberg post = 1 doc-mention, not 3. Mention "weight" is documents
-  containing the ticker, not raw frequency.
+  Doomberg post = 1 doc-mention, not 3.
 
-Future:
-- Promote frequency-weighted within doc once we have noise/signal data
-- Add an LLM-backed verification pass for ambiguous cases (low-priority)
+Time-weighting (Phase 6d):
+- Mentions decay exponentially with age. half_life_days controls how
+  fast: a mention `half_life_days` ago counts at 0.5 weight.
+- DEFAULTS ARE MACRO-APPROPRIATE: a macro thesis lives over weeks to
+  months, not days. Standalone default half_life_days=30 means a
+  mention from 30d ago is still at 0.5 weight, 60d at 0.25, 14d at
+  ~0.72. Tight horizons (7d) are tactical noise; we deliberately
+  don't bias the system toward them.
+- For windowed extraction, watchlist_resolver scales half-life with
+  the window so the 90d window uses ~90d half-life — a 30d-old
+  mention there counts at 0.79 (still strong signal).
+- Source freshness multiplier: a mention from a source that's gone
+  cold (low freshness score on its own SLA) counts less than from a
+  fresh, recently-publishing source.
+- Weighted score replaces raw doc count for ranking; raw count still
+  exposed for transparency.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta, timezone
@@ -36,6 +49,8 @@ from typing import Iterable
 from pydantic import BaseModel, Field
 
 from macro_positioning.core.settings import settings
+from macro_positioning.ingestion.freshness import freshness_score
+from macro_positioning.ingestion.source_lifecycle import load_sources
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +191,7 @@ def extract_tickers_from_text(text: str) -> set[str]:
 class MentionCount(BaseModel):
     ticker: str
     docs_with_mention: int
+    weighted_score: float = 0.0
     sources: list[str] = Field(default_factory=list, description="Distinct source_ids that mentioned this ticker in window")
     most_recent_at: str | None = None
 
@@ -183,7 +199,46 @@ class MentionCount(BaseModel):
 class WindowMentions(BaseModel):
     window_days: int
     total_docs_scanned: int
+    half_life_days: float
     counts: list[MentionCount] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Time-weighting helpers
+# ---------------------------------------------------------------------------
+
+def recency_weight(age_days: float, *, half_life_days: float = 30.0) -> float:
+    """Exponential decay weight. age_days=0 → 1.0; age=half_life → 0.5; age=2×half_life → 0.25.
+
+    Default half-life=30d is intentionally macro-appropriate: a thesis
+    is meant to play out over weeks-to-months. Tighter half-lives
+    (e.g. 7d) bias toward tactical noise and over-weight breaking news.
+    Tunable per call when the caller has a specific horizon in mind
+    (watchlist_resolver scales half-life with each extraction window).
+    """
+    if age_days < 0:
+        age_days = 0.0
+    if half_life_days <= 0:
+        return 1.0
+    return math.exp(-math.log(2) * age_days / half_life_days)
+
+
+def _source_freshness_lookup() -> dict[str, float | None]:
+    """Map source_id → that source's freshness_sla_hours. Used to dampen
+    mentions from sources that publish rarely (their freshness window is
+    longer, so a "fresh" mention from a daily source is more meaningful
+    than a fresh mention from a weekly one — we want to amplify the
+    signal-rich sources).
+
+    Returns None for sources without an SLA (manual notes, charts).
+    """
+    out: dict[str, float | None] = {}
+    try:
+        for s in load_sources(include_archived=False):
+            out[s.source_id] = s.freshness_sla_hours
+    except Exception:
+        pass
+    return out
 
 
 def count_mentions(
@@ -191,18 +246,40 @@ def count_mentions(
     *,
     window_days: int,
     now: datetime | None = None,
+    half_life_days: float = 30.0,
+    apply_source_freshness: bool = True,
 ) -> WindowMentions:
     """Count distinct tickers across a doc set, filtered to docs published
-    within the last `window_days`.
+    within the last `window_days`. Time-weighted.
 
-    Each doc is `{source_id, title, cleaned_text, published_at}` — match
-    the `Document` model from core/models.py. Caller does the DB query.
+    Args:
+      docs: iterable of {source_id, title, cleaned_text, published_at}
+      window_days: hard cutoff on document age before counting
+      now: override "current time" for deterministic tests
+      half_life_days: recency decay half-life. Default 30d (macro-appropriate):
+        same-day mention → 1.0
+        7d ago         → 0.85
+        14d ago        → 0.72
+        30d ago        → 0.50
+        60d ago        → 0.25
+        90d ago        → 0.13
+      apply_source_freshness: if True, multiply each mention's weight by
+        the source's freshness_score at the moment it published. A
+        mention from a stale source counts proportionally less.
+
+    Each ticker reports BOTH:
+      - docs_with_mention: raw doc count (for transparency)
+      - weighted_score: sum of recency × source-freshness weights (for
+        ranking)
+
+    `counts` is returned sorted by weighted_score DESC.
     """
     current = now or datetime.now(UTC)
     cutoff = current - timedelta(days=window_days)
+    src_slas = _source_freshness_lookup() if apply_source_freshness else {}
 
-    # ticker -> { docs: int, sources: set, most_recent_at: datetime }
-    agg: dict[str, dict] = defaultdict(lambda: {"docs": 0, "sources": set(), "most_recent_at": None})
+    # ticker -> { docs: int, weighted: float, sources: set, most_recent_at: datetime }
+    agg: dict[str, dict] = defaultdict(lambda: {"docs": 0, "weighted": 0.0, "sources": set(), "most_recent_at": None})
     scanned = 0
 
     for doc in docs:
@@ -224,9 +301,21 @@ def count_mentions(
             continue
 
         source_id = doc.get("source_id", "unknown")
+        age_days = (current - published).total_seconds() / 86400.0
+        recency = recency_weight(age_days, half_life_days=half_life_days)
+
+        # Source freshness multiplier: 1.0 if not applying or source unknown
+        src_weight = 1.0
+        if apply_source_freshness:
+            sla = src_slas.get(source_id)
+            if sla:
+                src_weight = freshness_score(published, sla, now=current)
+        weight = recency * src_weight
+
         for t in tickers:
             entry = agg[t]
             entry["docs"] += 1
+            entry["weighted"] += weight
             entry["sources"].add(source_id)
             prev = entry["most_recent_at"]
             if prev is None or published > prev:
@@ -236,15 +325,18 @@ def count_mentions(
         MentionCount(
             ticker=ticker,
             docs_with_mention=info["docs"],
+            weighted_score=round(info["weighted"], 4),
             sources=sorted(info["sources"]),
             most_recent_at=info["most_recent_at"].isoformat() if info["most_recent_at"] else None,
         )
         for ticker, info in agg.items()
     ]
-    counts.sort(key=lambda c: (-c.docs_with_mention, c.ticker))
+    # Rank by weighted score; ties broken by raw doc count, then ticker
+    counts.sort(key=lambda c: (-c.weighted_score, -c.docs_with_mention, c.ticker))
 
     return WindowMentions(
         window_days=window_days,
         total_docs_scanned=scanned,
+        half_life_days=half_life_days,
         counts=counts,
     )

@@ -32,6 +32,12 @@ venv/
 # Data (keep structure, ignore generated content)
 data/processed/*.md
 *.db
+*.db-shm
+*.db-wal
+data/*.zip
+
+# Claude Code worktrees (per-session scratch, not source)
+.claude/worktrees/
 
 # N8N / runtime logs
 *.log

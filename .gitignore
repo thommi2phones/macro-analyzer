@@ -35,3 +35,15 @@ data/processed/*.md
 
 # N8N / runtime logs
 *.log
+
+# Training corpus — accumulating LLM call records for future fine-tuning.
+# Sensitive; managed via separate sync, not git. Keep the directory marker.
+training_corpus/*.jsonl
+training_corpus/*.parquet
+!training_corpus/.gitkeep
+
+# Trained model artifacts — large binaries; separate strategy when these exist
+src/macro_brain/models/*.bin
+src/macro_brain/models/*.pt
+src/macro_brain/models/*.safetensors
+src/macro_brain/models/*.gguf

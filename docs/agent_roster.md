@@ -194,3 +194,4 @@ When the agent roster changes (new agent, agent split, ownership boundary moves)
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-05-08 | Initial roster: Thesis Agent, Framework Agent, Application Agent |
+| 1.1 | 2026-05-09 | Two-repo split collapsed (D-2026-05-09-015). All three dev agents now operate inside the single `macro-analyzer` repo. Brain code lives at `src/macro_brain/`. Application Agent's scope expands to include both `src/macro_positioning/` and `src/macro_brain/`. Framework Agent's `models/`, `training/`, `feedback/` paths are now under `src/macro_brain/` instead of a separate repo. |

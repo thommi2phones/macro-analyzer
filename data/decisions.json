@@ -141,6 +141,16 @@
       "alternatives_considered": "Per-repo credential.username override; switch on demand.",
       "chat_session_ref": "phase-1-foundation",
       "affects_files": "gh auth state only"
+    },
+    {
+      "decision_id": "D-2026-05-09-015",
+      "decided_at": "2026-05-09T00:00:00Z",
+      "topic": "Collapse two-repo split into one",
+      "decision": "Reverse D-2026-05-08-007. Move macro-brain code into macro-analyzer/src/macro_brain/ as a sub-package. Archive thommi2phones/macro-brain GitHub repo (reversible). One repo, one deploy, one PR queue.",
+      "rationale": "At Phase 4 the split was creating real overhead with no offsetting benefit yet — both repos tiny, brain mostly stubs, no GPU separation needed, no separate deploy. Re-split when (a) brain has real LLM agents + trained classifiers, (b) different infra is genuinely required, or (c) team grows. Until then, friction > leverage.",
+      "alternatives_considered": "Keep split (status quo); group as siblings under a parent folder without merging code.",
+      "chat_session_ref": "phase-4-collapse",
+      "affects_files": "src/macro_brain/, tests/test_brain_*.py, training_corpus/, .gitignore, docs/agent_roster.md, docs/architecture_overview.md (later)"
     }
   ]
 }

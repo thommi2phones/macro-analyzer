@@ -1,0 +1,146 @@
+{
+  "$schema_version": "1.0",
+  "description": "Architectural and scope decisions, seeded from chat threads. Surfaced in the /dev mgmt panel. Mirror to the `decisions` SQLite table when needed for queryability.",
+  "decisions": [
+    {
+      "decision_id": "D-2026-05-08-001",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Persistent management thread",
+      "decision": "Use this Claude Code chat as the persistent project management thread; mirror decisions to dashboard.",
+      "rationale": "Solo dev wants a single chronological record of why architecture is the way it is. Chat threads alone are ephemeral; pulling into repo + dashboard makes them durable + visible.",
+      "alternatives_considered": "Free-form notes in a doc; Notion/Linear; nothing.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "data/decisions.json, src/macro_positioning/dashboard/"
+    },
+    {
+      "decision_id": "D-2026-05-08-002",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Management dashboard surface",
+      "decision": "Add management panel inside existing /dev view rather than creating a new /manage route.",
+      "rationale": "/dev is already the builder-facing surface. Adding mgmt there keeps related concerns colocated. Promote to /manage later only if it grows enough to justify.",
+      "alternatives_considered": "New /manage route; chat-only with no dashboard presence.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "src/macro_positioning/dashboard/dev_ui.py, src/macro_positioning/dashboard/router.py"
+    },
+    {
+      "decision_id": "D-2026-05-08-003",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Deploy target",
+      "decision": "Deploy macro-analyzer to Render.",
+      "rationale": "Same provider as tactical-executor — simplest cross-service env wiring, lowest friction.",
+      "alternatives_considered": "Railway, Fly.io, defer deployment.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "Future: render.yaml, deploy configs"
+    },
+    {
+      "decision_id": "D-2026-05-08-004",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Brain backend",
+      "decision": "Stay on N8N → Gemini for production LLM calls.",
+      "rationale": "Currently working and free-tier. Add retry/backoff and caching but don't change the path.",
+      "alternatives_considered": "Migrate to direct Gemini API; multi-backend ensemble.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "src/macro_positioning/brain/, future macro-brain/agents/"
+    },
+    {
+      "decision_id": "D-2026-05-08-005",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Scoring scale design",
+      "decision": "Hybrid: flat feature vector under, 100-pt weighted display per framework §10.",
+      "rationale": "Internal flat 0-1 vector preserves all signals for future fine-tuning. Display layer matches authored weights. As outcome data accrues, weights become learned per regime — path to a real model.",
+      "alternatives_considered": "Static authored 100-pt; flat equal-weight large-N (e.g., 30×10=330).",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "config/trading_framework.json, future macro-brain/orchestrator/"
+    },
+    {
+      "decision_id": "D-2026-05-08-006",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Brain architecture depth",
+      "decision": "Tier 1 (multi-agent in one process) now; design for Tier 3 (trained classifiers + fine-tuned LLMs) later.",
+      "rationale": "Realistic v1 from cost/time. Heuristics where rules are clear (framework §5/§6/§12); LLM where judgment required. Trained models slot in as outcome data accrues.",
+      "alternatives_considered": "Single LLM call; jump straight to Tier 3 with cold-start; microservices per agent.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "Future macro-brain/ structure"
+    },
+    {
+      "decision_id": "D-2026-05-08-007",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Repo strategy",
+      "decision": "Two-repo split: this repo (input + dashboard) + new macro-brain repo (agents + orchestrator + models).",
+      "rationale": "Different release cadences. Ingestion stable; brain models change weekly. Architecture doc already plans this.",
+      "alternatives_considered": "Keep everything in one repo; repo-per-agent (microservices day one).",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "Future macro-brain/ repo creation"
+    },
+    {
+      "decision_id": "D-2026-05-08-008",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Three dev-side Claude Code subagents",
+      "decision": "Thesis Agent, Framework Agent, Application Agent (BE+FE combined). Documented in docs/agent_roster.md.",
+      "rationale": "Each owns a distinct artifact type with focused scope, memory, tool allowlist. Cross-agent work requires explicit handoff.",
+      "alternatives_considered": "Production-only agent split (no dev agents); separate Backend + Frontend agents.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": ".claude/agents/{thesis,framework,app}/CLAUDE.md, docs/agent_roster.md"
+    },
+    {
+      "decision_id": "D-2026-05-08-009",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Tactical-executor automation deferred",
+      "decision": "Manual execution throughout phases 1-7. Wire Trading-Agent-V1-CODEX in Phase 9 (last), only when criteria met.",
+      "rationale": "Don't yet trust the brain's calls in live conditions. Manual = forced human review = catches systematic errors fast. Avoids regulatory/risk exposure of automated execution before earned.",
+      "alternatives_considered": "Wire executor immediately; paper-trade in parallel from day one.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "Trading-Agent-V1-CODEX (separate repo), src/macro_positioning/integration/"
+    },
+    {
+      "decision_id": "D-2026-05-08-010",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Fine-tuning-ready from day one (north-star principle)",
+      "decision": "Every LLM call must satisfy the logging contract (docs/logging_contract.md). agent_call_log table populated from first call. training_corpus/ accumulates for future fine-tuning.",
+      "rationale": "Year-2 pivot from agents to fine-tuned LLMs becomes a short pivot, not a 6-month archeology project.",
+      "alternatives_considered": "Defer logging discipline until later; ship fast, refactor logging when needed.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "docs/logging_contract.md, src/macro_positioning/db/schema.py (agent_call_log table)"
+    },
+    {
+      "decision_id": "D-2026-05-08-011",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Trained classifier work timing",
+      "decision": "Defer custom-trained classifiers (regime, hawkish/dovish, source attribution) until outcome data exists (Phase 8).",
+      "rationale": "Avoid building in the dark. Need labeled data first. Use LLM-prompted baselines until then.",
+      "alternatives_considered": "Start regime classifier now (5-10y FRED labels available); start all three classifiers immediately.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "Future macro-brain/training/, macro-brain/models/"
+    },
+    {
+      "decision_id": "D-2026-05-08-012",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Workstream structure",
+      "decision": "Four workstreams: ① Inputs, ② Brain, ③ Dashboard, ④ Execution. Each with own deliverables.",
+      "rationale": "Brain is one workstream not the whole project. Inputs and dashboard each need first-class attention. Execution explicitly scoped manual-first.",
+      "alternatives_considered": "Single 'product' workstream with brain as centerpiece.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "/Users/thom/.claude/plans/ok-let-s-use-this-immutable-bumblebee.md"
+    },
+    {
+      "decision_id": "D-2026-05-08-013",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Push workflow",
+      "decision": "Merge to main + push directly. Skip PR ceremony for solo work.",
+      "rationale": "Solo dev. No team review. PR diff viewer doesn't help more than reading committed files. GitHub commit permalink works for phone review.",
+      "alternatives_considered": "Push branch + open PR; never push, work locally only.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "git workflow only"
+    },
+    {
+      "decision_id": "D-2026-05-08-014",
+      "decided_at": "2026-05-08T00:00:00Z",
+      "topic": "Default GitHub account",
+      "decision": "Always use thommi2phones as the active gh account (the personal account that owns this repo).",
+      "rationale": "highergroundbs is the work account; this is a personal project. Switching globally to thommi2phones avoids per-push auth wrangling.",
+      "alternatives_considered": "Per-repo credential.username override; switch on demand.",
+      "chat_session_ref": "phase-1-foundation",
+      "affects_files": "gh auth state only"
+    }
+  ]
+}

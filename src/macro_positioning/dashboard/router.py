@@ -26,6 +26,7 @@ from macro_positioning.dashboard.checklist import (
 from macro_positioning.dashboard.command_data import CommandCenterSnapshot, build_command_snapshot
 from macro_positioning.dashboard.dev_ui import dev_dashboard_html
 from macro_positioning.dashboard.guide_ui import guide_dashboard_html
+from macro_positioning.dashboard.mgmt_data import MgmtSnapshot, build_mgmt_snapshot
 from macro_positioning.dashboard.ops_data import OpsSnapshot, build_ops_snapshot
 from macro_positioning.dashboard.output_ui import positioning_dashboard_html
 from macro_positioning.dashboard.tactical_ui import tactical_dashboard_html
@@ -51,6 +52,14 @@ def command_center_data() -> CommandCenterSnapshot:
 @router.get("/api/dashboard/tactical-state")
 def tactical_state() -> dict:
     return tactical_client.fetch_tactical_snapshot()
+
+
+@router.get("/api/dashboard/mgmt", response_model=MgmtSnapshot)
+def mgmt_data(decisions_limit: int = 8, commits_limit: int = 10) -> MgmtSnapshot:
+    return build_mgmt_snapshot(
+        decisions_limit=decisions_limit,
+        commits_limit=commits_limit,
+    )
 
 
 @router.get("/api/checklist", response_model=Checklist)

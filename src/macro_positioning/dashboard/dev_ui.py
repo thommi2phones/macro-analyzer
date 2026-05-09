@@ -103,6 +103,98 @@ DEV_CSS = r"""
 }
 .brain-row .lat.ok { color: var(--green-2); }
 .brain-row .lat.err { color: var(--red-2); }
+
+/* ─── Mgmt panel ─── */
+.mgmt-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  margin-bottom: 22px;
+}
+@media (max-width: 1100px) { .mgmt-grid { grid-template-columns: 1fr; } }
+
+.mgmt-summary {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.mgmt-summary-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12px; padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.mgmt-summary-row:last-child { border-bottom: none; }
+.mgmt-summary-row .label {
+  color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.5px; font-size: 10px; font-weight: 700;
+}
+.mgmt-summary-row .value {
+  font-family: var(--font-mono); font-weight: 700; color: var(--text);
+}
+.mgmt-inprogress-list {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.mgmt-inprogress-list .ip-label {
+  font-size: 10px; color: var(--accent-2); text-transform: uppercase;
+  letter-spacing: 0.6px; font-weight: 700; margin-bottom: 6px;
+}
+.mgmt-inprogress-list .ip-item {
+  font-size: 12px; color: var(--text-dim); padding: 3px 0;
+  display: flex; gap: 8px; align-items: baseline;
+}
+.mgmt-inprogress-list .ip-item::before {
+  content: '▶'; color: var(--accent-2); font-size: 9px;
+}
+
+.decisions-list { display: flex; flex-direction: column; gap: 8px; }
+.decision-row {
+  padding: 10px 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 7px;
+  font-size: 12px; line-height: 1.45;
+}
+.decision-row .topic {
+  font-weight: 700; font-size: 12px; color: var(--text);
+  margin-bottom: 4px;
+}
+.decision-row .body { color: var(--text-dim); }
+.decision-row .meta {
+  font-size: 10px; color: var(--text-muted);
+  font-family: var(--font-mono); margin-top: 6px;
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.decision-row .meta .dec-id { color: var(--purple-2); margin-right: 8px; }
+.decision-row.expand .body {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.decision-row.expand:hover .body {
+  -webkit-line-clamp: unset; overflow: visible;
+}
+.decision-row .rationale {
+  font-size: 11px; color: var(--text-muted);
+  margin-top: 6px; font-style: italic;
+  display: none;
+}
+.decision-row:hover .rationale { display: block; }
+
+.commits-list { display: flex; flex-direction: column; gap: 4px; }
+.commit-row {
+  display: grid; grid-template-columns: 80px 1fr auto;
+  align-items: baseline; gap: 12px;
+  padding: 8px 12px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 12px;
+}
+.commit-row .sha {
+  font-family: var(--font-mono); font-weight: 700;
+  color: var(--accent-2); font-size: 11px;
+}
+.commit-row .subject {
+  color: var(--text); overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.commit-row .when {
+  color: var(--text-muted); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.4px;
+  font-family: var(--font-mono);
+}
 """
 
 
@@ -149,6 +241,54 @@ def dev_dashboard_html() -> str:
       </div>
 
       <div class="source-chips" id="chips"></div>
+
+      <!-- ─── Project Management panel ─── -->
+      <div class="mgmt-grid">
+
+        <!-- Left: Decisions log -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-icon">{ICONS.get('check', '◆')}</div>
+              <span>Recent Decisions</span>
+            </div>
+            <div class="panel-subtitle" id="mgmt-dec-meta">—</div>
+          </div>
+          <div class="panel-body">
+            <div class="decisions-list" id="mgmt-decisions"></div>
+          </div>
+        </div>
+
+        <!-- Right: Recent commits + checklist summary -->
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <div class="panel-icon">{ICONS.get('check', '◆')}</div>
+                <span>Recent Commits</span>
+              </div>
+              <div class="panel-subtitle">Last 10 from <code>git log</code></div>
+            </div>
+            <div class="panel-body">
+              <div class="commits-list" id="mgmt-commits"></div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <div class="panel-icon">{ICONS.get('check', '◆')}</div>
+                <span>Checklist Summary</span>
+              </div>
+              <div class="panel-subtitle">Live from <code>data/checklist.json</code></div>
+            </div>
+            <div class="panel-body">
+              <div class="mgmt-summary" id="mgmt-summary"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
 
       <!-- Build progress -->
       <div class="panel progress-shell">
@@ -203,20 +343,91 @@ def dev_dashboard_html() -> str:
 
     async function load(){{
       try {{
-        const [ops, cl, brain] = await Promise.all([
+        const [ops, cl, brain, mgmt] = await Promise.all([
           fetch('/api/dashboard/ops').then(r => r.json()),
           fetch('/api/checklist').then(r => r.json()),
           fetch('/api/dashboard/brain/activity?limit=15').then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch('/api/dashboard/mgmt').then(r => r.ok ? r.json() : null).catch(() => null),
         ]);
-        render(ops, cl, brain);
+        render(ops, cl, brain, mgmt);
       }} catch(e) {{
         document.getElementById('loading').textContent = 'Failed to load: ' + e.message;
       }}
     }}
 
-    function render(ops, cl, brain){{
+    function renderMgmt(mgmt){{
+      if (!mgmt) return;
+
+      // Decisions
+      const dl = document.getElementById('mgmt-decisions');
+      const decs = mgmt.recent_decisions || [];
+      document.getElementById('mgmt-dec-meta').textContent =
+        `${{decs.length}} of ${{mgmt.decisions_total}} shown · hover for rationale`;
+      if (!decs.length){{
+        dl.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">No decisions logged yet.</div>';
+      }} else {{
+        decs.forEach(d => {{
+          const dateStr = (d.decided_at || '').split('T')[0];
+          const div = document.createElement('div');
+          div.className = 'decision-row';
+          div.innerHTML = `
+            <div class="topic">${{escapeHtml(d.topic)}}</div>
+            <div class="body">${{escapeHtml(d.decision)}}</div>
+            ${{d.rationale ? `<div class="rationale">↳ ${{escapeHtml(d.rationale)}}</div>` : ''}}
+            <div class="meta"><span class="dec-id">${{escapeHtml(d.decision_id)}}</span>${{escapeHtml(dateStr)}}${{d.chat_session_ref ? ' · ' + escapeHtml(d.chat_session_ref) : ''}}</div>`;
+          dl.appendChild(div);
+        }});
+      }}
+
+      // Commits
+      const cm = document.getElementById('mgmt-commits');
+      const commits = mgmt.recent_commits || [];
+      if (!commits.length){{
+        cm.innerHTML = '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:12px">No commits found (or git unavailable).</div>';
+      }} else {{
+        commits.forEach(c => {{
+          const div = document.createElement('div');
+          div.className = 'commit-row';
+          div.title = c.author + ' · ' + c.sha;
+          div.innerHTML = `
+            <span class="sha">${{escapeHtml(c.short_sha)}}</span>
+            <span class="subject">${{escapeHtml(c.subject)}}</span>
+            <span class="when">${{escapeHtml(c.relative_date)}}</span>`;
+          cm.appendChild(div);
+        }});
+      }}
+
+      // Checklist summary
+      const sm = document.getElementById('mgmt-summary');
+      const s = mgmt.checklist_summary || {{}};
+      sm.innerHTML = `
+        <div class="mgmt-summary-row">
+          <span class="label">Done</span>
+          <span class="value">${{s.done || 0}} / ${{s.total || 0}} (${{s.pct_complete || 0}}%)</span>
+        </div>
+        <div class="mgmt-summary-row">
+          <span class="label">In progress</span>
+          <span class="value">${{s.in_progress || 0}}</span>
+        </div>
+        <div class="mgmt-summary-row">
+          <span class="label">Todo</span>
+          <span class="value">${{s.todo || 0}}</span>
+        </div>`;
+      const ips = s.in_progress_titles || [];
+      if (ips.length){{
+        let html = '<div class="mgmt-inprogress-list"><div class="ip-label">Active</div>';
+        ips.forEach(t => {{ html += `<div class="ip-item">${{escapeHtml(t)}}</div>`; }});
+        html += '</div>';
+        sm.innerHTML += html;
+      }}
+    }}
+
+    function render(ops, cl, brain, mgmt){{
       document.getElementById('loading').style.display = 'none';
       document.getElementById('content').style.display = 'block';
+
+      // Mgmt panel (decisions + commits + checklist summary)
+      renderMgmt(mgmt);
 
       // KPIs
       document.getElementById('k-docs').textContent = ops.db_stats?.documents || 0;

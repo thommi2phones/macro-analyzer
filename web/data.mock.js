@@ -308,6 +308,23 @@ window.MA_DATA = {
     { name: "ZeroHedge RSS",       weight: 0.28, dWeight: -0.08, attribUsd: -640,  trades: 3, tags: ["news"] },
   ],
 
+  // Spearman ρ between score components and realized PnL %.
+  // Empty until closed trades exist; SPA renders zero-state from the same shape.
+  scoreCorrelation: {
+    n_pairs: 14,
+    components: [
+      { name: "adjusted_total",       spearman: +0.42, p_value: 0.13, n: 14 },
+      { name: "macro_alignment",      spearman: +0.31, p_value: 0.27, n: 14 },
+      { name: "liquidity",            spearman: +0.18, p_value: 0.54, n: 14 },
+      { name: "sector_theme",         spearman: +0.55, p_value: 0.04, n: 14 },
+      { name: "technical_structure",  spearman: +0.38, p_value: 0.18, n: 14 },
+      { name: "volume_flow",          spearman: +0.22, p_value: 0.45, n: 14 },
+      { name: "risk_reward",          spearman: +0.49, p_value: 0.07, n: 14 },
+      { name: "relative_strength",    spearman: +0.27, p_value: 0.34, n: 14 },
+      { name: "psychology",           spearman: -0.08, p_value: 0.78, n: 14 },
+    ],
+  },
+
   thesisChangelog: [
     { date: "2026-04-22", from: "v2.4", to: "v3.0", title: "Capital Rotation Through Hyper-Liquidity Cycle", summary: "Reframed as two-speed market. Energy + AI explicitly linked. Cash treated as strategic, not residual.", regimes: ["+commodity_expansion", "+monetary_debasement_hard_asset"] },
     { date: "2026-03-08", from: "v2.3", to: "v2.4", title: "Defense as early signal", summary: "Defense recognized as leading rather than late-cycle on procurement tape.", regimes: [] },

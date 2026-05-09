@@ -211,6 +211,60 @@ function Dev() {
         </table>
       </section>
 
+      {/* Score → outcome correlation */}
+      <section className="block">
+        <header className="block-head sm">
+          <div className="block-title">
+            <span className="block-num mono">D5</span>
+            <span>Score → outcome correlation</span>
+            <span className="block-sub">
+              Spearman ρ vs realized PnL %{" "}
+              · n={D.scoreCorrelation.n_pairs} closed trade{D.scoreCorrelation.n_pairs === 1 ? "" : "s"}
+            </span>
+          </div>
+        </header>
+        {D.scoreCorrelation.n_pairs === 0 ? (
+          <div className="empty-state mono muted" style={{ padding: "1rem" }}>
+            no closed trades yet · panel fills as outcomes land
+          </div>
+        ) : (
+          <table className="wl-table dev-table">
+            <thead>
+              <tr>
+                <th>COMPONENT</th>
+                <th className="num">ρ</th>
+                <th className="num">p</th>
+                <th className="num">n</th>
+                <th>DIRECTION</th>
+              </tr>
+            </thead>
+            <tbody>
+              {D.scoreCorrelation.components.map(c => {
+                const rho = c.spearman;
+                const sig = c.p_value !== null && c.p_value < 0.05;
+                const cls = rho === null ? "muted" : rho >= 0 ? "pos" : "neg";
+                return (
+                  <tr key={c.name}>
+                    <td className="src-name">{c.name}</td>
+                    <td className={`num mono ${cls}`}>
+                      {rho === null ? "—" : (rho >= 0 ? "+" : "") + rho.toFixed(2)}
+                    </td>
+                    <td className="num mono muted">
+                      {c.p_value === null ? "—" : c.p_value.toFixed(2)}
+                    </td>
+                    <td className="num mono muted">{c.n}</td>
+                    <td className={cls}>
+                      {rho === null ? "—" : rho >= 0 ? "predictive" : "anti-correlated"}
+                      {sig ? <span className="tag-chip" style={{ marginLeft: "0.4rem" }}>sig</span> : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
     </div>
   );
 }

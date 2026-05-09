@@ -669,6 +669,61 @@ def build_source_leaderboard_section() -> list[dict]:
     return rows[:20]
 
 
+def build_score_correlation_section() -> dict:
+    """Spearman ρ between score components and realized PnL.
+
+    Fed by learning/score_outcome_correlation.py. Empty until closed
+    trades exist; shape preserved so the SPA can render zero-state.
+
+    Schema (per data.mock.js scoreCorrelation):
+      n_pairs: int
+      components: list of {
+        name: str, spearman: float|null, p_value: float|null, n: int
+      }
+    """
+    if not settings.sqlite_path.exists():
+        return {"n_pairs": 0, "components": []}
+
+    try:
+        from macro_positioning.learning.score_outcome_correlation import (
+            score_outcome_correlation,
+        )
+    except Exception:
+        return {"n_pairs": 0, "components": []}
+
+    with sqlite3.connect(settings.sqlite_path) as conn:
+        try:
+            raw = score_outcome_correlation(conn)
+        except Exception:
+            return {"n_pairs": 0, "components": []}
+
+    component_keys = [
+        "adjusted_total",
+        "macro_alignment",
+        "liquidity",
+        "sector_theme",
+        "technical_structure",
+        "volume_flow",
+        "risk_reward",
+        "relative_strength",
+        "psychology",
+    ]
+    components = []
+    for key in component_keys:
+        c = raw.get(key) or {}
+        components.append({
+            "name": key,
+            "spearman": c.get("spearman"),
+            "p_value": c.get("p_value"),
+            "n": int(c.get("n", 0) or 0),
+        })
+
+    return {
+        "n_pairs": int(raw.get("n_pairs", 0) or 0),
+        "components": components,
+    }
+
+
 def build_thesis_changelog_section() -> list[dict]:
     """Thesis revision log.
 
@@ -869,6 +924,7 @@ def build_desk_snapshot() -> dict:
         ("missedTrades", build_missed_trades_section, list),
         ("processScorecard", build_process_scorecard_section, build_process_scorecard_section),
         ("sourceLeaderboard", build_source_leaderboard_section, list),
+        ("scoreCorrelation", build_score_correlation_section, lambda: {"n_pairs": 0, "components": []}),
         ("thesisChangelog", build_thesis_changelog_section, list),
         ("brainActivity", build_brain_activity_section, list),
         ("sourceHealth", build_source_health_section, list),

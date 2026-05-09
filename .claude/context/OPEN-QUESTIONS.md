@@ -11,10 +11,12 @@ Active items waiting on user input or external action.
   smallest first move; correlation analysis needs more closed trades; full
   retraining needs multi-month corpus.
 
-- [2026-05-09] When do we wire the FIRST real LLM-backed agent
-  (`regime_classifier` or `narrative_synthesizer`)? Burns tokens. Probably
-  wait until manual input layer ships so dropped charts + notes also feed
-  the synth corpus.
+- [2026-05-09] When do we wire the FIRST real LLM-backed agent? Now
+  partially answered: `chart_vision` goes Gemini-via-existing-brain/vision.py
+  (manual input chat owns it). For `regime_classifier` and
+  `narrative_synthesizer` — likely also Gemini. The deep_research agent
+  (Perplexity/OpenAI) is a separate slot to design later under budget
+  guards. See DECISIONS 2026-05-09 "LLM stack" entry.
 
 ## Deployment
 

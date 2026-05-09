@@ -39,7 +39,14 @@ Two parallel work tracks:
 - relative_strength scorer — neutral 0.5
 - regime_classifier — keyword-hint stub, not LLM-backed
 - narrative_synthesizer — passthrough stub
-- chart_vision — passthrough stub
+- chart_vision — passthrough stub (manual input chat owns wiring it
+  to Gemini 2.5 Pro via existing `brain/vision.py` path)
+
+### Future agent slot (designed, not built)
+- **deep_research** — Perplexity Deep Research / OpenAI deep-research
+  for narrative synthesis on the live web. Strict budget guards. NOT
+  the same as chart_vision; do not conflate. See DECISIONS 2026-05-09
+  "LLM stack" entry.
 
 ### Open scope
 - [ ] Manual input layer (drag-drop charts/text → brain) — **separate chat**

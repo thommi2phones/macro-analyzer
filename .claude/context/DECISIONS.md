@@ -4,6 +4,33 @@ Append-only. Never delete entries. Most recent first.
 
 ---
 
+## 2026-05-09 — LLM stack: Gemini for vision, separate deep_research slot for narrative; no own-LLM yet
+
+**Decision:** Use Gemini 2.5 Pro (already wired, unlimited on the account)
+for all chart vision and current-state synthesis tasks. Reserve a SEPARATE
+future `deep_research` agent slot for narrative synthesis on the live web —
+intended provider Perplexity Deep Research or OpenAI deep-research, called
+under strict budget guards (per-call cost cap, per-day cap, only on
+high-conviction setups). Do NOT conflate vision (Gemini, cheap, recurring)
+with deep research (Perplexity, expensive, rare). Building our own LLM is
+deferred until `training_corpus/` has years of outcome-labeled examples —
+the logging contract is the runway for that.
+**Rationale:** Right tool per job. Gemini multimodal is genuinely strong
+for chart structure (S/R, trendlines, indicator state) and free on the
+current account. Perplexity/OpenAI deep-research is unmatched for live
+discourse aggregation ("what's the macro consensus on yields this week")
+because it actually traverses sources — but expensive enough that gating
+matters. Conflating them in one code path leads to either over-spending or
+under-using vision. Own-LLM economics only work once we have labeled
+training data, which we don't.
+**Alternatives:** Single LLM path for everything (rejected — wrong-tool
+problem); jump to fine-tuned own-LLM now (rejected — premature, no corpus);
+skip Perplexity entirely (rejected — narrative synthesis on the live web
+genuinely matters and prompt-engineered Gemini won't match a research
+agent that traverses sources).
+
+---
+
 ## 2026-05-09 — Time-weighting uses macro-appropriate horizons (NOT day/week-tight)
 
 **Decision:** Mention extraction half-life defaults to 30d standalone; in the

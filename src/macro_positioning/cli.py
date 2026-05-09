@@ -16,6 +16,14 @@ from pathlib import Path
 from macro_positioning.core.models import RawDocument
 from macro_positioning.ingestion.rss_connector import ingest_feeds
 from macro_positioning.ingestion.sample_sources import sample_context, sample_documents
+from macro_positioning.ingestion.source_lifecycle import (
+    add_source,
+    archive_source,
+    count_by_priority,
+    promote_source,
+    retag_source,
+    summarize_sources,
+)
 from macro_positioning.pipelines.run_pipeline import build_pipeline
 
 
@@ -71,6 +79,78 @@ def cmd_text(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sources_list(args: argparse.Namespace) -> int:
+    rows = summarize_sources(include_archived=args.all)
+    if not rows:
+        print("(no sources)")
+        return 0
+    # Header + rows; minimal, monospaced, columnar output
+    print(f"{'PRIORITY':<10}  {'TYPE':<14}  {'TRUST':>6}  {'SOURCE_ID':<28}  TAGS")
+    print("-" * 100)
+    for r in rows:
+        tags_str = ",".join(r.routing_tags[:6]) + ("…" if len(r.routing_tags) > 6 else "")
+        print(
+            f"{r.priority:<10}  {r.source_type:<14}  {r.trust_weight:>6.2f}  {r.source_id:<28}  {tags_str}"
+        )
+    print()
+    counts = count_by_priority()
+    summary = "  ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    print(f"summary: total={sum(counts.values())}  {summary}")
+    return 0
+
+
+def cmd_sources_add(args: argparse.Namespace) -> int:
+    try:
+        rec = add_source(
+            args.source_id,
+            name=args.name,
+            source_type=args.type,
+            author=args.author or "",
+            priority=args.priority,
+            trust_weight=args.trust,
+            market_focus=args.focus or [],
+            routing_tags=args.tag or [],
+            fetch_cadence=args.cadence,
+            freshness_sla_hours=args.sla,
+            channels=[{"channel_type": "url", "label": "primary", "url": args.url}] if args.url else [],
+        )
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"Onboarded {rec.source_id} (priority={rec.priority}, trust={rec.trust_weight}, tags={','.join(rec.routing_tags) or '-'})")
+    return 0
+
+
+def cmd_sources_archive(args: argparse.Namespace) -> int:
+    try:
+        rec = archive_source(args.source_id)
+    except KeyError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"Archived {rec.source_id} on {rec.archived_at}")
+    return 0
+
+
+def cmd_sources_promote(args: argparse.Namespace) -> int:
+    try:
+        rec = promote_source(args.source_id, args.to)
+    except (KeyError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"Promoted {rec.source_id} → priority={rec.priority}")
+    return 0
+
+
+def cmd_sources_retag(args: argparse.Namespace) -> int:
+    try:
+        rec = retag_source(args.source_id, add=args.add or [], remove=args.remove or [])
+    except KeyError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(f"{rec.source_id} routing_tags: {','.join(rec.routing_tags) or '-'}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="macro-positioning",
@@ -103,6 +183,43 @@ def build_parser() -> argparse.ArgumentParser:
     p_text.add_argument("--author", default=None)
     p_text.add_argument("--tag", action="append", default=None)
     p_text.set_defaults(func=cmd_text)
+
+    # ---- sources management ------------------------------------------------
+    p_sources = sub.add_parser("sources", help="manage the canonical source registry (config/sources.json)")
+    sources_sub = p_sources.add_subparsers(dest="sources_command", required=True)
+
+    p_list = sources_sub.add_parser("list", help="list active sources (use --all to include archived)")
+    p_list.add_argument("--all", action="store_true", help="include archived sources")
+    p_list.set_defaults(func=cmd_sources_list)
+
+    p_add = sources_sub.add_parser("add", help="onboard a new source")
+    p_add.add_argument("source_id", help="snake_case unique id")
+    p_add.add_argument("--name", required=True)
+    p_add.add_argument("--type", required=True, help="newsletter|podcast|rss|api|gmail|manual_notes|chart")
+    p_add.add_argument("--author", default=None)
+    p_add.add_argument("--priority", default="trial", choices=["core", "secondary", "trial"])
+    p_add.add_argument("--trust", type=float, default=0.5)
+    p_add.add_argument("--focus", action="append", default=None, help="repeatable: market_focus tag")
+    p_add.add_argument("--tag", action="append", default=None, help="repeatable: routing_tag")
+    p_add.add_argument("--cadence", default="manual", help="ISO-8601 duration or 'manual' or 'realtime'")
+    p_add.add_argument("--sla", type=int, default=None, help="freshness_sla_hours")
+    p_add.add_argument("--url", default=None, help="primary channel URL")
+    p_add.set_defaults(func=cmd_sources_add)
+
+    p_arch = sources_sub.add_parser("archive", help="archive a source (soft delete)")
+    p_arch.add_argument("source_id")
+    p_arch.set_defaults(func=cmd_sources_archive)
+
+    p_promote = sources_sub.add_parser("promote", help="change a source's priority")
+    p_promote.add_argument("source_id")
+    p_promote.add_argument("--to", required=True, choices=["core", "secondary", "trial", "archived"])
+    p_promote.set_defaults(func=cmd_sources_promote)
+
+    p_retag = sources_sub.add_parser("retag", help="adjust a source's routing_tags")
+    p_retag.add_argument("source_id")
+    p_retag.add_argument("--add", action="append", default=None, help="repeatable: tag to add")
+    p_retag.add_argument("--remove", action="append", default=None, help="repeatable: tag to remove")
+    p_retag.set_defaults(func=cmd_sources_retag)
 
     return parser
 

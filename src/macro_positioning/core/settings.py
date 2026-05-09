@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
     finnhub_api_key: str = ""
 
+    # Bearer auth for the public deployed API. Empty in dev = auth disabled.
+    # Set in Render dashboard before exposing the URL. SPA same-origin
+    # requests pick it up from a cookie set at /login (separate scaffolding).
+    auth_token: str = ""
+
     # LLM Brain — direct APIs (multi-model)
     # Primary synthesis model
     gemini_api_key: str = ""           # Google Gemini direct API key

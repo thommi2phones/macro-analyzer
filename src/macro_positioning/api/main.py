@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -19,6 +19,37 @@ from macro_positioning.pipelines.run_pipeline import build_pipeline
 from macro_positioning.services.framework import default_credential_requirements, onboarding_template
 
 app = FastAPI(title="Macro Positioning Analyzer", version="0.1.0")
+
+
+# ---------------------------------------------------------------------------
+# Bearer auth — only enforced when MPA_AUTH_TOKEN is set (i.e. on deployed
+# instances). Local dev leaves the env var unset and the middleware no-ops.
+# Static SPA assets and the health endpoint stay public so the browser can
+# fetch index.html and the API can be probed by Render's health check.
+# ---------------------------------------------------------------------------
+
+_PUBLIC_PREFIXES = ("/web/", "/health", "/login")
+
+
+@app.middleware("http")
+async def _bearer_auth(request: Request, call_next):
+    token = settings.auth_token
+    if not token:
+        return await call_next(request)
+
+    path = request.url.path
+    if path == "/" or any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    header = request.headers.get("authorization", "")
+    cookie = request.cookies.get("mpa_token", "")
+    expected = f"Bearer {token}"
+    if header != expected and cookie != token:
+        return JSONResponse(
+            {"detail": "unauthorized"},
+            status_code=401,
+        )
+    return await call_next(request)
 
 # Desk routes (dynamic /web/data.js + /api/desk/data) MUST register
 # BEFORE the StaticFiles mount so they take precedence over the static

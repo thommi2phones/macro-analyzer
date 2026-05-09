@@ -1,0 +1,88 @@
+{
+  "$schema_version": "1.0",
+  "description": "Bridges the two regime taxonomies. Thesis regimes are narrative-rich (7 categories from docs/macro_thesis_v3.md). Framework regimes are stable scoring categories (5 categories from config/trading_framework.json macro_regimes). Each thesis regime maps to one or more framework regimes with a confidence weight; the brain uses the framework regime for scoring and the thesis regime for narrative display.",
+
+  "thesis_regimes": [
+    "war_escalation",
+    "inflation_shock",
+    "growth_scare",
+    "dovish_liquidity_wave",
+    "broad_panic",
+    "sideways_churn",
+    "commodity_expansion"
+  ],
+
+  "framework_regimes": [
+    "risk_on_expansion",
+    "risk_off_contraction",
+    "commodity_led_inflation",
+    "monetary_debasement_hard_asset",
+    "transitional_chop"
+  ],
+
+  "mappings": {
+    "war_escalation": {
+      "primary_framework_regime": "commodity_led_inflation",
+      "secondary_framework_regime": "risk_off_contraction",
+      "primary_weight": 0.7,
+      "secondary_weight": 0.3,
+      "rationale": "Resource insecurity and energy shocks favor real assets (commodity-led), but risk appetite typically contracts (risk-off). Defense leadership is a sub-case of risk-off rotation."
+    },
+    "inflation_shock": {
+      "primary_framework_regime": "commodity_led_inflation",
+      "secondary_framework_regime": "monetary_debasement_hard_asset",
+      "primary_weight": 0.75,
+      "secondary_weight": 0.25,
+      "rationale": "Rising inflation expectations and narrowing policy flexibility align directly with commodity-led inflation; sustained fiscal stress can layer in debasement dynamics."
+    },
+    "growth_scare": {
+      "primary_framework_regime": "risk_off_contraction",
+      "secondary_framework_regime": "transitional_chop",
+      "primary_weight": 0.65,
+      "secondary_weight": 0.35,
+      "rationale": "Demand slowdown and rising earnings sensitivity drive defensive positioning. Until policy relief is priced, leadership rotates inconsistently (chop)."
+    },
+    "dovish_liquidity_wave": {
+      "primary_framework_regime": "risk_on_expansion",
+      "secondary_framework_regime": null,
+      "primary_weight": 1.0,
+      "secondary_weight": 0.0,
+      "rationale": "Cleanest mapping. Soft policy expectations + returning risk appetite = risk-on expansion."
+    },
+    "broad_panic": {
+      "primary_framework_regime": "risk_off_contraction",
+      "secondary_framework_regime": "transitional_chop",
+      "primary_weight": 0.85,
+      "secondary_weight": 0.15,
+      "rationale": "First phase is unambiguously risk-off. Recovery phase often passes through chop before regime clarifies."
+    },
+    "sideways_churn": {
+      "primary_framework_regime": "transitional_chop",
+      "secondary_framework_regime": null,
+      "primary_weight": 1.0,
+      "secondary_weight": 0.0,
+      "rationale": "Direct mapping by definition."
+    },
+    "commodity_expansion": {
+      "primary_framework_regime": "commodity_led_inflation",
+      "secondary_framework_regime": "monetary_debasement_hard_asset",
+      "primary_weight": 0.7,
+      "secondary_weight": 0.3,
+      "rationale": "Multi-quarter supply + demand acceleration = commodity-led leadership. If fiscal/sovereign stress accompanies, monetary debasement dynamics layer in."
+    }
+  },
+
+  "reverse_mapping_hints": {
+    "risk_on_expansion": ["dovish_liquidity_wave"],
+    "risk_off_contraction": ["growth_scare", "broad_panic", "war_escalation"],
+    "commodity_led_inflation": ["inflation_shock", "commodity_expansion", "war_escalation"],
+    "monetary_debasement_hard_asset": ["inflation_shock", "commodity_expansion"],
+    "transitional_chop": ["sideways_churn", "growth_scare", "broad_panic"]
+  },
+
+  "usage_notes": [
+    "regime_classifier agent outputs both: (a) thesis regime for narrative display, (b) framework regime for scoring",
+    "When thesis regime maps to two framework regimes with non-trivial secondary weight, brain may blend scoring modifiers proportionally",
+    "If user updates thesis to vN+1 with new narrative regimes, this file must be updated alongside; framework taxonomy is stable"
+  ]
+}

@@ -1,0 +1,323 @@
+{
+  "$schema_version": "1.0",
+  "source_doc": "docs/trading_framework.md",
+  "description": "Machine-readable trading framework. Single source of truth for the brain's scoring engine. Mirrors the JSON blocks embedded in the narrative doc.",
+
+  "core_rules": [
+    { "rule_id": "macro_first_execution_second", "description": "Use macro regime to define directional bias and technical analysis to define entries and exits", "priority": "critical" },
+    { "rule_id": "confirmation_stacking_required", "description": "Higher conviction requires alignment across macro, technical, volume, sector, and risk/reward signals", "priority": "critical" },
+    { "rule_id": "defined_risk_required", "description": "No setup should receive a high score without a clear invalidation level", "priority": "critical" },
+    { "rule_id": "macro_not_timing", "description": "A strong macro thesis cannot override poor technical entry quality", "priority": "high" },
+    { "rule_id": "conservative_bias_default", "description": "When signals are mixed, downgrade the setup rather than assuming bullish resolution", "priority": "high" }
+  ],
+
+  "macro_regimes": {
+    "risk_on_expansion": {
+      "regime": "risk_on_expansion",
+      "bias": "bullish",
+      "risk_posture": "constructive",
+      "preferred_setups": ["breakout_continuation", "pullback_to_support", "high_tight_flag", "sector_rotation_leader", "relative_strength_continuation"],
+      "position_sizing_modifier": 1.25,
+      "setup_score_modifier": 10
+    },
+    "risk_off_contraction": {
+      "regime": "risk_off_contraction",
+      "bias": "defensive",
+      "risk_posture": "capital_preservation",
+      "preferred_setups": ["failed_breakout_short", "defensive_rotation", "mean_reversion_after_capitulation", "cash_preservation"],
+      "position_sizing_modifier": 0.5,
+      "setup_score_modifier": -15
+    },
+    "commodity_led_inflation": {
+      "regime": "commodity_led_inflation",
+      "bias": "real_asset_bullish",
+      "risk_posture": "selective_aggression",
+      "preferred_setups": ["commodity_breakout", "miner_relative_strength", "uranium_accumulation", "precious_metals_continuation"],
+      "position_sizing_modifier": 1.1,
+      "setup_score_modifier": 8
+    },
+    "monetary_debasement_hard_asset": {
+      "regime": "monetary_debasement_hard_asset",
+      "bias": "scarcity_asset_bullish",
+      "risk_posture": "theme_accumulation",
+      "preferred_setups": ["hard_asset_breakout", "long_base_accumulation", "scarcity_asset_pullback", "relative_strength_vs_fiat"],
+      "position_sizing_modifier": 1.0,
+      "setup_score_modifier": 6
+    },
+    "transitional_chop": {
+      "regime": "transitional_chop",
+      "bias": "neutral_to_cautious",
+      "risk_posture": "reduced_activity",
+      "preferred_setups": ["range_trade", "support_retest", "small_probe", "watchlist_building"],
+      "position_sizing_modifier": 0.65,
+      "setup_score_modifier": -8
+    }
+  },
+
+  "liquidity_model": {
+    "expanding": {
+      "risk_asset_bias": "positive",
+      "breakout_confidence_modifier": 8,
+      "position_size_modifier": 1.2
+    },
+    "neutral": {
+      "risk_asset_bias": "selective",
+      "breakout_confidence_modifier": 0,
+      "position_size_modifier": 1.0
+    },
+    "contracting": {
+      "risk_asset_bias": "negative",
+      "breakout_confidence_modifier": -12,
+      "position_size_modifier": 0.6
+    }
+  },
+
+  "market_structure_signals": [
+    {
+      "signal": "bullish_structure",
+      "conditions": ["higher_highs == true", "higher_lows == true", "support_retests_hold == true"],
+      "score_modifier": 12
+    },
+    {
+      "signal": "bearish_structure",
+      "conditions": ["lower_highs == true", "lower_lows == true", "resistance_retests_fail == true"],
+      "score_modifier": -12
+    },
+    {
+      "signal": "neutral_structure",
+      "conditions": ["range_bound == true", "trend_unclear == true"],
+      "score_modifier": -5
+    }
+  ],
+
+  "breakout_model": {
+    "high_quality_breakout": {
+      "conditions": [
+        "resistance_break == true",
+        "close_above_level == true",
+        "relative_volume >= 1.5",
+        "sector_confirmation == true",
+        "extension_from_support <= acceptable_threshold"
+      ],
+      "score_modifier": 18
+    },
+    "low_quality_breakout": {
+      "conditions": [
+        "resistance_break == true",
+        "close_above_level == false OR relative_volume < 1.0 OR market_confirmation == false"
+      ],
+      "score_modifier": -10
+    },
+    "failed_breakout": {
+      "conditions": [
+        "breakout_occurred == true",
+        "close_back_below_breakout_level == true",
+        "follow_through_failed == true"
+      ],
+      "score_modifier": -18,
+      "warning": "potential_trapped_buyers"
+    }
+  },
+
+  "pullback_model": {
+    "constructive_pullback": {
+      "conditions": [
+        "primary_trend == up",
+        "pullback_to_key_level == true",
+        "selling_volume_contracts == true",
+        "support_holds == true"
+      ],
+      "score_modifier": 15
+    },
+    "distribution_pullback": {
+      "conditions": [
+        "support_breaks == true",
+        "selling_volume_expands == true",
+        "relative_strength_deteriorates == true"
+      ],
+      "score_modifier": -15
+    }
+  },
+
+  "volume_flow_model": {
+    "accumulation": {
+      "conditions": ["range_holds == true", "high_volume_absorption == true", "higher_lows == true"],
+      "score_modifier": 12
+    },
+    "distribution": {
+      "conditions": ["price_stalls_on_high_volume == true", "lower_highs == true", "support_pressure == rising"],
+      "score_modifier": -12
+    },
+    "capitulation_reversal_candidate": {
+      "conditions": ["sharp_decline == true", "volume_spike == true", "key_level_reclaim == true"],
+      "score_modifier": 8
+    },
+    "exhaustion_warning": {
+      "conditions": ["extended_move == true", "late_volume_spike == true", "momentum_divergence == true"],
+      "score_modifier": -10
+    }
+  },
+
+  "order_block_model": {
+    "bullish_order_block": {
+      "conditions": ["pre_move_consolidation == true", "displacement_up == true", "volume_expansion == true", "retest_holds == true"],
+      "score_modifier": 14
+    },
+    "bearish_order_block": {
+      "conditions": ["pre_move_consolidation == true", "displacement_down == true", "volume_expansion == true", "retest_rejects == true"],
+      "score_modifier": -14
+    },
+    "invalidated_order_block": {
+      "conditions": ["price_closes_through_zone == true", "retest_fails_to_hold == true"],
+      "score_modifier": -10
+    }
+  },
+
+  "setup_taxonomy": [
+    "breakout_continuation",
+    "breakout_retest",
+    "high_tight_flag",
+    "pullback_to_support",
+    "failed_breakout",
+    "capitulation_reversal",
+    "long_base_accumulation"
+  ],
+
+  "position_sizing_framework": {
+    "tier_1_high_conviction": {
+      "score_range": "85_to_100",
+      "conditions": [
+        "macro_alignment == strong",
+        "technical_structure == strong",
+        "volume_confirmation == strong",
+        "risk_reward >= 3",
+        "invalidation_defined == true"
+      ],
+      "sizing": "largest_allowed_within_portfolio_limits"
+    },
+    "tier_2_quality_setup": {
+      "score_range": "70_to_84",
+      "conditions": ["setup_quality == good", "some_confirmation_missing == true"],
+      "sizing": "standard_or_staged_entry"
+    },
+    "tier_3_probe": {
+      "score_range": "55_to_69",
+      "conditions": ["mixed_signals == true", "watchlist_quality == good_but_unconfirmed"],
+      "sizing": "small_probe_only"
+    },
+    "tier_4_avoid": {
+      "score_range": "below_55",
+      "conditions": ["setup_quality == weak OR invalidation_defined == false"],
+      "sizing": "avoid"
+    }
+  },
+
+  "conservative_bias_adjustments": [
+    { "condition": "macro_regime == unclear", "score_adjustment": -10 },
+    { "condition": "liquidity_state == contracting", "score_adjustment": -12 },
+    { "condition": "volume_confirmation == weak", "score_adjustment": -10 },
+    { "condition": "invalidation_defined == false", "score_adjustment": -20 },
+    { "condition": "asset_extended_from_support == true", "score_adjustment": -10 },
+    { "condition": "failed_breakout_recent == true", "score_adjustment": -15 },
+    { "condition": "risk_reward < 2", "score_adjustment": -12 }
+  ],
+
+  "trade_score_model": {
+    "components": {
+      "macro_alignment": 20,
+      "liquidity_alignment": 15,
+      "sector_theme_strength": 10,
+      "technical_structure": 20,
+      "volume_flow_confirmation": 15,
+      "risk_reward_quality": 10,
+      "relative_strength": 5,
+      "psychological_execution_quality": 5
+    },
+    "max_score": 100,
+    "score_interpretation": {
+      "90_to_100": "Elite setup, rare, eligible for strong sizing if portfolio risk allows",
+      "80_to_89": "High-quality setup, eligible for larger-than-standard sizing",
+      "70_to_79": "Good setup, standard sizing or staged entry",
+      "60_to_69": "Developing setup, small probe or wait for confirmation",
+      "50_to_59": "Weak or incomplete setup, watch only",
+      "below_50": "Avoid"
+    },
+    "score_calculation_flow": [
+      "calculate_macro_alignment_score",
+      "calculate_liquidity_score",
+      "calculate_sector_theme_score",
+      "calculate_technical_structure_score",
+      "calculate_volume_flow_score",
+      "calculate_risk_reward_score",
+      "calculate_relative_strength_score",
+      "calculate_psychology_score",
+      "apply_regime_modifier",
+      "apply_conservative_bias_adjustments",
+      "assign_trade_grade",
+      "assign_position_size_tier"
+    ]
+  },
+
+  "psychology_model": {
+    "positive_execution_state": {
+      "conditions": [
+        "entry_planned_in_advance == true",
+        "invalidation_defined == true",
+        "position_size_predefined == true",
+        "setup_matches_playbook == true"
+      ],
+      "score_modifier": 5
+    },
+    "negative_execution_state": {
+      "conditions": ["fomo_entry == true OR revenge_sizing == true OR invalidation_defined == false"],
+      "score_modifier": -15
+    }
+  },
+
+  "knowledge_graph_relationships": [
+    { "from": "macro_regime", "to": "asset_class", "relationship": "influences" },
+    { "from": "liquidity_state", "to": "risk_appetite", "relationship": "drives" },
+    { "from": "sector_theme", "to": "asset", "relationship": "contains" },
+    { "from": "asset", "to": "technical_setup", "relationship": "forms" },
+    { "from": "technical_setup", "to": "volume_signal", "relationship": "confirmed_or_rejected_by" },
+    { "from": "technical_setup", "to": "trade_score", "relationship": "evaluated_by" },
+    { "from": "trade_score", "to": "position_size", "relationship": "determines" },
+    { "from": "trade", "to": "journal_entry", "relationship": "reviewed_in" }
+  ],
+
+  "analyzer_workflow": [
+    { "step": 1, "name": "classify_macro_regime", "output": "macro_regime_type" },
+    { "step": 2, "name": "classify_liquidity_state", "output": "liquidity_state" },
+    { "step": 3, "name": "identify_leading_asset_classes_and_sectors", "output": "theme_candidates" },
+    { "step": 4, "name": "scan_assets_for_market_structure", "output": "technical_candidates" },
+    { "step": 5, "name": "classify_setup_type", "output": "setup_taxonomy_label" },
+    { "step": 6, "name": "evaluate_volume_and_flow", "output": "volume_confirmation_status" },
+    { "step": 7, "name": "define_entry_invalidation_and_target", "output": "risk_reward_profile" },
+    { "step": 8, "name": "calculate_trade_score", "output": "raw_score" },
+    { "step": 9, "name": "apply_conservative_bias_adjustments", "output": "adjusted_score" },
+    { "step": 10, "name": "assign_trade_grade_and_position_size", "output": "trade_decision" },
+    { "step": 11, "name": "log_trade_or_missed_setup", "output": "journal_record" }
+  ],
+
+  "system_definition": {
+    "system_goal": "Identify, score, and journal asymmetric trading opportunities by combining macro regime analysis, liquidity conditions, sector themes, technical structure, volume behavior, risk management, and psychology",
+    "core_logic": "Macro defines environment, liquidity defines fuel, sector rotation defines opportunity, technicals define execution, volume confirms intent, risk defines size, psychology determines consistency",
+    "decision_outputs": [
+      "avoid",
+      "watchlist",
+      "small_probe",
+      "standard_entry",
+      "high_conviction_entry",
+      "trim_or_exit",
+      "journal_only"
+    ],
+    "excluded_domains": [
+      "business_gtm",
+      "sales_workflows",
+      "lifestyle",
+      "fitness",
+      "vpn_opsec",
+      "relocation"
+    ]
+  }
+}

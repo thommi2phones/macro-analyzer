@@ -1,0 +1,225 @@
+{
+  "$schema_version": "1.0",
+  "description": "Sector / theme definitions extracted from trading_framework.md §11 + asset class interpretation in macro_thesis_v3.md. Drives sector_theme_scorer agent. Tickers are the user's current watchlist; expand as discovery surfaces new candidates.",
+
+  "themes": {
+    "uranium": {
+      "core_thesis": [
+        "Nuclear renaissance",
+        "Energy security demand",
+        "Structural supply constraints",
+        "Long-duration commodity cycle",
+        "Potential institutional underexposure",
+        "Commodity and real asset tailwinds"
+      ],
+      "asset_class": "commodity_equity",
+      "exposure_type": "structural",
+      "preferred_regimes": ["commodity_led_inflation", "monetary_debasement_hard_asset"],
+      "thesis_regime_alignment": ["commodity_expansion", "war_escalation"],
+      "watchlist_tickers": ["URNM", "DNN", "CCJ", "URA", "UEC", "NXE", "PALAF"],
+      "bullish_conditions": [
+        "Uranium equities outperforming",
+        "URNM breaking out or holding trend",
+        "DNN and related miners confirming",
+        "Volume expands on sector strength",
+        "Commodity-led or hard asset regime active",
+        "Energy security narrative strengthening"
+      ],
+      "risk_conditions": [
+        "Uranium equities diverge negatively",
+        "Breakouts fail",
+        "Commodity regime weakens",
+        "Liquidity contracts severely",
+        "Speculative miners lose leadership"
+      ]
+    },
+
+    "precious_metals": {
+      "core_thesis": [
+        "Monetary debasement",
+        "Fiscal stress",
+        "Inflation hedge",
+        "Geopolitical hedge",
+        "Real asset rotation",
+        "Potential weakness in fiat confidence"
+      ],
+      "asset_class": "commodity_and_miners",
+      "exposure_type": "structural",
+      "preferred_regimes": ["monetary_debasement_hard_asset", "commodity_led_inflation"],
+      "thesis_regime_alignment": ["inflation_shock", "war_escalation", "broad_panic"],
+      "watchlist_tickers": ["GLD", "SLV", "GDX", "GDXJ", "SILJ", "NEM", "AEM"],
+      "bullish_conditions": [
+        "Dollar weakening",
+        "Real rates falling",
+        "Gold and silver showing relative strength",
+        "Miners confirming",
+        "Fiscal or geopolitical stress rising",
+        "Breakouts holding above key levels"
+      ],
+      "risk_conditions": [
+        "Dollar strengthens sharply",
+        "Real rates rise",
+        "Metals fail at resistance",
+        "Miners diverge negatively",
+        "Breakouts repeatedly fail"
+      ]
+    },
+
+    "crypto": {
+      "core_thesis": [
+        "Liquidity-driven upside",
+        "Narrative reflexivity",
+        "Attention and community as market forces",
+        "High volatility and asymmetric upside",
+        "Strong requirement for risk control"
+      ],
+      "asset_class": "crypto",
+      "exposure_type": "tactical",
+      "preferred_regimes": ["risk_on_expansion"],
+      "thesis_regime_alignment": ["dovish_liquidity_wave"],
+      "watchlist_tickers": ["BTC", "ETH", "SOL", "COIN", "MSTR"],
+      "treat_as": "high_beta_liquidity_asset",
+      "explicit_warnings": ["Not a universal safe haven", "Closely tied to risk appetite + tech leadership"],
+      "bullish_conditions": [
+        "Liquidity improving",
+        "Risk appetite rising",
+        "Crypto market breadth improving",
+        "Volume accelerating",
+        "Narrative strength increasing",
+        "Holder distribution improving"
+      ],
+      "risk_conditions": [
+        "Liquidity contracting",
+        "Narrative fading",
+        "Holder concentration high",
+        "Thin exit liquidity",
+        "Failed breakouts",
+        "Excessive euphoria"
+      ]
+    },
+
+    "technology_ai": {
+      "core_thesis": [
+        "Liquidity beneficiary AND strategic destination for global capital",
+        "AI is hardware + compute + data-center + energy story, not pure software",
+        "Tech leadership can coexist with strength in selected real assets"
+      ],
+      "asset_class": "equity",
+      "exposure_type": "structural_and_tactical",
+      "preferred_regimes": ["risk_on_expansion"],
+      "thesis_regime_alignment": ["dovish_liquidity_wave"],
+      "watchlist_tickers": ["NVDA", "MSFT", "GOOGL", "META", "AMZN", "AAPL", "AVGO", "TSM", "SMH", "QQQ"],
+      "bullish_conditions": [
+        "Liquidity expanding",
+        "Index breadth improving with mega-cap leadership",
+        "AI capex narrative reinforced by earnings",
+        "Semiconductor relative strength leading"
+      ],
+      "risk_conditions": [
+        "Liquidity contracting",
+        "Mega-cap concentration breakdown",
+        "Sector rotation away from growth",
+        "AI capex narrative fades"
+      ]
+    },
+
+    "energy": {
+      "core_thesis": [
+        "Sits at intersection of geopolitics, industrial demand, inflation, transport costs, AI infrastructure",
+        "Both beneficiary of resource stress AND input into broader economic activity",
+        "One of few sectors that can matter across multiple regimes"
+      ],
+      "asset_class": "commodity_and_equity",
+      "exposure_type": "structural",
+      "preferred_regimes": ["commodity_led_inflation", "monetary_debasement_hard_asset"],
+      "thesis_regime_alignment": ["war_escalation", "inflation_shock", "commodity_expansion"],
+      "watchlist_tickers": ["XLE", "XOP", "USO", "UCO", "OIH", "CVX", "XOM", "EOG"],
+      "bullish_conditions": [
+        "Crude breaking out above key resistance",
+        "Energy equities outperforming broad market",
+        "Geopolitical risk premium expanding",
+        "Inventory draws + supply constraint headlines"
+      ],
+      "risk_conditions": [
+        "Demand destruction signals (recession risk)",
+        "OPEC+ supply additions",
+        "Crude failing at long-term resistance with broad weakness"
+      ]
+    },
+
+    "defense": {
+      "core_thesis": [
+        "Spending begins to move BEFORE market fully prices conflict",
+        "Acts as early signal, not only late-stage war trade",
+        "Long conflict cycles + budget expansion + new contract waves can extend leadership"
+      ],
+      "asset_class": "equity",
+      "exposure_type": "structural_and_tactical",
+      "preferred_regimes": ["risk_off_contraction", "commodity_led_inflation"],
+      "thesis_regime_alignment": ["war_escalation"],
+      "watchlist_tickers": ["ITA", "LMT", "RTX", "GD", "NOC", "LDOS", "HII", "PLTR"],
+      "bullish_conditions": [
+        "Budget expansion announcements",
+        "Conflict broadening",
+        "Defense equities outperforming during broad weakness (relative strength)"
+      ],
+      "risk_conditions": [
+        "Conflict de-escalation",
+        "Budget cuts discussed",
+        "Sector rotation back into growth"
+      ]
+    },
+
+    "agriculture": {
+      "core_thesis": [
+        "Affected by energy costs, fertilizer, weather, freight, trade policy, geopolitical stress",
+        "Complexity makes it hard but creates outsized opportunity when setup is clear",
+        "Often underprices food system strain until late"
+      ],
+      "asset_class": "commodity_and_equity",
+      "exposure_type": "tactical",
+      "preferred_regimes": ["commodity_led_inflation"],
+      "thesis_regime_alignment": ["war_escalation", "inflation_shock", "commodity_expansion"],
+      "watchlist_tickers": ["DBA", "MOO", "WEAT", "CORN", "SOYB", "ADM", "CF", "MOS"],
+      "bullish_conditions": [
+        "Fertilizer prices rising",
+        "Weather disruption headlines (drought, flooding) confirmed",
+        "Grain breakouts on rising volume",
+        "Geopolitical disruption to major exporters"
+      ],
+      "risk_conditions": [
+        "Bumper crop forecasts",
+        "Fertilizer prices collapsing",
+        "Trade restrictions easing"
+      ]
+    },
+
+    "cash": {
+      "core_thesis": [
+        "Strategic asset, not idle capital",
+        "Optionality to redeploy aggressively when leadership reveals itself",
+        "Avoids forcing low-quality entries"
+      ],
+      "asset_class": "cash_equivalent",
+      "exposure_type": "tactical_optionality",
+      "preferred_regimes": ["risk_off_contraction", "transitional_chop"],
+      "thesis_regime_alignment": ["broad_panic", "growth_scare", "sideways_churn"],
+      "watchlist_tickers": ["BIL", "SGOV"],
+      "cash_posture_by_thesis_regime": {
+        "war_escalation": "slight_increase",
+        "inflation_shock": "neutral_to_modestly_higher",
+        "growth_scare": "increase_early_then_redeploy",
+        "dovish_liquidity_wave": "decrease",
+        "broad_panic": "high_then_declining",
+        "sideways_churn": "elevated",
+        "commodity_expansion": "neutral"
+      }
+    }
+  },
+
+  "exposure_class_definitions": {
+    "structural": "Themes that can matter across several regimes; held with longer time horizon; less responsive to short-term liquidity shifts",
+    "tactical": "Responds faster to liquidity conditions and sentiment shifts; shorter-duration trades; smaller position sizes more frequently",
+    "tactical_optionality": "Cash; held to enable opportunistic redeployment, not to earn yield"
+  }
+}

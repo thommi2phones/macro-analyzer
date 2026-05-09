@@ -1,0 +1,64 @@
+{
+  "$schema_version": "1.0",
+  "description": "Tag-to-agent routing. Determines which production agents (in macro-brain) wake up for a given document based on its routing_tags. Lightweight pre-tagging happens BEFORE any LLM call to avoid wasted spend on irrelevant content.",
+
+  "tag_to_agents": {
+    "macro": ["regime_classifier", "narrative_synthesizer"],
+    "rates": ["regime_classifier", "narrative_synthesizer"],
+    "inflation": ["regime_classifier", "narrative_synthesizer"],
+    "growth": ["regime_classifier", "narrative_synthesizer"],
+    "labor": ["regime_classifier"],
+    "credit": ["regime_classifier"],
+    "liquidity": ["regime_classifier", "narrative_synthesizer"],
+    "fx": ["regime_classifier", "narrative_synthesizer"],
+    "geopolitics": ["regime_classifier", "narrative_synthesizer", "sector_theme_scorer"],
+
+    "equities": ["narrative_synthesizer", "sector_theme_scorer"],
+    "crypto": ["narrative_synthesizer", "sector_theme_scorer"],
+    "commodities": ["narrative_synthesizer", "sector_theme_scorer"],
+    "energy": ["narrative_synthesizer", "sector_theme_scorer"],
+    "ai": ["narrative_synthesizer", "sector_theme_scorer"],
+    "tech": ["narrative_synthesizer", "sector_theme_scorer"],
+
+    "ticker_news": ["narrative_synthesizer"],
+    "sentiment": ["narrative_synthesizer"],
+    "headlines": ["narrative_synthesizer"],
+
+    "chart": ["chart_vision", "technical_scorer"],
+    "technical": ["technical_scorer"],
+    "vision": ["chart_vision"],
+
+    "podcast": ["narrative_synthesizer"],
+
+    "manual": ["narrative_synthesizer", "regime_classifier"],
+    "high_priority": ["narrative_synthesizer", "regime_classifier", "sector_theme_scorer"]
+  },
+
+  "routing_rules": [
+    {
+      "rule_id": "high_priority_overrides",
+      "description": "Documents tagged high_priority always wake regime_classifier + narrative_synthesizer regardless of other tags",
+      "applies_to": ["manual_notes"]
+    },
+    {
+      "rule_id": "chart_implies_vision",
+      "description": "Any document with chart tag must route to chart_vision",
+      "applies_to": ["chart_screenshots"]
+    },
+    {
+      "rule_id": "no_routing_means_skip",
+      "description": "If document has zero matching routing_tags after pre-tagging, log as skipped (don't waste LLM calls). Surface in dashboard source health panel.",
+      "applies_to": ["all"]
+    }
+  ],
+
+  "agent_descriptions": {
+    "regime_classifier": "Classifies current macro regime (both thesis taxonomy + framework taxonomy). Reads macro/rates/liquidity/growth content.",
+    "narrative_synthesizer": "Extracts theses from free-form text (newsletters, podcast transcripts, manual notes). LLM-only judgment task.",
+    "technical_scorer": "Scores price/volume structure per framework §5. Heuristic-first; LLM for ambiguity.",
+    "volume_analyzer": "Analyzes volume patterns per framework §6.",
+    "chart_vision": "Multimodal LLM read of chart screenshots. Identifies levels, structure, setup type.",
+    "psychology_evaluator": "Pure heuristic. Evaluates user's logged trade entries against framework §12 checklist.",
+    "sector_theme_scorer": "Reads asset_themes.json. Scores sector/theme alignment with current regime."
+  }
+}

@@ -1,0 +1,413 @@
+{
+  "$schema_version": "1.0",
+  "description": "Canonical source registry. Supersedes newsletter_sources.json and sources.example.json. Schema is backward-compatible (adds fields, doesn't remove). Existing code may continue reading the old files until Application Agent migrates call sites in Phase 3.",
+  "$migration_status": {
+    "old_files": ["config/newsletter_sources.json", "config/sources.example.json"],
+    "callers_to_update": [
+      "src/macro_positioning/pipelines/run_pipeline.py",
+      "src/macro_positioning/api/main.py",
+      "src/macro_positioning/dashboard/ops_data.py"
+    ],
+    "code_only_definitions_to_migrate": [
+      "src/macro_positioning/ingestion/podcast_rss.py:PODCAST_SOURCES (move to this file)",
+      "src/macro_positioning/ingestion/gmail_connector.py:Blockworks/Weekly Wizdom (move to this file)"
+    ]
+  },
+
+  "field_definitions": {
+    "source_id": "Unique identifier; snake_case",
+    "name": "Display name",
+    "source_type": "newsletter | podcast | rss | api | gmail | manual_notes | chart",
+    "author": "Optional author/host name",
+    "priority": "core | secondary | trial | archived",
+    "trust_weight": "0.0-1.0 prior weight; will become learned parameter once outcome data accrues",
+    "market_focus": "List of macro areas this source covers",
+    "routing_tags": "Tags that drive pre-tagger; determines which agents wake up (see config/source_routing.json)",
+    "fetch_cadence": "ISO-8601 duration string (e.g. PT1H, P1D, P1W) or 'realtime' or 'manual'",
+    "freshness_sla_hours": "How long before content is considered stale; freshness scoring decay starts here",
+    "transcription_mode": "for podcasts only: 'full' | 'show_notes_only' | 'none'",
+    "channels": "List of fetch channels; one source can have multiple",
+    "research_style": "Free-text characterization of the source's voice",
+    "validation_focus": "Which framework regimes this source is most credible on",
+    "onboarded_at": "ISO date the source was added",
+    "archived_at": "ISO date if archived; null if active"
+  },
+
+  "sources": [
+    {
+      "source_id": "macromicro",
+      "name": "MacroMicro.me",
+      "source_type": "newsletter",
+      "author": "MacroMicro",
+      "priority": "core",
+      "trust_weight": 0.9,
+      "market_focus": ["macro", "rates", "inflation", "geopolitics", "commodities"],
+      "routing_tags": ["macro", "inflation", "rates", "geopolitics", "commodities"],
+      "fetch_cadence": "P1D",
+      "freshness_sla_hours": 72,
+      "research_style": "Data-driven macro analysis with focus on leading indicators, inflation dynamics, and geopolitical impacts on markets.",
+      "validation_focus": ["inflation_shock", "commodity_expansion"],
+      "channels": [
+        { "channel_type": "website", "label": "Main site", "url": "https://en.macromicro.me" },
+        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:web@mg.macromicro.me" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "stockunlocked",
+      "name": "Stock Unlocked",
+      "source_type": "newsletter",
+      "author": "Stock Unlocked",
+      "priority": "core",
+      "trust_weight": 0.75,
+      "market_focus": ["equities", "crypto", "geopolitics"],
+      "routing_tags": ["equities", "crypto", "geopolitics"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 168,
+      "research_style": "Trade-oriented weekly briefing covering crypto trades, stock picks, and macro/geopolitical context.",
+      "validation_focus": ["dovish_liquidity_wave", "war_escalation"],
+      "channels": [
+        { "channel_type": "website", "label": "Main site", "url": "https://stockunlocked.com" },
+        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:noreply@stockunlocked.com" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "realvision",
+      "name": "Real Vision",
+      "source_type": "newsletter",
+      "author": "Real Vision",
+      "priority": "core",
+      "trust_weight": 0.9,
+      "market_focus": ["macro", "rates", "equities", "commodities", "crypto"],
+      "routing_tags": ["macro", "rates", "equities", "commodities", "crypto"],
+      "fetch_cadence": "P1D",
+      "freshness_sla_hours": 72,
+      "research_style": "Interview-driven macro research with expert guests covering rates, equities, commodities, and crypto.",
+      "validation_focus": ["dovish_liquidity_wave", "inflation_shock", "commodity_expansion"],
+      "channels": [
+        { "channel_type": "website", "label": "Main site", "url": "https://realvision.com" },
+        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:info@realvision.com" },
+        { "channel_type": "youtube", "label": "YouTube", "url": "https://youtube.com/@RealVisionFinance" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "kaoboy_musings",
+      "name": "Kaoboy Musings",
+      "source_type": "newsletter",
+      "author": "Michael Kao",
+      "priority": "core",
+      "trust_weight": 0.85,
+      "market_focus": ["macro", "commodities", "rates", "geopolitics"],
+      "routing_tags": ["macro", "commodities", "rates", "geopolitics", "energy"],
+      "fetch_cadence": "P3D",
+      "freshness_sla_hours": 168,
+      "research_style": "Macro-commodity cross-asset analysis with emphasis on energy, rates, and geopolitical risk.",
+      "validation_focus": ["commodity_expansion", "war_escalation", "inflation_shock"],
+      "channels": [
+        { "channel_type": "substack", "label": "Substack", "url": "https://urbankaoboy.substack.com" },
+        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:urbankaoboy@substack.com" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "doomberg",
+      "name": "Doomberg",
+      "source_type": "newsletter",
+      "author": "Doomberg",
+      "priority": "core",
+      "trust_weight": 0.85,
+      "market_focus": ["commodities", "energy", "macro"],
+      "routing_tags": ["commodities", "energy", "macro"],
+      "fetch_cadence": "P3D",
+      "freshness_sla_hours": 168,
+      "research_style": "Commodity-focused macro analysis, especially energy, with contrarian and evidence-based framing.",
+      "validation_focus": ["commodity_expansion", "war_escalation", "inflation_shock"],
+      "channels": [
+        { "channel_type": "substack", "label": "Substack", "url": "https://doomberg.substack.com" },
+        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:doomberg@substack.com" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "qtr_fringe",
+      "name": "QTR's Fringe Finance",
+      "source_type": "newsletter",
+      "author": "Quoth the Raven",
+      "priority": "secondary",
+      "trust_weight": 0.7,
+      "market_focus": ["macro", "equities", "contrarian"],
+      "routing_tags": ["macro", "equities"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 240,
+      "research_style": "Contrarian macro and equity analysis with focus on overlooked risks and narrative challenges.",
+      "validation_focus": ["broad_panic", "growth_scare"],
+      "channels": [
+        { "channel_type": "substack", "label": "Substack", "url": "https://quoththeraven.substack.com" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "bitcoin_layer",
+      "name": "The Bitcoin Layer",
+      "source_type": "newsletter",
+      "author": "The Bitcoin Layer",
+      "priority": "secondary",
+      "trust_weight": 0.7,
+      "market_focus": ["crypto", "macro", "rates"],
+      "routing_tags": ["crypto", "macro", "rates"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 240,
+      "research_style": "Bitcoin-centric macro analysis connecting monetary policy, rates, and crypto markets.",
+      "validation_focus": ["dovish_liquidity_wave", "monetary_debasement_hard_asset"],
+      "channels": [
+        { "channel_type": "substack", "label": "Substack", "url": "https://thebitcoinlayer.substack.com" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "deepvalue_capital",
+      "name": "DeepValue Capital",
+      "source_type": "newsletter",
+      "author": "Kyler Johnson",
+      "priority": "secondary",
+      "trust_weight": 0.65,
+      "market_focus": ["equities", "value"],
+      "routing_tags": ["equities"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 240,
+      "research_style": "Bottom-up value investing with focus on undervalued equities.",
+      "validation_focus": ["growth_scare", "broad_panic"],
+      "channels": [
+        { "channel_type": "substack", "label": "Substack", "url": "https://deepvaluecapitalbykyler.substack.com" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+
+    {
+      "source_id": "forward_guidance",
+      "name": "Forward Guidance",
+      "source_type": "podcast",
+      "author": "Jack Farley",
+      "priority": "core",
+      "trust_weight": 0.85,
+      "market_focus": ["macro", "rates", "liquidity", "fx"],
+      "routing_tags": ["macro", "rates", "liquidity", "fx"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 168,
+      "transcription_mode": "full",
+      "research_style": "Long-form macro interviews. User favorite. Full transcription enabled.",
+      "validation_focus": ["dovish_liquidity_wave", "growth_scare", "inflation_shock"],
+      "channels": [
+        { "channel_type": "podcast_rss", "label": "RSS", "url": "https://feeds.megaphone.fm/forwardguidance" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "wolf_of_all_streets",
+      "name": "The Wolf of All Streets",
+      "source_type": "podcast",
+      "author": "Scott Melker",
+      "priority": "core",
+      "trust_weight": 0.7,
+      "market_focus": ["crypto", "macro", "equities"],
+      "routing_tags": ["crypto", "macro", "equities"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 168,
+      "transcription_mode": "full",
+      "research_style": "Daily crypto + macro show. Full transcription enabled.",
+      "validation_focus": ["dovish_liquidity_wave", "broad_panic"],
+      "channels": [
+        { "channel_type": "podcast_rss", "label": "RSS", "url": "https://feeds.megaphone.fm/wolfofallstreets" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "real_vision_journeyman",
+      "name": "Real Vision: The Journey Man",
+      "source_type": "podcast",
+      "author": "Raoul Pal",
+      "priority": "core",
+      "trust_weight": 0.8,
+      "market_focus": ["macro", "crypto", "equities"],
+      "routing_tags": ["macro", "crypto", "equities"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 168,
+      "transcription_mode": "full",
+      "research_style": "Cycle / liquidity-focused macro by Raoul Pal. Full transcription enabled.",
+      "validation_focus": ["dovish_liquidity_wave", "monetary_debasement_hard_asset"],
+      "channels": [
+        { "channel_type": "podcast_rss", "label": "RSS", "url": "https://feeds.megaphone.fm/realvisioncryptopodcast" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "moonshots_diamandis",
+      "name": "Moonshots with Peter Diamandis",
+      "source_type": "podcast",
+      "author": "Peter Diamandis",
+      "priority": "secondary",
+      "trust_weight": 0.55,
+      "market_focus": ["ai", "tech", "future_trends"],
+      "routing_tags": ["ai", "tech"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 336,
+      "transcription_mode": "show_notes_only",
+      "research_style": "AI/futurist focus. Light direct macro influence. Show notes only.",
+      "validation_focus": ["dovish_liquidity_wave"],
+      "channels": [
+        { "channel_type": "podcast_rss", "label": "RSS", "url": "https://feeds.megaphone.fm/DVVTS2890392624" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+
+    {
+      "source_id": "blockworks_breakdown",
+      "name": "Blockworks: The Breakdown",
+      "source_type": "newsletter",
+      "author": "Blockworks",
+      "priority": "secondary",
+      "trust_weight": 0.7,
+      "market_focus": ["crypto", "macro"],
+      "routing_tags": ["crypto", "macro"],
+      "fetch_cadence": "P1D",
+      "freshness_sla_hours": 72,
+      "research_style": "Daily crypto/macro breakdown. Source defined in gmail_connector.py — to be migrated here.",
+      "validation_focus": ["dovish_liquidity_wave"],
+      "channels": [
+        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:newsletter@blockworks.co" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "weekly_wizdom",
+      "name": "Weekly Wizdom",
+      "source_type": "newsletter",
+      "author": "Weekly Wizdom",
+      "priority": "secondary",
+      "trust_weight": 0.65,
+      "market_focus": ["macro", "equities"],
+      "routing_tags": ["macro", "equities"],
+      "fetch_cadence": "P1W",
+      "freshness_sla_hours": 240,
+      "research_style": "Weekly macro/equities digest. Source defined in gmail_connector.py — to be migrated here.",
+      "validation_focus": ["growth_scare"],
+      "channels": [
+        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:weeklywizdom" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+
+    {
+      "source_id": "fred",
+      "name": "FRED Economic Data",
+      "source_type": "api",
+      "author": "St. Louis Fed",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "market_focus": ["macro", "rates", "inflation", "growth", "labor", "credit"],
+      "routing_tags": ["macro", "rates", "inflation", "growth", "labor", "credit", "liquidity"],
+      "fetch_cadence": "P1D",
+      "freshness_sla_hours": 48,
+      "research_style": "Authoritative time-series data. Used by momentum module + regime classifier.",
+      "validation_focus": ["all"],
+      "channels": [
+        { "channel_type": "api", "label": "FRED API", "url": "https://api.stlouisfed.org/fred" }
+      ],
+      "onboarded_at": "2026-04-05",
+      "archived_at": null
+    },
+    {
+      "source_id": "finnhub",
+      "name": "Finnhub News + Sentiment",
+      "source_type": "api",
+      "author": "Finnhub",
+      "priority": "core",
+      "trust_weight": 0.6,
+      "market_focus": ["equities", "ticker_news", "sentiment"],
+      "routing_tags": ["equities", "sentiment"],
+      "fetch_cadence": "PT1H",
+      "freshness_sla_hours": 12,
+      "research_style": "Per-ticker news + aggregated sentiment. High volume, mixed quality.",
+      "validation_focus": ["dovish_liquidity_wave", "broad_panic"],
+      "channels": [
+        { "channel_type": "api", "label": "Finnhub API", "url": "https://finnhub.io/api/v1" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+    {
+      "source_id": "google_news_macro",
+      "name": "Google News RSS (Macro Topics)",
+      "source_type": "rss",
+      "author": "Google News",
+      "priority": "secondary",
+      "trust_weight": 0.4,
+      "market_focus": ["macro", "headlines"],
+      "routing_tags": ["macro", "headlines"],
+      "fetch_cadence": "PT2H",
+      "freshness_sla_hours": 24,
+      "research_style": "Broad headline aggregation. Noisy. Useful for catching big surprises early.",
+      "validation_focus": ["broad_panic", "war_escalation"],
+      "channels": [
+        { "channel_type": "rss", "label": "Google News query feeds", "url": "https://news.google.com/rss/search" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    },
+
+    {
+      "source_id": "manual_notes",
+      "name": "User Manual Notes",
+      "source_type": "manual_notes",
+      "author": "Thomas R. Lindsey",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "market_focus": ["all"],
+      "routing_tags": ["manual", "high_priority"],
+      "fetch_cadence": "manual",
+      "freshness_sla_hours": null,
+      "research_style": "User's own notes; treated as authoritative input to brain.",
+      "validation_focus": ["all"],
+      "channels": [
+        { "channel_type": "cli", "label": "macro-positioning text", "url": "cli" }
+      ],
+      "onboarded_at": "2026-04-05",
+      "archived_at": null
+    },
+    {
+      "source_id": "chart_screenshots",
+      "name": "Chart Screenshots",
+      "source_type": "chart",
+      "author": "Thomas R. Lindsey",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "market_focus": ["technical"],
+      "routing_tags": ["chart", "technical", "vision"],
+      "fetch_cadence": "manual",
+      "freshness_sla_hours": null,
+      "research_style": "User-uploaded chart images; routed to chart_vision agent.",
+      "validation_focus": ["all"],
+      "channels": [
+        { "channel_type": "upload", "label": "Dashboard chart upload widget", "url": "/charts/analyze" }
+      ],
+      "onboarded_at": "2026-04-19",
+      "archived_at": null
+    }
+  ]
+}

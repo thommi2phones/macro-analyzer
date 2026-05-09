@@ -1,20 +1,35 @@
-"""FastAPI router for dashboard endpoints.
+"""FastAPI router for dashboard JSON APIs + legacy HTML route redirects.
 
-Routes:
-  /                           redirect → /terminal
-  /terminal                   platform hub (module launcher)
-  /positioning                macro output (operator primary)
-  /tactical                   tactical-executor inspection (read-only)
-  /dev                        builder/ops status
-  /guide                      platform reference
+The old per-view HTML pages (positioning, dev, tactical, terminal,
+guide) have been replaced by the single SPA at /web/index.html
+(Claude Design output). This router still exposes the JSON APIs the
+old dashboards used; those data feeds back the new SPA via
+`dashboard/desk_routes.py` and remain useful for programmatic access.
 
-JSON APIs at /api/dashboard/*.
+Old route → new behavior:
+  /                  → 307 → /web/index.html
+  /terminal          → 307 → /web/index.html
+  /positioning       → 307 → /web/index.html
+  /tactical          → 307 → /web/index.html
+  /dev               → 307 → /web/index.html
+  /guide             → 307 → /web/index.html
+  /dashboard         → 307 → /web/index.html (legacy)
+  /dashboard/ops     → 307 → /web/index.html (legacy)
+  /dashboard/command-center → 307 → /web/index.html (legacy)
+
+JSON APIs preserved (used by the SPA + external):
+  /api/dashboard/ops
+  /api/dashboard/command-center
+  /api/dashboard/tactical-state
+  /api/dashboard/mgmt
+  /api/checklist  + PATCH
+  /api/dashboard/brain/*  (registered by brain_panel sub-router)
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from macro_positioning.dashboard.brain_panel import router as brain_panel_router
 from macro_positioning.dashboard.checklist import (
@@ -24,20 +39,16 @@ from macro_positioning.dashboard.checklist import (
     toggle_item,
 )
 from macro_positioning.dashboard.command_data import CommandCenterSnapshot, build_command_snapshot
-from macro_positioning.dashboard.dev_ui import dev_dashboard_html
-from macro_positioning.dashboard.guide_ui import guide_dashboard_html
 from macro_positioning.dashboard.mgmt_data import MgmtSnapshot, build_mgmt_snapshot
 from macro_positioning.dashboard.ops_data import OpsSnapshot, build_ops_snapshot
-from macro_positioning.dashboard.output_ui import positioning_dashboard_html
-from macro_positioning.dashboard.tactical_ui import tactical_dashboard_html
-from macro_positioning.dashboard.terminal_hub import terminal_hub_html
 from macro_positioning.integration import tactical_client
+
 
 router = APIRouter()
 router.include_router(brain_panel_router)
 
 
-# ---- JSON data APIs --------------------------------------------------------
+# ---- JSON data APIs (preserved) -------------------------------------------
 
 @router.get("/api/dashboard/ops", response_model=OpsSnapshot)
 def ops_data() -> OpsSnapshot:
@@ -75,51 +86,54 @@ def patch_checklist_item(item_id: str, status: str | None = None) -> JSONRespons
     return JSONResponse(content=item.model_dump())
 
 
-# ---- HTML dashboards -------------------------------------------------------
+# ---- Legacy HTML route redirects ------------------------------------------
+# Every old per-view URL now lands on the SPA. The SPA's internal tab
+# state determines what shows; deep-linking to a specific view via URL
+# can be added later via hash routing in the SPA.
 
-@router.get("/terminal", response_class=HTMLResponse)
-def terminal_hub() -> HTMLResponse:
-    """Platform hub — module launcher."""
-    return HTMLResponse(content=terminal_hub_html())
-
-
-@router.get("/positioning", response_class=HTMLResponse)
-def positioning_dashboard() -> HTMLResponse:
-    return HTMLResponse(content=positioning_dashboard_html())
-
-
-@router.get("/tactical", response_class=HTMLResponse)
-def tactical_dashboard() -> HTMLResponse:
-    return HTMLResponse(content=tactical_dashboard_html())
-
-
-@router.get("/dev", response_class=HTMLResponse)
-def dev_dashboard() -> HTMLResponse:
-    return HTMLResponse(content=dev_dashboard_html())
-
-
-@router.get("/guide", response_class=HTMLResponse)
-def guide_dashboard() -> HTMLResponse:
-    return HTMLResponse(content=guide_dashboard_html())
+_SPA = "/web/index.html"
 
 
 @router.get("/")
 def root_redirect() -> RedirectResponse:
-    return RedirectResponse(url="/terminal", status_code=307)
+    return RedirectResponse(url=_SPA, status_code=307)
 
 
-# ---- Legacy redirects (keep old URLs working) ------------------------------
+@router.get("/terminal")
+def legacy_terminal() -> RedirectResponse:
+    return RedirectResponse(url=_SPA, status_code=307)
+
+
+@router.get("/positioning")
+def legacy_positioning() -> RedirectResponse:
+    return RedirectResponse(url=_SPA, status_code=307)
+
+
+@router.get("/tactical")
+def legacy_tactical() -> RedirectResponse:
+    return RedirectResponse(url=_SPA, status_code=307)
+
+
+@router.get("/dev")
+def legacy_dev() -> RedirectResponse:
+    return RedirectResponse(url=_SPA, status_code=307)
+
+
+@router.get("/guide")
+def legacy_guide() -> RedirectResponse:
+    return RedirectResponse(url=_SPA, status_code=307)
+
 
 @router.get("/dashboard")
-def dashboard_redirect() -> RedirectResponse:
-    return RedirectResponse(url="/terminal", status_code=307)
+def legacy_dashboard() -> RedirectResponse:
+    return RedirectResponse(url=_SPA, status_code=307)
 
 
 @router.get("/dashboard/ops")
-def legacy_ops() -> RedirectResponse:
-    return RedirectResponse(url="/dev", status_code=307)
+def legacy_dashboard_ops() -> RedirectResponse:
+    return RedirectResponse(url=_SPA, status_code=307)
 
 
 @router.get("/dashboard/command-center")
-def legacy_command_center() -> RedirectResponse:
-    return RedirectResponse(url="/positioning", status_code=307)
+def legacy_dashboard_cc() -> RedirectResponse:
+    return RedirectResponse(url=_SPA, status_code=307)

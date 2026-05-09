@@ -3,10 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from macro_positioning.core.models import PipelineRunRequest, PipelineRunResult, PositioningMemo, SourceOnboardingRequest, Thesis
 from macro_positioning.core.settings import settings
+from macro_positioning.dashboard.desk_routes import router as desk_router
 from macro_positioning.dashboard.router import router as dashboard_router
 from macro_positioning.integration.endpoints import router as integration_router
 from macro_positioning.db.repository import SQLiteRepository
@@ -16,11 +19,34 @@ from macro_positioning.pipelines.run_pipeline import build_pipeline
 from macro_positioning.services.framework import default_credential_requirements, onboarding_template
 
 app = FastAPI(title="Macro Positioning Analyzer", version="0.1.0")
+
+# Desk routes (dynamic /web/data.js + /api/desk/data) MUST register
+# BEFORE the StaticFiles mount so they take precedence over the static
+# data.mock.js fallback.
+app.include_router(desk_router)
 app.include_router(dashboard_router)
 app.include_router(integration_router)
 
 initialize_database(settings.sqlite_path)
 repository = SQLiteRepository(settings.sqlite_path)
+
+
+# ---------------------------------------------------------------------------
+# Static SPA mount (Claude Design output)
+# ---------------------------------------------------------------------------
+# Serves web/index.html, *.jsx, styles.css, etc. Dynamic /web/data.js is
+# handled by desk_router above and shadows the static fallback at
+# web/data.mock.js. SPA reads `window.MA_DATA` on first paint.
+_WEB_DIR = settings.base_dir / "web"
+if _WEB_DIR.is_dir():
+    app.mount("/web", StaticFiles(directory=_WEB_DIR, html=True), name="web")
+
+
+# Convenience root → SPA. Old per-view routes (/positioning, /dev, etc)
+# are 307-redirected here too via dashboard/router.py.
+@app.get("/desk")
+def desk_root_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/web/index.html", status_code=307)
 
 
 @app.get("/health")

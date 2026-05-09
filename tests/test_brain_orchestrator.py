@@ -77,18 +77,26 @@ def test_compose_reasoning_trail_has_feature_vector():
     assert "psychological_execution_quality._value" in fv
 
 
-def test_compose_reasoning_trail_lists_stub_components():
+def test_compose_reasoning_trail_no_stub_scorers_remaining():
+    """All four formerly-stubbed heuristic scorers (volume_flow,
+    sector_theme, relative_strength, liquidity_alignment) shipped in
+    this PR. The reasoning_trail.stub_components array should now be
+    empty for a setup that has the corresponding feature buckets
+    populated (and even an empty setup just gets neutral 0.5 from each
+    scorer with a 'not mapped' / 'Insufficient' note — never the word
+    'stub').
+    """
     setup = _full_psych_setup(regime=classify_regime_stub())
     result = compose(setup)
     stubs = result.reasoning_trail["stub_components"]
-    # Remaining stubs after technical_structure went real (Phase 6c):
-    # liquidity, sector_theme, volume_flow, relative_strength.
-    assert "liquidity_alignment" in stubs
-    assert "sector_theme_strength" in stubs
-    assert "volume_flow_confirmation" in stubs
-    assert "relative_strength" in stubs
-    # technical_structure is no longer a stub (real heuristic now)
-    assert "technical_structure" not in stubs
+    for name in (
+        "liquidity_alignment",
+        "sector_theme_strength",
+        "volume_flow_confirmation",
+        "relative_strength",
+        "technical_structure",
+    ):
+        assert name not in stubs
 
 
 def test_compose_grade_threshold_alignment():

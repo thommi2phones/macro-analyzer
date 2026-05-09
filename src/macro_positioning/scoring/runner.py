@@ -32,7 +32,11 @@ from pydantic import BaseModel, Field
 from macro_positioning.core.settings import settings
 from macro_positioning.db.schema import initialize_database
 from macro_positioning.prices.fetcher import load_recent_prices
-from macro_positioning.prices.technicals import compute_technical_features
+from macro_positioning.prices.technicals import (
+    compute_technical_features,
+    compute_volume_features,
+)
+from macro_positioning.scoring.mention_extractor import count_mentions
 from macro_positioning.scoring.watchlist_resolver import (
     ResolvedWatchlist,
     WatchlistEntry,
@@ -68,6 +72,112 @@ class ScoringRunSummary(BaseModel):
 def _connect() -> sqlite3.Connection:
     initialize_database(settings.sqlite_path)
     return sqlite3.connect(settings.sqlite_path)
+
+
+# ---------------------------------------------------------------------------
+# Heuristic-scorer feature preloaders (one network/disk read per pass,
+# results cached on the runner object so each ticker's SetupContext can
+# pull instantly).
+# ---------------------------------------------------------------------------
+
+_BULLISH_FRAMEWORK_REGIMES = {
+    "risk_on_expansion",
+    "commodity_led_inflation",
+    "monetary_debasement_hard_asset",
+}
+
+
+def _load_benchmarks_config() -> dict:
+    """Load config/benchmarks.json. Falls back to a default mapping
+    if the file is missing (keeps tests/dev environments quiet)."""
+    cfg_path = settings.base_dir / "config" / "benchmarks.json"
+    try:
+        with cfg_path.open() as f:
+            return json.load(f)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {"default": "SPY", "by_asset_class": {}}
+
+
+def _load_asset_themes_config() -> dict:
+    cfg_path = settings.base_dir / "config" / "asset_themes.json"
+    try:
+        with cfg_path.open() as f:
+            return json.load(f)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {"themes": {}}
+
+
+def _build_ticker_to_themes(asset_themes_cfg: dict) -> dict[str, list[str]]:
+    """Reverse-index theme config so we can ask 'what themes is URA in?'"""
+    out: dict[str, list[str]] = {}
+    themes = asset_themes_cfg.get("themes", {})
+    for theme_key, theme_def in themes.items():
+        for ticker in theme_def.get("watchlist_tickers", []) or []:
+            out.setdefault(ticker.upper(), []).append(theme_key)
+    return out
+
+
+def _build_theme_signals(
+    docs: list[dict],
+    asset_themes_cfg: dict,
+    *,
+    window_days: int = 30,
+) -> tuple[dict[str, float], float]:
+    """Aggregate weighted mentions per theme. Returns (signals, scale).
+
+    `scale` = 75th percentile of theme scores so the sector_theme scorer
+    can normalize. Falls back to max(scores) when only a few themes are
+    populated.
+    """
+    try:
+        wm = count_mentions(docs, window_days=window_days)
+    except Exception:
+        return {}, 0.0
+
+    weighted_by_ticker: dict[str, float] = {
+        c.ticker.upper(): float(c.weighted_score)
+        for c in getattr(wm, "counts", [])
+    }
+
+    theme_scores: dict[str, float] = {}
+    for theme_key, theme_def in asset_themes_cfg.get("themes", {}).items():
+        s = 0.0
+        for tk in theme_def.get("watchlist_tickers", []) or []:
+            s += weighted_by_ticker.get(tk.upper(), 0.0)
+        theme_scores[theme_key] = s
+
+    scores_sorted = sorted(theme_scores.values())
+    if not scores_sorted or all(v == 0 for v in scores_sorted):
+        scale = 0.0
+    else:
+        # 75th percentile
+        idx = int(0.75 * (len(scores_sorted) - 1))
+        scale = scores_sorted[idx] or max(scores_sorted)
+    return theme_scores, scale
+
+
+def _benchmark_for(asset_class: str, benchmarks_cfg: dict) -> str:
+    by_class = benchmarks_cfg.get("by_asset_class", {})
+    return by_class.get(asset_class) or benchmarks_cfg.get("default") or "SPY"
+
+
+def _preload_benchmark_returns(
+    benchmark_tickers: set[str],
+    conn: sqlite3.Connection,
+) -> dict[str, float]:
+    """Fetch each benchmark's 20d % return once. Missing data → omitted."""
+    out: dict[str, float] = {}
+    for bt in benchmark_tickers:
+        try:
+            bars = load_recent_prices(bt, days=60, conn=conn)
+            if len(bars) >= 21:
+                last = bars[-1].close
+                prior = bars[-21].close
+                if prior:
+                    out[bt] = (last - prior) / prior
+        except Exception:
+            continue
+    return out
 
 
 def _load_recent_documents(conn: sqlite3.Connection, since_days: int = 90) -> list[dict]:
@@ -226,12 +336,44 @@ def run_scoring_pass(
         # Mixing reads + writes inside a single BEGIN can deadlock when
         # helpers open their own connections (see prices/fetcher.py).
         ticker_features: dict[str, dict] = {}
+        ticker_volume_features: dict[str, dict] = {}
+        ticker_returns_20d: dict[str, float] = {}
         for entry in resolved.entries:
             try:
                 bars = load_recent_prices(entry.ticker, days=200, conn=conn)
                 ticker_features[entry.ticker] = compute_technical_features(bars)
-            except Exception as exc:
+                ticker_volume_features[entry.ticker] = compute_volume_features(bars)
+                if len(bars) >= 21 and bars[-21].close:
+                    ticker_returns_20d[entry.ticker] = (
+                        bars[-1].close - bars[-21].close
+                    ) / bars[-21].close
+            except Exception:
                 ticker_features[entry.ticker] = {"n_bars": 0}
+                ticker_volume_features[entry.ticker] = {"n_volume_bars": 0}
+
+        # Theme rollup (one pass over docs)
+        asset_themes_cfg = _load_asset_themes_config()
+        theme_signals, theme_scale = _build_theme_signals(recent_docs, asset_themes_cfg)
+        ticker_to_themes = _build_ticker_to_themes(asset_themes_cfg)
+
+        # Benchmarks (preload returns once per benchmark ticker)
+        benchmarks_cfg = _load_benchmarks_config()
+        needed_benchmarks = {
+            _benchmark_for(e.asset_class or "equity", benchmarks_cfg)
+            for e in resolved.entries
+        }
+        benchmark_returns = _preload_benchmark_returns(needed_benchmarks, conn)
+
+        # Liquidity snapshot — FCI series not persisted in this repo's
+        # SQLite yet (fred_provider returns latest-only, no history).
+        # Pass a "missing" payload; scorer falls back to 0.5 with note.
+        regime_bullish = regime.framework_regime in _BULLISH_FRAMEWORK_REGIMES
+        liquidity_payload = {
+            "nfci_latest": None,
+            "nfci_4w_change": None,
+            "regime_bullish": regime_bullish,
+            "source": "missing",
+        }
 
         # 5. Score each + persist
         errors: list[dict] = []
@@ -263,6 +405,21 @@ def run_scoring_pass(
                         stop_loss = None
                         target = None
 
+                    bench_ticker = _benchmark_for(
+                        entry.asset_class or "equity", benchmarks_cfg
+                    )
+                    rs_features = {
+                        "ticker_pct20d": ticker_returns_20d.get(entry.ticker),
+                        "benchmark_pct20d": benchmark_returns.get(bench_ticker),
+                        "benchmark_ticker": bench_ticker,
+                    }
+                    asset_themes = ticker_to_themes.get(entry.ticker.upper(), [])
+                    theme_payload = {
+                        "theme_signals": theme_signals,
+                        "asset_themes": asset_themes,
+                        "scale": theme_scale,
+                    }
+
                     setup = SetupContext(
                         setup_id=f"setup-{entry.ticker.lower()}-{run_id[:8]}",
                         asset_ticker=entry.ticker,
@@ -274,6 +431,12 @@ def run_scoring_pass(
                         target=target,
                         psychology_state={},
                         technical_features=feats,
+                        volume_features=ticker_volume_features.get(
+                            entry.ticker, {"n_volume_bars": 0}
+                        ),
+                        theme_signals=theme_payload,
+                        relative_strength_features=rs_features,
+                        liquidity_features=liquidity_payload,
                     )
                     score = compose(setup)
                     scored_count += 1

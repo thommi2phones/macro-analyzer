@@ -183,6 +183,28 @@ def recent_breakdown(lows: list[float], lookback: int = 20) -> bool:
 # Top-level: build a feature dict from a PriceBar list
 # ---------------------------------------------------------------------------
 
+def compute_volume_features(bars: list[PriceBar]) -> dict:
+    """Return a flat volume features dict the volume_flow_confirmation
+    scorer consumes. Volume bars with None are skipped (some sources
+    don't report volume for FX/indices).
+    """
+    vols = [b.volume for b in bars if b.volume is not None]
+    if not vols:
+        return {"n_volume_bars": 0}
+    closes = [b.close for b in bars]
+    last_5 = vols[-5:] if len(vols) >= 5 else vols
+    last_20 = vols[-20:] if len(vols) >= 20 else vols
+    vol_5d_avg = sum(last_5) / len(last_5)
+    vol_20d_avg = sum(last_20) / len(last_20)
+    pct5 = pct_change(closes, 5) if len(closes) >= 6 else None
+    return {
+        "n_volume_bars": len(vols),
+        "vol_5d_avg": vol_5d_avg,
+        "vol_20d_avg": vol_20d_avg,
+        "pct_change_5d": pct5,
+    }
+
+
 def compute_technical_features(bars: list[PriceBar]) -> dict:
     """Return a flat features dict the technical_scorer consumes.
 

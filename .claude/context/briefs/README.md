@@ -17,7 +17,8 @@ Each file in this directory is a self-contained kickoff prompt for a worker chat
 
 ## Briefs
 
-- [`heuristic-scorers.md`](heuristic-scorers.md) — volume_flow, sector_theme, relative_strength, liquidity_alignment scorers (no LLM cost)
+- [`heuristic-scorers.md`](heuristic-scorers.md) — volume_flow, sector_theme, relative_strength, liquidity_alignment scorers (no LLM cost) — SHIPPED
+- [`fred-history.md`](fred-history.md) — historical FRED persistence (`fred_observations` table, backfill CLI, NFCI 4w change wiring) — foundational for time-series consumers
 - [`ml-learning-loop.md`](ml-learning-loop.md) — source attribution, score-outcome correlation, retraining infra
 - [`llm-agents.md`](llm-agents.md) — regime_classifier + narrative_synthesizer wired to Gemini
 - [`manual-input.md`](manual-input.md) — drag-drop charts/text → chart_vision (already in flight; this is the refresh brief)

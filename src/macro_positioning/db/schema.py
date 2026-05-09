@@ -244,7 +244,10 @@ SCHEMA_STATEMENTS = [
         error_message TEXT,
         attributed_setup_id TEXT,
         attributed_trade_id TEXT,
-        attributed_outcome_pnl REAL
+        attributed_outcome_pnl REAL,
+        call_type TEXT,
+        quality_score REAL,
+        model_version TEXT
     )
     """,
     """
@@ -303,7 +306,70 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_prices_ticker_observed_desc
         ON prices (ticker, observed_at DESC)
     """,
+    # ─── LLM-agent outputs (regime + narrative) ──────────────────────────
+    # Persistent record of regime classifications and narrative snapshots.
+    # Each row references the agent_call_log row that produced it via call_id
+    # so we can reconstruct prompt/inputs for future fine-tuning.
+    """
+    CREATE TABLE IF NOT EXISTS regime_classifications (
+        classification_id TEXT PRIMARY KEY,
+        asof TEXT NOT NULL,
+        label TEXT NOT NULL,
+        confidence REAL,
+        rationale TEXT,
+        call_id TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_regime_classifications_asof
+        ON regime_classifications (asof DESC)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS narrative_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        asof TEXT NOT NULL,
+        bullets_json TEXT NOT NULL,
+        regime_label TEXT,
+        call_id TEXT,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_narrative_snapshots_asof
+        ON narrative_snapshots (asof DESC)
+    """,
 ]
+
+
+# Columns added to existing tables after their original CREATE TABLE shipped.
+# Each entry is (table, column, type) — applied via idempotent ALTER TABLE
+# in initialize_database() so existing DB files get the new columns without
+# drop/recreate. New DBs get them from the CREATE TABLE statements above
+# AND from the ALTER pass (which is a no-op on those because they exist).
+_ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("agent_call_log", "call_type", "TEXT"),
+    ("agent_call_log", "quality_score", "REAL"),
+    ("agent_call_log", "model_version", "TEXT"),
+]
+
+
+def _apply_added_columns(connection: sqlite3.Connection) -> None:
+    """Idempotently ALTER TABLE for columns added after the table first shipped.
+
+    SQLite has no IF NOT EXISTS clause for ALTER TABLE ADD COLUMN, so we
+    introspect existing columns via PRAGMA table_info and only ADD missing
+    ones. Safe to run on every initialize_database() call.
+    """
+    for table, column, col_type in _ADDED_COLUMNS:
+        existing = {
+            row[1]
+            for row in connection.execute(f"PRAGMA table_info({table})")
+        }
+        if column not in existing:
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"
+            )
 
 
 def _dedupe_existing_documents(connection: sqlite3.Connection) -> int:
@@ -354,4 +420,7 @@ def initialize_database(database_path: Path) -> None:
         _dedupe_existing_documents(connection)
         for statement in SCHEMA_STATEMENTS[1:]:
             connection.execute(statement)
+        # Apply column-add migrations for tables that existed before
+        # call_type / quality_score / model_version were introduced.
+        _apply_added_columns(connection)
         connection.commit()

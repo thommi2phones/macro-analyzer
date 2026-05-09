@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from macro_positioning.core.models import RawDocument
+from macro_positioning.core.settings import settings
+from macro_positioning.db.schema import initialize_database
 from macro_positioning.ingestion.rss_connector import ingest_feeds
 from macro_positioning.ingestion.sample_sources import sample_context, sample_documents
 from macro_positioning.ingestion.source_lifecycle import (
@@ -23,6 +25,13 @@ from macro_positioning.ingestion.source_lifecycle import (
     promote_source,
     retag_source,
     summarize_sources,
+)
+from macro_positioning.learning import (
+    attribution as learning_attribution,
+    mention_precision as learning_mention_precision,
+    score_outcome_correlation as learning_correlation,
+    signal_attribution as learning_signal_attribution,
+    signal_history as learning_signal_history,
 )
 from macro_positioning.pipelines.run_pipeline import build_pipeline
 from macro_positioning.prices.fetcher import fetch_and_persist as fetch_prices_persist
@@ -207,6 +216,79 @@ def cmd_score_run(args: argparse.Namespace) -> int:
     return 0 if not summary.errors else 1
 
 
+# ---------------------------------------------------------------------------
+# learning — read-side analytics over agent_call_log / source_outcomes / etc.
+# ---------------------------------------------------------------------------
+
+def _learning_connect():
+    import sqlite3
+    initialize_database(settings.sqlite_path)
+    return sqlite3.connect(settings.sqlite_path)
+
+
+def cmd_learning_attribution(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        rows = learning_attribution(conn, window_days=args.window)
+    finally:
+        conn.close()
+    print(_json.dumps(rows, indent=2))
+    return 0
+
+
+def cmd_learning_signals(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        horizons = tuple(args.horizons) if args.horizons else (7, 30, 90)
+        rows = learning_signal_attribution(conn, horizons=horizons)
+    finally:
+        conn.close()
+    print(_json.dumps(rows, indent=2))
+    return 0
+
+
+def cmd_learning_signal_history(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        rows = learning_signal_history(
+            conn, args.source_id, horizon=args.horizon, bucket=args.bucket
+        )
+    finally:
+        conn.close()
+    print(_json.dumps(rows, indent=2))
+    return 0
+
+
+def cmd_learning_correlation(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        result = learning_correlation(conn)
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_learning_mention_precision(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        result = learning_mention_precision(
+            conn,
+            k=args.k,
+            score_threshold=args.threshold,
+            horizon_days=args.horizon,
+        )
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="macro-positioning",
@@ -297,6 +379,54 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--dry-run", action="store_true", help="compute but don't persist to trade_scores")
     p_run.add_argument("--window", type=int, default=90, help="document lookback days for mention extraction")
     p_run.set_defaults(func=cmd_score_run)
+
+    # ---- learning -----------------------------------------------------------
+    p_learn = sub.add_parser("learning", help="read-side analytics over the data flywheel")
+    learn_sub = p_learn.add_subparsers(dest="learning_command", required=True)
+
+    p_attr = learn_sub.add_parser(
+        "attribution",
+        help="per-source closed-trade P&L (lens 1a) over a rolling window",
+    )
+    p_attr.add_argument("--window", type=int, default=30, help="rolling window in days (default 30)")
+    p_attr.set_defaults(func=cmd_learning_attribution)
+
+    p_sig = learn_sub.add_parser(
+        "signals",
+        help="per-source forward-return on every mention (lens 1b)",
+    )
+    p_sig.add_argument(
+        "--horizon",
+        dest="horizons",
+        type=int,
+        action="append",
+        help="repeatable: forward-return horizon in days (defaults to 7,30,90)",
+    )
+    p_sig.set_defaults(func=cmd_learning_signals)
+
+    p_hist = learn_sub.add_parser(
+        "signal-history",
+        help="time-series of one source's signal performance (monthly buckets)",
+    )
+    p_hist.add_argument("--source-id", required=True)
+    p_hist.add_argument("--horizon", type=int, default=30)
+    p_hist.add_argument("--bucket", default="month", choices=["month"])
+    p_hist.set_defaults(func=cmd_learning_signal_history)
+
+    p_corr = learn_sub.add_parser(
+        "correlation",
+        help="Spearman ρ between trade scores and realized P&L",
+    )
+    p_corr.set_defaults(func=cmd_learning_correlation)
+
+    p_mp = learn_sub.add_parser(
+        "mention-precision",
+        help="precision@k of mention-driven watchlist promotions",
+    )
+    p_mp.add_argument("--k", type=int, default=10)
+    p_mp.add_argument("--threshold", type=int, default=70, help="adjusted_total_score that counts as 'good'")
+    p_mp.add_argument("--horizon", type=int, default=30, help="horizon in days for the score-well check")
+    p_mp.set_defaults(func=cmd_learning_mention_precision)
 
     return parser
 

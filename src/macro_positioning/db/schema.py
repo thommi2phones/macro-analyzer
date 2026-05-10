@@ -303,6 +303,25 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_prices_ticker_observed_desc
         ON prices (ticker, observed_at DESC)
     """,
+    # ─── FRED historical observations ─────────────────────────────────────
+    # Append-only time series store for every catalogued FRED series.
+    # PK includes realtime_end so revision vintages don't collide; the
+    # default-vintage path uses '9999-12-31' so re-fetches stay idempotent.
+    """
+    CREATE TABLE IF NOT EXISTS fred_observations (
+        series_id        TEXT NOT NULL,
+        observation_date TEXT NOT NULL,
+        value            REAL NOT NULL,
+        realtime_start   TEXT,
+        realtime_end     TEXT NOT NULL DEFAULT '9999-12-31',
+        fetched_at       TEXT NOT NULL,
+        PRIMARY KEY (series_id, observation_date, realtime_end)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_fred_obs_series_date
+        ON fred_observations (series_id, observation_date DESC)
+    """,
 ]
 
 

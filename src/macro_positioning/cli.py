@@ -180,6 +180,71 @@ def cmd_prices_fetch(args: argparse.Namespace) -> int:
     return 0 if not result.failures else 1
 
 
+def cmd_fred_backfill(args: argparse.Namespace) -> int:
+    """Backfill maximum-available history for catalogued FRED series."""
+    import sqlite3
+    from macro_positioning.core.settings import settings
+    from macro_positioning.db.schema import initialize_database
+    from macro_positioning.market.fred_history import (
+        backfill_series,
+        latest_observation_date,
+    )
+    from macro_positioning.market.fred_provider import (
+        ALL_SERIES,
+        FREDMarketDataProvider,
+    )
+
+    initialize_database(settings.sqlite_path)
+    provider = FREDMarketDataProvider()
+
+    series_ids = list(args.series) if args.series else list(ALL_SERIES.keys())
+    start = args.start or "1900-01-01"
+
+    total = 0
+    populated = 0
+    failures: list[tuple[str, str]] = []
+
+    with sqlite3.connect(settings.sqlite_path) as conn:
+        for sid in series_ids:
+            try:
+                n = backfill_series(provider, conn, sid, start=start)
+                total += n
+                if n:
+                    populated += 1
+                latest = latest_observation_date(conn, sid)
+                print(f"  {sid:<18} {n:>7} rows  latest={latest}")
+            except Exception as e:
+                failures.append((sid, f"{type(e).__name__}: {e}"))
+                print(f"  {sid:<18} FAILED  {type(e).__name__}: {e}")
+
+    print(f"\nBackfill complete: {populated}/{len(series_ids)} series populated, {total} rows total")
+    if failures:
+        print(f"Failures: {len(failures)}")
+    return 0 if not failures else 1
+
+
+def cmd_fred_refresh(args: argparse.Namespace) -> int:
+    """Incremental refresh: last N days per series, idempotent."""
+    import sqlite3
+    from macro_positioning.core.settings import settings
+    from macro_positioning.db.schema import initialize_database
+    from macro_positioning.market.fred_history import incremental_refresh
+    from macro_positioning.market.fred_provider import (
+        ALL_SERIES,
+        FREDMarketDataProvider,
+    )
+
+    initialize_database(settings.sqlite_path)
+    provider = FREDMarketDataProvider()
+    with sqlite3.connect(settings.sqlite_path) as conn:
+        counts = incremental_refresh(
+            provider, conn, ALL_SERIES.keys(), window_days=args.days,
+        )
+    written = sum(counts.values())
+    print(f"Incremental refresh: {written} rows upserted across {len(counts)} series")
+    return 0
+
+
 def cmd_score_run(args: argparse.Namespace) -> int:
     """Run a scoring pass: resolve watchlist (anchors + themes + mentions),
     score each ticker via macro_brain orchestrator, persist to trade_scores.
@@ -287,6 +352,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_pf.add_argument("--ticker", action="append", default=None, help="repeatable: bare ticker (URA, BTC, DXY)")
     p_pf.add_argument("--days", type=int, default=200, help="history depth (default 200, enough for 200DMA)")
     p_pf.set_defaults(func=cmd_prices_fetch)
+
+    # ---- fred ---------------------------------------------------------------
+    p_fred = sub.add_parser("fred", help="FRED historical data ops")
+    fred_sub = p_fred.add_subparsers(dest="fred_command", required=True)
+
+    p_bf = fred_sub.add_parser("backfill", help="backfill full available history")
+    p_bf.add_argument("--series", action="append", default=None, help="repeatable: FRED series ID")
+    p_bf.add_argument("--start", default=None, help="observation_start (default 1900-01-01)")
+    p_bf.set_defaults(func=cmd_fred_backfill)
+
+    p_rf = fred_sub.add_parser("refresh", help="incremental last-N-days refresh")
+    p_rf.add_argument("--days", type=int, default=7, help="window days (default 7)")
+    p_rf.set_defaults(func=cmd_fred_refresh)
 
     # ---- scoring ------------------------------------------------------------
     p_score = sub.add_parser("score", help="run brain scoring against the active watchlist")

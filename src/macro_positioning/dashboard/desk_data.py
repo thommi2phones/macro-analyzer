@@ -77,6 +77,49 @@ _INDICATOR_FRED_SERIES = {
 }
 
 
+def _build_indicator_observations() -> tuple[list, bool]:
+    """Return (observations, used_db). DB-first: read latest values from
+    fred_observations and synthesise MarketObservation rows. On cold cache
+    (no rows) fall back to a live FRED HTTP fetch. SPA contract preserved
+    because the upstream classifiers only inspect metric/source/value.
+    """
+    import sqlite3 as _sqlite3
+    from macro_positioning.core.models import MarketObservation
+    from macro_positioning.core.settings import settings as _settings
+    from macro_positioning.db.schema import initialize_database
+    from macro_positioning.market.fred_history import latest_value
+
+    obs: list = []
+    try:
+        initialize_database(_settings.sqlite_path)
+        with _sqlite3.connect(_settings.sqlite_path) as conn:
+            for sid, (market, metric, unit) in _INDICATOR_FRED_SERIES.items():
+                v = latest_value(conn, sid)
+                if v is None:
+                    continue
+                obs.append(MarketObservation(
+                    observation_id=f"db-{sid}",
+                    market=market,
+                    metric=metric,
+                    value=f"{v} {unit}".strip(),
+                    interpretation=f"{metric}: {v} {unit}",
+                    source=f"FRED:{sid}",
+                ))
+        if obs:
+            return obs, True
+    except Exception:
+        import sys
+        print("[desk] DB-first indicator read failed; falling back to live FRED.", file=sys.stderr)
+
+    # Cold-cache fallback: live FRED HTTP fetch (original path).
+    try:
+        from macro_positioning.market.fred_provider import FREDMarketDataProvider
+        provider = FREDMarketDataProvider(series=_INDICATOR_FRED_SERIES, timeout=10.0)
+        return provider.gather(theses=[]), False
+    except Exception:
+        return [], False
+
+
 def _build_macro_indicators() -> dict | None:
     """Fetch FRED + COT data, run classifiers, return indicator strip dict.
 
@@ -88,7 +131,6 @@ def _build_macro_indicators() -> dict | None:
         return _INDICATORS_CACHE["data"]
 
     try:
-        from macro_positioning.market.fred_provider import FREDMarketDataProvider
         from macro_positioning.market.macro_indicators import (
             classify_growth_inflation_quadrant,
             compute_fci,
@@ -97,11 +139,19 @@ def _build_macro_indicators() -> dict | None:
         )
         from macro_positioning.market.cot_provider import fetch_cot_readings
 
-        provider = FREDMarketDataProvider(series=_INDICATOR_FRED_SERIES, timeout=10.0)
-        obs = provider.gather(theses=[])
+        obs, used_db = _build_indicator_observations()
+
+        if used_db:
+            # DB-first: pass conn to compute_fci for richer reads;
+            # synthesise observations for quadrant + EPU.
+            import sqlite3 as _sqlite3
+            from macro_positioning.core.settings import settings as _settings
+            with _sqlite3.connect(_settings.sqlite_path) as _conn:
+                fci = compute_fci(obs, conn=_conn)
+        else:
+            fci = compute_fci(obs)
 
         quadrant = classify_growth_inflation_quadrant(obs)
-        fci = compute_fci(obs)
         epu = compute_geopolitical_risk(obs)
 
         cot_readings = fetch_cot_readings()

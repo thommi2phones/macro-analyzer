@@ -380,6 +380,38 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_manual_chart_attachments_doc
         ON manual_chart_attachments (document_id, order_index)
     """,
+    # ─── Trade review feedback loop ──────────────────────────────────────
+    # One row per closed-trade review. Same 7-question framework every
+    # time so structured fields (thesis_validity, execution_scores, etc)
+    # accumulate into queryable signal that calibrates scorer + source
+    # weights. Free-text `lesson` + `free_form_notes` capture what the
+    # structure misses. JSON columns hold the multi-pick / multi-Likert
+    # answers without table-explosion.
+    """
+    CREATE TABLE IF NOT EXISTS trade_reviews (
+        review_id TEXT PRIMARY KEY,
+        trade_id TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        thesis_validity TEXT,                 -- enum: fully_right | right_outcome_wrong_reason | right_thesis_wrong_outcome | fully_wrong
+        sources_credited_json TEXT,           -- list of source_id (JSON array)
+        execution_scores_json TEXT,           -- {entry, stop, sizing, exit} each 1-5
+        setup_score_hindsight TEXT,           -- enum: over | right | under
+        surprise_factor_json TEXT,            -- list of enum: macro | sector | liquidity | idiosyncratic | none
+        surprise_note TEXT,
+        lesson TEXT,                          -- one-line, capped client-side at ~200 chars
+        would_retake TEXT,                    -- enum: yes | no | modified
+        free_form_notes TEXT,
+        FOREIGN KEY (trade_id) REFERENCES trades (trade_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_reviews_trade
+        ON trade_reviews (trade_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_reviews_completed
+        ON trade_reviews (completed_at DESC)
+    """,
 ]
 
 
@@ -400,6 +432,11 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # singular `attachment_path` column above stays populated with the
     # first image for back-compat with anything reading it directly.
     ("documents", "attachment_paths_json", "TEXT"),
+    # Trade-close review status. Drives the /journal pending-reviews
+    # queue: "closed_pending_review" rows pop up the framework
+    # questionnaire; "closed_reviewed" rows are done. NULL = legacy /
+    # not-yet-touched trades; keep them invisible to the queue.
+    ("trades", "review_status", "TEXT"),
 ]
 
 

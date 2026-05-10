@@ -273,6 +273,140 @@ def cmd_learning_correlation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _journal_connect():
+    import sqlite3
+    initialize_database(settings.sqlite_path)
+    return sqlite3.connect(settings.sqlite_path)
+
+
+def cmd_journal_pending(_: argparse.Namespace) -> int:
+    import json as _json
+    from macro_positioning.journal import repository as jrepo
+    conn = _journal_connect()
+    try:
+        rows = jrepo.list_pending(conn)
+    finally:
+        conn.close()
+    if not rows:
+        print("(no pending reviews)")
+        return 0
+    print(_json.dumps(rows, indent=2, default=str))
+    return 0
+
+
+def cmd_journal_close(args: argparse.Namespace) -> int:
+    from macro_positioning.journal import webhook as jwebhook
+    conn = _journal_connect()
+    try:
+        try:
+            result = jwebhook.receive_close_event(
+                conn,
+                trade_id=args.trade_id,
+                exit_date=args.exit_date,
+                exit_price=args.exit_price,
+                pnl=args.pnl,
+                pnl_percent=args.pnl_percent,
+                execution_notes=args.notes,
+            )
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"flipped {result['trade_id']} → {result['review_status']}")
+    return 0
+
+
+_THESIS_CHOICES = (
+    "fully_right",
+    "right_outcome_wrong_reason",
+    "right_thesis_wrong_outcome",
+    "fully_wrong",
+)
+_HINDSIGHT_CHOICES = ("over", "right", "under")
+_RETAKE_CHOICES = ("yes", "no", "modified")
+_SURPRISE_CHOICES = ("macro", "sector", "liquidity", "idiosyncratic", "none")
+
+
+def _prompt_choice(label: str, choices: tuple[str, ...]) -> str:
+    while True:
+        print(f"{label} [{'|'.join(choices)}]: ", end="", flush=True)
+        v = input().strip()
+        if v in choices:
+            return v
+        print(f"  pick one of: {', '.join(choices)}")
+
+
+def _prompt_int(label: str, lo: int, hi: int) -> int:
+    while True:
+        print(f"{label} [{lo}-{hi}]: ", end="", flush=True)
+        v = input().strip()
+        try:
+            n = int(v)
+        except ValueError:
+            print("  enter an integer")
+            continue
+        if lo <= n <= hi:
+            return n
+        print(f"  in range {lo}-{hi}")
+
+
+def _prompt_multi(label: str, choices: tuple[str, ...]) -> list[str]:
+    print(f"{label} (comma-separated, choices: {', '.join(choices)}): ", end="", flush=True)
+    raw = input().strip()
+    if not raw:
+        return []
+    picks = [p.strip() for p in raw.split(",") if p.strip()]
+    bad = [p for p in picks if p not in choices]
+    if bad:
+        print(f"  ignoring unknown: {bad}")
+    return [p for p in picks if p in choices]
+
+
+def cmd_journal_review(args: argparse.Namespace) -> int:
+    from macro_positioning.journal import feedback_writer as jfw, repository as jrepo
+    print(f"\n— Review trade {args.trade_id} —\n")
+    review = {
+        "thesis_validity": _prompt_choice("Q1 thesis validity", _THESIS_CHOICES),
+    }
+    print("Q2 sources_credited (comma-separated source_ids, or blank):")
+    raw = input().strip()
+    review["sources_credited"] = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
+    review["execution_scores"] = {
+        "entry": _prompt_int("Q3a entry quality", 1, 5),
+        "stop": _prompt_int("Q3b stop quality", 1, 5),
+        "sizing": _prompt_int("Q3c sizing quality", 1, 5),
+        "exit": _prompt_int("Q3d exit quality", 1, 5),
+    }
+    review["setup_score_hindsight"] = _prompt_choice("Q4 setup score in hindsight", _HINDSIGHT_CHOICES)
+    review["surprise_factor"] = _prompt_multi("Q5 surprise factors", _SURPRISE_CHOICES)
+    print("Q5b surprise note (optional, single line): ", end="", flush=True)
+    review["surprise_note"] = input().strip() or None
+    print("Q6 one-line lesson: ", end="", flush=True)
+    review["lesson"] = input().strip()[:240]
+    review["would_retake"] = _prompt_choice("Q7 would retake", _RETAKE_CHOICES)
+    review["free_form_notes"] = None
+
+    conn = _journal_connect()
+    try:
+        try:
+            review_id = jrepo.insert_review(conn, args.trade_id, review)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        feedback = jfw.apply_review_feedback(conn, args.trade_id, review)
+        conn.commit()
+    finally:
+        conn.close()
+    print(
+        f"\nsubmitted {review_id} · "
+        f"source_outcomes={feedback['source_outcomes_written']} · "
+        f"calibration_appended={feedback['calibration_appended']}"
+    )
+    return 0
+
+
 def cmd_learning_mention_precision(args: argparse.Namespace) -> int:
     import json as _json
     conn = _learning_connect()
@@ -427,6 +561,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_mp.add_argument("--threshold", type=int, default=70, help="adjusted_total_score that counts as 'good'")
     p_mp.add_argument("--horizon", type=int, default=30, help="horizon in days for the score-well check")
     p_mp.set_defaults(func=cmd_learning_mention_precision)
+
+    # ---- journal ------------------------------------------------------------
+    p_journal = sub.add_parser(
+        "journal",
+        help="closed-trade review: list pending, mark closed, submit review",
+    )
+    journal_sub = p_journal.add_subparsers(dest="journal_command", required=True)
+
+    p_jp = journal_sub.add_parser("pending", help="list trades awaiting review")
+    p_jp.set_defaults(func=cmd_journal_pending)
+
+    p_jc = journal_sub.add_parser("close", help="flip a trade to closed_pending_review")
+    p_jc.add_argument("trade_id")
+    p_jc.add_argument("--exit-date", default=None)
+    p_jc.add_argument("--exit-price", type=float, default=None)
+    p_jc.add_argument("--pnl", type=float, default=None)
+    p_jc.add_argument("--pnl-percent", type=float, default=None)
+    p_jc.add_argument("--notes", default=None)
+    p_jc.set_defaults(func=cmd_journal_close)
+
+    p_jr = journal_sub.add_parser(
+        "review",
+        help="interactively answer the 7 questions and submit the review",
+    )
+    p_jr.add_argument("trade_id")
+    p_jr.set_defaults(func=cmd_journal_review)
 
     return parser
 

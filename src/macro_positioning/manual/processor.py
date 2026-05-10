@@ -116,7 +116,13 @@ def ingest(payload: ManualInputPayload) -> IngestResponse:
     tags = _ensure_manual_tag(detect_tags(text))
     meta = _autofill_metadata(payload.metadata, text, tickers)
 
-    pending_vision = bool(payload.attachment_path)
+    # Normalize: treat the singular path as the first of the list when
+    # only the single-file API surface was used.
+    attachment_paths = list(payload.attachment_paths)
+    if not attachment_paths and payload.attachment_path:
+        attachment_paths = [payload.attachment_path]
+    primary_path = attachment_paths[0] if attachment_paths else None
+    pending_vision = bool(attachment_paths)
     if pending_vision:
         tags.add("chart")
         tags.add("vision")
@@ -155,8 +161,8 @@ def ingest(payload: ManualInputPayload) -> IngestResponse:
                 document_id, source_id, title, url, published_at, author,
                 content_type, raw_text, cleaned_text, tags_json, ingested_at,
                 author_id, user_metadata_json, attachment_path,
-                extracted_features_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                extracted_features_json, attachment_paths_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 document_id,
@@ -172,8 +178,9 @@ def ingest(payload: ManualInputPayload) -> IngestResponse:
                 now,                        # ingested_at
                 author_id,
                 json.dumps(user_meta_payload),
-                payload.attachment_path,
+                primary_path,
                 None,                       # extracted_features_json — Piece 2 fills
+                json.dumps(attachment_paths) if attachment_paths else None,
             ),
         )
         connection.commit()
@@ -196,7 +203,8 @@ def list_recent_inputs(limit: int = 50) -> list[dict]:
         rows = connection.execute(
             """
             SELECT document_id, source_id, title, content_type, ingested_at,
-                   author_id, attachment_path, user_metadata_json, tags_json
+                   author_id, attachment_path, attachment_paths_json,
+                   user_metadata_json, tags_json
             FROM documents
             WHERE source_id LIKE 'manual:%'
             ORDER BY ingested_at DESC
@@ -215,6 +223,15 @@ def list_recent_inputs(limit: int = 50) -> list[dict]:
             d["tags"] = json.loads(d.pop("tags_json") or "{}")
         except json.JSONDecodeError:
             d["tags"] = {}
+        # Hydrate the multi-image list. Older rows that predate
+        # attachment_paths_json fall back to the singular attachment_path.
+        try:
+            paths = json.loads(d.pop("attachment_paths_json") or "[]")
+        except json.JSONDecodeError:
+            paths = []
+        if not paths and d.get("attachment_path"):
+            paths = [d["attachment_path"]]
+        d["attachment_paths"] = paths
         out.append(d)
     return out
 

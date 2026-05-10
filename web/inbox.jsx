@@ -23,9 +23,9 @@ function Inbox() {
   const [channel, setChannel] = useIS("");
   const [channelType, setChannelType] = useIS("self");
 
-  // Image state — File object plus an object URL for preview
-  const [file, setFile] = useIS(null);
-  const [filePreview, setFilePreview] = useIS(null);
+  // Image state — list of {file, url} so a single drop can carry several
+  // chart views (e.g. 1H + 4H + context). Append on drop/paste/picker.
+  const [images, setImages] = useIS([]);
   const dropRef = useIR(null);
 
   // Async state
@@ -50,32 +50,43 @@ function Inbox() {
   useIE(() => {
     function onPaste(e) {
       const items = e.clipboardData?.items || [];
+      const fresh = [];
       for (const it of items) {
         if (it.type && it.type.startsWith("image/")) {
           const f = it.getAsFile();
-          if (f) attachFile(f);
-          break;
+          if (f) fresh.push(f);
         }
       }
+      if (fresh.length) attachFiles(fresh);
     }
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
   }, []);
 
-  function attachFile(f) {
-    setFile(f);
-    if (filePreview) URL.revokeObjectURL(filePreview);
-    setFilePreview(URL.createObjectURL(f));
+  function attachFiles(fs) {
+    const accepted = Array.from(fs).filter(f => f && f.type && f.type.startsWith("image/"));
+    if (!accepted.length) return;
+    setImages(prev => [
+      ...prev,
+      ...accepted.map(f => ({ file: f, url: URL.createObjectURL(f) })),
+    ]);
   }
-  function clearFile() {
-    if (filePreview) URL.revokeObjectURL(filePreview);
-    setFile(null);
-    setFilePreview(null);
+  function removeImage(idx) {
+    setImages(prev => {
+      const it = prev[idx];
+      if (it) URL.revokeObjectURL(it.url);
+      return prev.filter((_, i) => i !== idx);
+    });
+  }
+  function clearImages() {
+    setImages(prev => {
+      prev.forEach(it => URL.revokeObjectURL(it.url));
+      return [];
+    });
   }
   function onDrop(e) {
     e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (f && f.type.startsWith("image/")) attachFile(f);
+    if (e.dataTransfer.files?.length) attachFiles(e.dataTransfer.files);
   }
   function onDragOver(e) { e.preventDefault(); }
 
@@ -123,8 +134,8 @@ function Inbox() {
       setSubmitMsg({ type: "warn", text: "Author is required." });
       return;
     }
-    if (!text.trim() && !file) {
-      setSubmitMsg({ type: "warn", text: "Add some text or an image." });
+    if (!text.trim() && images.length === 0) {
+      setSubmitMsg({ type: "warn", text: "Add some text or at least one image." });
       return;
     }
     setSubmitting(true);
@@ -132,7 +143,8 @@ function Inbox() {
     try {
       const fd = new FormData();
       fd.append("payload", JSON.stringify(buildPayload()));
-      if (file) fd.append("file", file);
+      // Field name `files` matches the FastAPI `list[UploadFile]` param.
+      images.forEach(({ file: f }) => fd.append("files", f, f.name));
       const r = await fetch("/api/manual/ingest", { method: "POST", body: fd });
       if (!r.ok) {
         const err = await r.text();
@@ -140,14 +152,16 @@ function Inbox() {
         return;
       }
       const data = await r.json();
+      const imgNote = images.length > 1 ? ` · ${images.length} images` : "";
       setSubmitMsg({
         type: "ok",
         text: `Saved · ${data.detected_tickers.join(", ") || "no tickers"} · tags ${data.tags.join(", ")}` +
+              imgNote +
               (data.pending_vision ? " · vision pending" : ""),
       });
       // Reset for next drop, keep author so consecutive drops are fast.
       setText(""); setTicker(""); setSide(""); setTimeframe("");
-      setNote(""); setConviction(3); clearFile(); setPreviewData(null);
+      setNote(""); setConviction(3); clearImages(); setPreviewData(null);
       refreshHistory(); refreshAuthors();
     } finally {
       setSubmitting(false);
@@ -177,21 +191,43 @@ function Inbox() {
           <div className="inbox-col">
             <div
               ref={dropRef}
-              className={`inbox-drop ${file ? "has-file" : ""}`}
+              className={`inbox-drop ${images.length ? "has-file" : ""}`}
               onDrop={onDrop}
               onDragOver={onDragOver}
             >
-              {filePreview ? (
+              {images.length > 0 ? (
                 <div className="inbox-drop-preview">
-                  <img src={filePreview} alt="chart preview" />
-                  <button className="filter-pill" onClick={clearFile}>remove</button>
+                  <div className="inbox-thumbs">
+                    {images.map((it, idx) => (
+                      <div key={it.url} className="inbox-thumb">
+                        <img src={it.url} alt={`chart ${idx + 1}`} />
+                        <button
+                          className="inbox-thumb-x"
+                          title="remove image"
+                          onClick={() => removeImage(idx)}
+                        >×</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="inbox-drop-sub">
+                    {images.length} image{images.length === 1 ? "" : "s"} attached ·
+                    drop / paste / pick more
+                  </div>
+                  <div className="inbox-actions" style={{ marginTop: 4 }}>
+                    <input type="file" accept="image/*" multiple onChange={(e) => {
+                      if (e.target.files?.length) attachFiles(e.target.files);
+                      e.target.value = "";
+                    }} />
+                    <button className="filter-pill" onClick={clearImages}>clear all</button>
+                  </div>
                 </div>
               ) : (
                 <div className="inbox-drop-empty">
-                  <div className="inbox-drop-headline">Drop chart screenshot here</div>
-                  <div className="inbox-drop-sub">or paste from clipboard · or pick file</div>
-                  <input type="file" accept="image/*" onChange={(e) => {
-                    const f = e.target.files?.[0]; if (f) attachFile(f);
+                  <div className="inbox-drop-headline">Drop chart screenshots here</div>
+                  <div className="inbox-drop-sub">multiple images OK · paste from clipboard · or pick files</div>
+                  <input type="file" accept="image/*" multiple onChange={(e) => {
+                    if (e.target.files?.length) attachFiles(e.target.files);
+                    e.target.value = "";
                   }} />
                 </div>
               )}
@@ -363,7 +399,12 @@ function Inbox() {
                 return (
                   <tr key={h.document_id}>
                     <td className="mono dim">{(h.ingested_at || "").slice(0, 19).replace("T", " ")}</td>
-                    <td>{h.content_type === "manual_chart" ? "chart" : "note"}</td>
+                    <td>
+                      {h.content_type === "manual_chart" ? "chart" : "note"}
+                      {Array.isArray(h.attachment_paths) && h.attachment_paths.length > 1 ? (
+                        <span className="dim mono"> ·{h.attachment_paths.length}</span>
+                      ) : null}
+                    </td>
                     <td>
                       <strong>{meta.ticker || "—"}</strong>
                       {meta.side ? <span className="dim mono"> · {meta.side}</span> : null}

@@ -93,8 +93,13 @@ class ManualInputPayload(BaseModel):
     text: str = ""
     metadata: ManualMetadata = Field(default_factory=ManualMetadata)
     author: AuthorRef
-    # Set by the server when an image was uploaded. Clients leave None.
+    # Server-populated when files are uploaded. Clients leave both empty.
+    # `attachment_path` = first image (back-compat with single-image
+    # consumers); `attachment_paths` = full ordered list, one per uploaded
+    # file. A drop with N images sets attachment_paths to length N and
+    # attachment_path to attachment_paths[0].
     attachment_path: Optional[str] = None
+    attachment_paths: list[str] = Field(default_factory=list)
 
 
 # ── Extracted-features schema (Piece 2 fills this) ───────────────────────────

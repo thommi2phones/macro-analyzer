@@ -41,6 +41,8 @@ def preview(payload: ManualInputPayload) -> PreviewResponse:
 @router.post("/ingest", response_model=IngestResponse)
 async def ingest(
     payload: str = Form(..., description="JSON-serialized ManualInputPayload"),
+    files: Optional[list[UploadFile]] = File(None),
+    # Back-compat: clients still using the single-file form keep working.
     file: Optional[UploadFile] = File(None),
 ) -> IngestResponse:
     try:
@@ -48,11 +50,25 @@ async def ingest(
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=e.errors())
 
+    uploaded: list[UploadFile] = []
+    if files:
+        uploaded.extend(f for f in files if f and f.filename)
     if file is not None and file.filename:
-        body = await file.read()
+        uploaded.append(file)
+
+    saved_paths: list[str] = []
+    for upload in uploaded:
+        body = await upload.read()
         if not body:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-        parsed.attachment_path = processor.save_attachment(body, file.filename)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Uploaded file '{upload.filename}' is empty.",
+            )
+        saved_paths.append(processor.save_attachment(body, upload.filename))
+
+    if saved_paths:
+        parsed.attachment_paths = saved_paths
+        parsed.attachment_path = saved_paths[0]
 
     return processor.ingest(parsed)
 

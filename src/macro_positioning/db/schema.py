@@ -373,6 +373,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("documents", "user_metadata_json", "TEXT"),
     ("documents", "attachment_path", "TEXT"),
     ("documents", "extracted_features_json", "TEXT"),
+    # JSON array of all attachment paths for multi-image drops. The
+    # singular `attachment_path` column above stays populated with the
+    # first image for back-compat with anything reading it directly.
+    ("documents", "attachment_paths_json", "TEXT"),
 ]
 
 

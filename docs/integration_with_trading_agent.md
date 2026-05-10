@@ -249,3 +249,53 @@ Both systems **must work without the other**:
 - Shared authentication (API keys per system)
 - Real-time streaming (polling + request-response is sufficient)
 - Unified UI (each system has its own dashboard; combined view is future work)
+
+---
+
+## Trade-Close Webhook (PUSH from Trading Agent → Macro Analyzer)
+
+When the Trading Agent closes a position (manual or automated), it POSTs the close event to the macro side so the journal-feedback loop flips the trade into `closed_pending_review` and prompts a structured review.
+
+**Endpoint:** `POST /api/integration/trade-close`
+
+**Auth:** Same bearer-token middleware as the rest of the API (`MPA_AUTH_TOKEN`). Empty in dev = open.
+
+**Request body (JSON):**
+
+| field             | type    | required | notes |
+|-------------------|---------|----------|-------|
+| `trade_id`        | string  | yes      | Must match an existing `trades.trade_id` on the macro side (otherwise 404) |
+| `exit_date`       | string  | no       | ISO-8601 UTC timestamp |
+| `exit_price`      | number  | no       | |
+| `pnl`             | number  | no       | absolute, in account currency |
+| `pnl_percent`     | number  | no       | percentage, e.g. `3.04` for +3.04% |
+| `execution_notes` | string  | no       | free-text — e.g. `"stop hit"` / `"discretionary trim"` |
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8001/api/integration/trade-close \
+  -H 'content-type: application/json' \
+  -d '{
+    "trade_id": "trd-2026-014",
+    "exit_date": "2026-05-10T14:30:00Z",
+    "exit_price": 138.20,
+    "pnl": 580.00,
+    "pnl_percent": 4.38,
+    "execution_notes": "trim into strength"
+  }'
+```
+
+**Responses:**
+
+| status | body | meaning |
+|--------|------|---------|
+| 200    | `{"trade_id": "...", "status": "closed", "review_status": "closed_pending_review"}` | flipped (or already in that state — idempotent) |
+| 404    | `{"detail": "unknown trade_id: '...'"}` | trade not found on macro side |
+| 422    | Pydantic validation envelope | malformed body (missing `trade_id`, wrong types) |
+
+**Idempotency:** Re-POSTing the same payload is safe. If the trade is already `closed_reviewed`, the webhook does NOT revert it — `pnl` / `exit_price` are backfilled if provided but the state stays reviewed. If it's still `closed_pending_review`, exit metadata is updated.
+
+**Side effects:** Sets `trades.status='closed'` and (only on first close) `trades.review_status='closed_pending_review'`. Backfills `exit_date`, `exit_price`, `pnl`, `pnl_percent`, `execution_notes` if supplied. The journal SPA's "pending reviews" strip picks the trade up on the next page load; the user submits the 7-question review via `POST /api/reviews/{trade_id}`, which writes derived `source_outcomes` rows and a calibration log entry.
+
+**Failure mode:** If the macro side is unreachable, the Trading Agent should retry with exponential backoff. The review loop is best-effort feedback — never block trade execution on a failed webhook.

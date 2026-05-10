@@ -357,6 +357,29 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_input_authors_last_seen
         ON input_authors (last_seen_at DESC)
     """,
+    # Per-image rows for bulk chart drops. One trade idea = one `documents`
+    # row + N attachments here. Per-image fields (timeframe, role) let
+    # chart_vision adapt its prompt per chart, and let later analytics ask
+    # things like "do trades with a `stop logic` chart attached outperform?"
+    # Supersedes the flat `documents.attachment_paths_json` which stays
+    # populated for back-compat with code reading it directly.
+    """
+    CREATE TABLE IF NOT EXISTS manual_chart_attachments (
+        attachment_id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        attachment_path TEXT NOT NULL,
+        timeframe TEXT NOT NULL,
+        role TEXT,
+        note TEXT,
+        order_index INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (document_id) REFERENCES documents (document_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_manual_chart_attachments_doc
+        ON manual_chart_attachments (document_id, order_index)
+    """,
 ]
 
 

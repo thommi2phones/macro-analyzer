@@ -21,6 +21,11 @@ from macro_positioning.learning.quality_scorer import (
     backfill_quality_scores,
     quality_summary,
 )
+from macro_positioning.learning.regime_accuracy import regime_accuracy
+from macro_positioning.learning.retraining_triggers import (
+    retrain_status,
+    should_retrain,
+)
 from macro_positioning.learning.score_outcome_correlation import (
     score_outcome_correlation,
 )
@@ -49,4 +54,7 @@ __all__ = [
     "version_stats",
     "backfill_quality_scores",
     "quality_summary",
+    "regime_accuracy",
+    "retrain_status",
+    "should_retrain",
 ]

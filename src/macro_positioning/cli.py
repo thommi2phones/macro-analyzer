@@ -34,6 +34,8 @@ from macro_positioning.learning import (
     conviction_calibration as learning_conviction_calibration,
     mention_precision as learning_mention_precision,
     quality_summary as learning_quality_summary,
+    regime_accuracy as learning_regime_accuracy,
+    retrain_status as learning_retrain_status,
     score_outcome_correlation as learning_correlation,
     signal_attribution as learning_signal_attribution,
     signal_history as learning_signal_history,
@@ -353,6 +355,28 @@ def cmd_learning_quality_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_learning_regime_accuracy(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        result = learning_regime_accuracy(conn, lookback_months=args.lookback_months)
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_learning_retrain_status(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        result = learning_retrain_status(conn)
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
 def cmd_learning_mention_precision(args: argparse.Namespace) -> int:
     import json as _json
     conn = _learning_connect()
@@ -569,6 +593,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_qual_bf.set_defaults(func=cmd_learning_quality_backfill)
     p_qual_sum = qual_sub.add_parser("summary", help="avg quality per agent + per (agent, model_version)")
     p_qual_sum.set_defaults(func=cmd_learning_quality_summary)
+
+    # ---- learning > regime-accuracy (item 5) -------------------------------
+    p_ra = learn_sub.add_parser(
+        "regime-accuracy",
+        help="monthly rollup of regime classifier verdicts (item 5)",
+    )
+    p_ra.add_argument("--lookback-months", type=int, default=12)
+    p_ra.set_defaults(func=cmd_learning_regime_accuracy)
+
+    # ---- learning > retrain-status (item 6) --------------------------------
+    p_rt = learn_sub.add_parser(
+        "retrain-status",
+        help="should_retrain flag + reason per agent (item 6)",
+    )
+    p_rt.set_defaults(func=cmd_learning_retrain_status)
 
     return parser
 

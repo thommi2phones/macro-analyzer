@@ -41,7 +41,7 @@ Items 4–7 from the original brief. Schema unblocked.
 ### 7. Model versioning
 - Update LLM call sites to write `model_version` on every `agent_call_log` insert (currently only `model_name`)
   - Convention: `model_version = f"{model_name}@{prompt_version}"` so prompt churn is visible alongside model churn
-- Backfill historical rows: `learning version backfill` — sets `model_version = model_name` where NULL (best-effort default since prompt_version isn't reconstructible from old rows)
+- Backfill historical rows: `learning version backfill` — sets `model_version = f"{model_name}@{prompt_version}"` where NULL. `prompt_version` is NOT NULL on `agent_call_log`, so the canonical full form is always achievable; no fallback needed. (Ratified post-v1 ship — `36a542a` / `b30c671`.)
 - Add to `learning quality summary`: stratify quality by model_version
 
 ## File territory (yours to edit)

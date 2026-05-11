@@ -5,12 +5,17 @@ const { useState: useS, useMemo: useM, useEffect: useE } = React;
 function App() {
   const [view, setView] = useS("positioning");
   const [openSig, setOpenSig] = useS(null);
+  // Cross-page focus: when /concepts promotes a concept, /identify
+  // jumps to that draft plan; when /identify activates a plan, /live
+  // jumps to the newly opened trade. Cleared on the next manual nav.
+  const [focusPlanId, setFocusPlanId] = useS(null);
+  const [focusTradeId, setFocusTradeId] = useS(null);
+  const nav = (v) => { setFocusPlanId(null); setFocusTradeId(null); setView(v); };
 
   // Tweaks
   const [tw, setTweak] = useTweaks(/*EDITMODE-BEGIN*/{
     "accent": "gold",
-    "density": "default",
-    "showMobile": true
+    "density": "default"
   }/*EDITMODE-END*/);
 
   useE(() => {
@@ -30,23 +35,22 @@ function App() {
             <div className="brand-sub">Positioning desk · v3 thesis <span className="brand-version">build 2026.05.23-r4</span></div>
           </div>
         </div>
-        <nav className="nav">
-          <button className={`nav-tab ${view === "positioning" ? "on" : ""}`} onClick={() => setView("positioning")}>
-            <span className="tab-num">/01</span>positioning
+        <nav className="nav nav-utility">
+          <button className={`nav-tab ${view === "streams" ? "on" : ""}`} onClick={() => nav("streams")}>
+            <span className="tab-num">/U1</span>streams
           </button>
-          <button className={`nav-tab ${view === "journal" ? "on" : ""}`} onClick={() => setView("journal")}>
-            <span className="tab-num">/02</span>journal
+          <button className={`nav-tab ${view === "inbox" ? "on" : ""}`} onClick={() => nav("inbox")}>
+            <span className="tab-num">/U2</span>inbox
           </button>
-          <button className={`nav-tab ${view === "dev" ? "on" : ""}`} onClick={() => setView("dev")}>
-            <span className="tab-num">/03</span>dev
-          </button>
-          <button className={`nav-tab ${view === "inbox" ? "on" : ""}`} onClick={() => setView("inbox")}>
-            <span className="tab-num">/04</span>inbox
+          <button className={`nav-tab ${view === "dev" ? "on" : ""}`} onClick={() => nav("dev")}>
+            <span className="tab-num">/U3</span>dev
           </button>
         </nav>
         <div className="topbar-spacer"></div>
         <div className="topbar-right">
-          <span className="tb-status"><span className="dot-live"></span> LIVE · 26 sources</span>
+          <button className="tb-status tb-status-btn" onClick={() => nav("streams")} title="View source streams">
+            <span className="dot-live"></span> LIVE · 26 sources →
+          </button>
           <span className="tb-status">
             <span className="rb-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold)", display: "inline-block" }}></span>
             {D.regime.framework.label.toUpperCase()} · {Math.round(D.regime.framework.confidence * 100)}%
@@ -58,30 +62,30 @@ function App() {
         </div>
       </header>
 
+      <FunnelRail view={view} onNav={nav} />
+
       {view === "positioning" && <KpiStrip />}
       {view === "positioning" && (
-        <>
-          <Positioning
-            onOpenReasoning={(s) => setOpenSig(s)}
-            onOpenTradeForm={() => {}}
-          />
-          {tw.showMobile && (
-            <section className="block">
-              <header className="block-head sm">
-                <div className="block-title">
-                  <span className="block-num mono">P9</span>
-                  <span>Mobile preview · /positioning</span>
-                  <span className="block-sub">phone subset · same data, same grammar</span>
-                </div>
-              </header>
-              <div className="mobile-preview-wrap">
-                <MobilePreview />
-              </div>
-            </section>
-          )}
-        </>
+        <Positioning
+          onOpenReasoning={(s) => setOpenSig(s)}
+          onOpenTradeForm={() => {}}
+          onAdvanceToConcept={() => nav("concepts")}
+        />
       )}
+      {view === "concepts" && (
+        <Concepts
+          onPromote={(planId) => { setFocusPlanId(planId); setView("identify"); }}
+        />
+      )}
+      {view === "identify" && (
+        <Identify
+          focusPlanId={focusPlanId}
+          onActivated={(tradeId) => { setFocusTradeId(tradeId); setView("live"); }}
+        />
+      )}
+      {view === "live" && <Live focusTradeId={focusTradeId} />}
       {view === "journal" && <Journal />}
+      {view === "streams" && <Streams />}
       {view === "dev" && <Dev />}
       {view === "inbox" && <Inbox />}
 
@@ -114,13 +118,6 @@ function App() {
             value={tw.density}
             options={["compact", "default", "cozy"]}
             onChange={(v) => setTweak("density", v)}
-          />
-        </TweakSection>
-        <TweakSection label="Mobile preview">
-          <TweakToggle
-            label="Show on positioning"
-            value={tw.showMobile}
-            onChange={(v) => setTweak("showMobile", v)}
           />
         </TweakSection>
       </TweaksPanel>

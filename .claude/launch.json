@@ -6,6 +6,12 @@
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "uvicorn", "macro_positioning.api.main:app", "--host", "127.0.0.1", "--port", "8001", "--reload"],
       "port": 8001
+    },
+    {
+      "name": "web-static",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8088", "--directory", "web"],
+      "port": 8088
     }
   ]
 }

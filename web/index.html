@@ -19,15 +19,28 @@
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
-<script src="data.js"></script>
+<!--
+  Mock data first as a baseline (always present in /web). When the
+  FastAPI server is running, /web/data.js is shadowed by the dynamic
+  desk_routes endpoint that overwrites window.MA_DATA with the real
+  snapshot. In static-only preview the dynamic route 404s and the
+  mock baseline stays.
+-->
+<script src="data.mock.js"></script>
+<script src="data.js" onerror="void 0"></script>
 <script type="text/babel" src="tweaks-panel.jsx"></script>
 <script type="text/babel" src="components.jsx"></script>
 <script type="text/babel" src="reasoning.jsx"></script>
 <script type="text/babel" src="positioning.jsx"></script>
+<script type="text/babel" src="concepts.jsx"></script>
+<script type="text/babel" src="identify.jsx"></script>
+<script type="text/babel" src="live.jsx"></script>
+<script type="text/babel" src="streams.jsx"></script>
 <script type="text/babel" src="journal.jsx"></script>
 <script type="text/babel" src="dev.jsx"></script>
 <script type="text/babel" src="inbox.jsx"></script>
 <script type="text/babel" src="mobile.jsx"></script>
+<script type="text/babel" src="funnel_rail.jsx"></script>
 <script type="text/babel" src="app.jsx"></script>
 
 </body>

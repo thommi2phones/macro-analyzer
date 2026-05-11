@@ -12,8 +12,83 @@ function Journal() {
   const grossNeg = Math.abs(closed.filter(t => t.pnlPct < 0).reduce((s, t) => s + t.pnlPct, 0));
   const profitFactor = grossNeg > 0 ? grossPos / grossNeg : 0;
 
+  const conv = D.funnelConversion || null;
+
   return (
     <div className="journal-view">
+      <section className="step-header">
+        <span className="step-num mono">STEP ⑤ · REVIEW</span>
+        <span className="step-title">Journal — close the loop on what you traded and why.</span>
+      </section>
+
+      {conv && (
+        <section className="block">
+          <header className="block-head sm">
+            <div className="block-title">
+              <span className="block-num mono">J0</span>
+              <span>Funnel conversion · 30d</span>
+              <span className="block-sub">concept → plan → live → closed, with hit-rate by source</span>
+            </div>
+          </header>
+          <div className="conv-grid">
+            <div className="conv-step">
+              <div className="conv-num mono">{conv.marked30d}</div>
+              <div className="conv-lbl">marked</div>
+            </div>
+            <span className="conv-arrow">→</span>
+            <div className="conv-step">
+              <div className="conv-num mono">{conv.promoted30d}</div>
+              <div className="conv-lbl">promoted</div>
+              <div className="conv-rate muted small">
+                {conv.marked30d > 0 ? Math.round((conv.promoted30d / conv.marked30d) * 100) : 0}%
+              </div>
+            </div>
+            <span className="conv-arrow">→</span>
+            <div className="conv-step">
+              <div className="conv-num mono">{conv.activated30d}</div>
+              <div className="conv-lbl">activated</div>
+              <div className="conv-rate muted small">
+                {conv.promoted30d > 0 ? Math.round((conv.activated30d / conv.promoted30d) * 100) : 0}%
+              </div>
+            </div>
+            <span className="conv-arrow">→</span>
+            <div className="conv-step">
+              <div className="conv-num mono">{conv.closed30d}</div>
+              <div className="conv-lbl">closed</div>
+              <div className="conv-rate muted small">
+                {conv.activated30d > 0 ? Math.round((conv.closed30d / conv.activated30d) * 100) : 0}%
+              </div>
+            </div>
+          </div>
+          <table className="wl-table">
+            <thead>
+              <tr>
+                <th>SOURCE</th>
+                <th className="num">TRADES</th>
+                <th className="num">WINS</th>
+                <th className="num">HIT RATE</th>
+                <th className="num">AVG P&amp;L%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conv.hitRateBySource.map(s => (
+                <tr key={s.source}>
+                  <td className="mono small">{s.source}</td>
+                  <td className="num">{s.trades}</td>
+                  <td className="num">{s.wins}</td>
+                  <td className="num mono">
+                    {s.trades > 0 ? Math.round((s.wins / s.trades) * 100) : 0}%
+                  </td>
+                  <td className={`num mono ${s.pnlPct >= 0 ? "pos" : "neg"}`}>
+                    {s.pnlPct >= 0 ? "+" : ""}{s.pnlPct.toFixed(2)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <section className="block">
         <header className="block-head">
           <div className="block-title">

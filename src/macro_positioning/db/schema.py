@@ -439,6 +439,80 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_score_hindsight_verdict
         ON score_hindsight_overlay (hindsight_verdict, recorded_at DESC)
     """,
+    # ─── Funnel spine: concepts → plans → trades ─────────────────────────
+    # Concepts are marked watchlist items the operator wants to track as
+    # potential setups. They survive past a single session and keep their
+    # score snapshot, thesis note, and lineage to the trade_plan they
+    # eventually promote into. Suggestions surfaced by the system land
+    # here with suggested_by_system=1 until the operator marks them.
+    """
+    CREATE TABLE IF NOT EXISTS trade_concepts (
+        concept_id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL,
+        source TEXT NOT NULL,                 -- watchlist_auto | watchlist_manual | inbox | other
+        status TEXT NOT NULL,                 -- active | promoted | retired
+        suggested_by_system INTEGER NOT NULL DEFAULT 0,
+        suggestion_reason TEXT,
+        score_at_mark REAL,
+        tier_at_mark TEXT,
+        side_at_mark TEXT,
+        thesis_text TEXT,
+        trade_plan_id TEXT,
+        marked_at TEXT NOT NULL,
+        promoted_at TEXT,
+        retired_at TEXT,
+        retire_reason TEXT,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (asset_id) REFERENCES assets (asset_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_concepts_status
+        ON trade_concepts (status, marked_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_concepts_asset_active
+        ON trade_concepts (asset_id, status)
+    """,
+    # Trade plans = step ③ Identify. Each plan captures the entry/stop/
+    # targets/sizing the operator intends to act on, optionally linked
+    # back to the concept it grew from. Status flips draft→live when
+    # the operator activates it (creates a trades row); cancelled when
+    # invalidated before entry; closed mirrors the trades.status close.
+    """
+    CREATE TABLE IF NOT EXISTS trade_plans (
+        plan_id TEXT PRIMARY KEY,
+        concept_id TEXT,
+        asset_id TEXT NOT NULL,
+        side TEXT NOT NULL,
+        entry REAL,
+        stop REAL,
+        targets_json TEXT,                    -- JSON array of {price, weight}
+        size_usd REAL,
+        size_r REAL,
+        time_horizon TEXT,                    -- intraday | swing | position
+        thesis TEXT,
+        invalidation TEXT,
+        gate_status TEXT,                     -- pass | warn | block | unchecked
+        gate_evaluation_json TEXT,
+        status TEXT NOT NULL,                 -- draft | live | cancelled | closed
+        trade_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        activated_at TEXT,
+        cancelled_at TEXT,
+        FOREIGN KEY (concept_id) REFERENCES trade_concepts (concept_id),
+        FOREIGN KEY (asset_id) REFERENCES assets (asset_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_status
+        ON trade_plans (status, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_concept
+        ON trade_plans (concept_id)
+    """,
 ]
 
 
@@ -464,6 +538,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # questionnaire; "closed_reviewed" rows are done. NULL = legacy /
     # not-yet-touched trades; keep them invisible to the queue.
     ("trades", "review_status", "TEXT"),
+    # Funnel spine lineage: each closed/open trade links back to the
+    # plan it was activated from (and through the plan, the concept).
+    # Nullable so legacy trades without a plan still validate.
+    ("trades", "plan_id", "TEXT"),
 ]
 
 

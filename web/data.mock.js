@@ -401,16 +401,19 @@ window.MA_DATA = {
     { asset: "URNM", scoreAtTime: 76, reason: "duplicate",   validReal: false, hindsightRisk: 1, lesson: "URA already covered — no miss." },
   ],
 
+  // J1 Process Scorecard — Trading Rule Framework v1 success metrics.
+  // PM wires this from build_process_scorecard_section() in desk_data.py;
+  // mock values illustrate what a 30-day disciplined book looks like.
   processScorecard: {
     days: 30,
-    score: 86,
+    score: 82,
     metrics: [
-      { label: "Entry planned in advance",   value: 92, of: 100 },
-      { label: "Invalidation defined",       value: 100, of: 100 },
-      { label: "Size predefined",            value: 88, of: 100 },
-      { label: "Setup matched playbook",     value: 79, of: 100 },
-      { label: "Outcome logged within 24h",  value: 71, of: 100 },
-      { label: "Lesson written",             value: 86, of: 100 },
+      { label: "Rule adherence (30d mean)",       value: 84, of: 100 },
+      { label: "High-confluence hit rate",        value: 71, of: 100 },
+      { label: "Risk-per-trade compliance",       value: 92, of: 100 },
+      { label: "Portfolio cap compliance",        value: 96, of: 100 },
+      { label: "Setup-category diversification",  value: 73, of: 100 },
+      { label: "Plan→outcome fidelity",           value: 78, of: 100 },
     ],
   },
 

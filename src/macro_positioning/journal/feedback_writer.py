@@ -1,6 +1,6 @@
 """Fan-out from a submitted review into the learning machinery.
 
-When a review lands we derive two side-effects:
+When a review lands we derive three side-effects:
 
 1. **source_outcomes** — one row per credited source (Q2). Drives
    `learning/source_attribution`, which in turn powers the
@@ -8,6 +8,10 @@ When a review lands we derive two side-effects:
 2. **score_calibration.jsonl** — one entry per Q4 hindsight score.
    `learning/score_outcome_correlation` reads this overlay so the
    scorer can see "I said 80, hindsight said over" patterns.
+3. **trades.rule_adherence_score** — composite 0..100 from
+   `rules.adherence.compute_adherence` over the trade row + plan
+   (if any) + review. Drives the J1 Process Scorecard's
+   rule-adherence metric and per-tier win-rate analysis.
 
 Q1 (thesis_validity) and Q5 (surprise_factor) are left in
 `trade_reviews` for downstream PM-side consumers (regime_accuracy,
@@ -54,9 +58,11 @@ def apply_review_feedback(
         now=now,
         path=calibration_path or _calibration_log_path(),
     )
+    adherence = _write_rule_adherence(conn, trade_id, review)
     return {
         "source_outcomes_written": n_sources,
         "calibration_appended": appended,
+        "rule_adherence_score": adherence,
     }
 
 
@@ -161,3 +167,39 @@ def _append_calibration_entry(
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
     return True
+
+
+# ---------------------------------------------------------------------------
+# rules.adherence → trades.rule_adherence_score
+# ---------------------------------------------------------------------------
+
+
+def _write_rule_adherence(
+    conn: sqlite3.Connection, trade_id: str, review: dict
+) -> int | None:
+    """Compute and persist the per-trade rule_adherence_score.
+
+    Reads the trade row + plan (if any), runs `rules.adherence`, writes
+    the resulting 0..100 onto `trades.rule_adherence_score`. Returns
+    the score, or None if no adherence data could be computed (no
+    plan, no actuals, etc — the underlying compute returns score=0
+    with raw_weight=0 in that case, which we surface as None to make
+    "not measurable" distinguishable from "measured zero").
+    """
+    from macro_positioning.rules import repository as rrepo
+    from macro_positioning.rules.adherence import compute_adherence
+
+    conn.row_factory = sqlite3.Row
+    trade_row = conn.execute(
+        "SELECT * FROM trades WHERE trade_id = ?", (trade_id,)
+    ).fetchone()
+    if trade_row is None:
+        return None
+    trade = dict(trade_row)
+    plan = rrepo.get_plan(conn, trade_id)
+
+    result = compute_adherence(trade, plan, review)
+    if result.raw_weight == 0:
+        return None
+    rrepo.mark_adherence(conn, trade_id, result.score)
+    return result.score

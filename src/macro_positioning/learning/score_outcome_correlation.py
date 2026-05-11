@@ -153,16 +153,12 @@ def _empty_result(reason: str) -> dict:
 # Hindsight overlay (calibration_jsonl)
 # ---------------------------------------------------------------------------
 
-def _load_calibration_overlay(path: Path | None = None) -> list[dict]:
-    """Read `data/score_calibration.jsonl` if it exists. Returns [].
-
-    Expected line shape (per the journal-feedback-loop brief, Q4):
-        {"trade_id": "...", "scored_at": ISO, "score_at_entry": 80,
-         "setup_score_hindsight": "over" | "right" | "under",
-         "asset_ticker": "URA"}
-
-    Tolerant of missing/extra fields; rows that can't be parsed are
-    skipped with a debug log line.
+def _load_calibration_overlay_jsonl(path: Path | None = None) -> list[dict]:
+    """Legacy JSONL reader. Kept as a transitional fallback; the locked
+    storage is `score_hindsight_overlay` (added 2026-05-10, schema
+    commit 09acecf). Once feedback_writer.py ships and the table starts
+    filling, the SQL reader takes precedence — this JSONL probe will be
+    a no-op on any DB that doesn't have a sibling file.
     """
     p = path or CALIBRATION_JSONL
     if not p.exists():
@@ -177,6 +173,61 @@ def _load_calibration_overlay(path: Path | None = None) -> list[dict]:
         except json.JSONDecodeError as e:
             log.debug("calibration jsonl line %d skipped: %s", i, e)
     return out
+
+
+def _load_calibration_overlay_sql(conn: sqlite3.Connection) -> list[dict]:
+    """Read every row from `score_hindsight_overlay`.
+
+    Schema (per db/schema.py 2026-05-10):
+        overlay_id, review_id FK, trade_id FK, score_id, hindsight_verdict, recorded_at
+
+    Returns dicts mapped to the same key names that `_calibration_summary`
+    consumes (`setup_score_hindsight` for verdict enum) so the JSONL and
+    SQL paths can be merged in `_load_calibration_overlay`.
+    """
+    try:
+        cur = conn.execute(
+            """
+            SELECT overlay_id, review_id, trade_id, score_id,
+                   hindsight_verdict, recorded_at
+            FROM score_hindsight_overlay
+            """
+        )
+    except sqlite3.OperationalError as e:
+        # Table not present on older DBs that haven't been
+        # `initialize_database()`-ed since the 2026-05-10 schema.
+        log.debug("score_hindsight_overlay read skipped: %s", e)
+        return []
+    out: list[dict] = []
+    for overlay_id, review_id, trade_id, score_id, verdict, recorded_at in cur.fetchall():
+        out.append(
+            {
+                "overlay_id": overlay_id,
+                "review_id": review_id,
+                "trade_id": trade_id,
+                "score_id": score_id,
+                "setup_score_hindsight": verdict,
+                "recorded_at": recorded_at,
+            }
+        )
+    return out
+
+
+def _load_calibration_overlay(conn: sqlite3.Connection) -> list[dict]:
+    """Combine SQL + (legacy) JSONL hindsight rows.
+
+    SQL is authoritative; JSONL is for any pre-table data that was
+    written under the v2 stop-gap. Dedup is not strictly needed today
+    (the JSONL was never live) but we tag each row with `source`
+    so the dashboard could trace provenance later.
+    """
+    sql_rows = _load_calibration_overlay_sql(conn)
+    for r in sql_rows:
+        r["source"] = "table"
+    jsonl_rows = _load_calibration_overlay_jsonl()
+    for r in jsonl_rows:
+        r["source"] = "jsonl"
+    return sql_rows + jsonl_rows
 
 
 def _calibration_summary(overlay: list[dict]) -> dict:
@@ -237,7 +288,7 @@ def score_outcome_correlation(
     )
     rows = cur.fetchall()
 
-    overlay = _load_calibration_overlay() if include_calibration else []
+    overlay = _load_calibration_overlay(conn) if include_calibration else []
     calibration_summary = _calibration_summary(overlay)
 
     if not rows:

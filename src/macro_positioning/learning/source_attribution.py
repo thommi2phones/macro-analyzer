@@ -419,6 +419,9 @@ def _iter_signals(conn: sqlite3.Connection) -> Iterable[tuple[str, datetime, str
             yield source_id, dt, document_id, ticker
 
 
+_SORT_MODES = ("decay_weighted", "raw_return")
+
+
 def signal_attribution(
     conn: sqlite3.Connection,
     *,
@@ -426,17 +429,26 @@ def signal_attribution(
     min_signals: int = 1,
     now: datetime | None = None,
     include_meta: bool = False,
+    sort_mode: str = "decay_weighted",
+    sort_half_life_days: float = 30.0,
 ) -> list[dict] | dict:
     """Per-source forward-return rollup across every ticker the source
     has mentioned in any document, regardless of whether a trade was
     taken.
 
-    NEW IN V2: per-vertical breakdown nested under each horizon.
-    Each signal is bucketed by the *ticker's* asset_class (from
-    config/watchlist.json anchors, falling back to asset_themes.json,
-    then 'uncategorized'). The dashboard can now ask "how does
-    source X do on commodity calls vs. crypto calls?".
+    V2: per-vertical breakdown nested under each horizon.
+    V3: decay-aware ordering. `sort_mode` defaults to `decay_weighted`,
+        which ranks each source by
+            hit_rate × log(1 + n_signals) × recency_decay
+        where `recency_decay = 0.5 ** (days_since_last_signal /
+        sort_half_life_days)`. This pushes consistently-correct sources
+        with fresh activity to the top, and demotes sources that called
+        well once a year ago. Pass `sort_mode='raw_return'` to recover
+        the v2 sort (just by 30d avg_forward_return_pct desc) for any
+        caller that pinned the old ordering.
     """
+    if sort_mode not in _SORT_MODES:
+        raise ValueError(f"sort_mode must be one of {_SORT_MODES}, got {sort_mode!r}")
     now = now or datetime.now(timezone.utc)
 
     # Collect signals + tickers we'll need prices for.
@@ -577,11 +589,34 @@ def signal_attribution(
             }
         )
 
-    def _sort_key(row: dict) -> float:
+    def _raw_return_key(row: dict) -> float:
         h = row["horizons"].get(30) or next(iter(row["horizons"].values()), {})
         return h.get("avg_forward_return_pct", 0.0)
 
-    out.sort(key=_sort_key, reverse=True)
+    def _decay_weighted_key(row: dict) -> float:
+        # Use 30d hit_rate where available, else fall back to whatever
+        # horizon has data — we want SOMETHING for sources with no 30d
+        # bars yet (e.g., very recent first signal in a 7d-only world).
+        h = row["horizons"].get(30) or next(iter(row["horizons"].values()), {})
+        hit_rate = float(h.get("hit_rate", 0.0) or 0.0)
+        n = max(0, int(row.get("n_signals", 0) or 0))
+        last_iso = row.get("last_signal_at")
+        last_dt = _parse_iso(last_iso) if last_iso else None
+        age_days = max(0.0, (now - last_dt).total_seconds() / 86400.0) if last_dt else 0.0
+        decay = _recency_multiplier(age_days, sort_half_life_days)
+        # log(1+n) keeps the curve concave: 10 signals ≠ 10× one signal.
+        import math as _m
+        return hit_rate * _m.log1p(n) * decay
+
+    sort_key = _decay_weighted_key if sort_mode == "decay_weighted" else _raw_return_key
+
+    # Surface the score alongside each row so the dashboard can render
+    # "why does this source rank here?" without recomputing.
+    if sort_mode == "decay_weighted":
+        for r in out:
+            r["decay_weighted_score"] = round(_decay_weighted_key(r), 6)
+
+    out.sort(key=sort_key, reverse=True)
 
     if include_meta:
         return {
@@ -592,6 +627,8 @@ def signal_attribution(
                 "n_prices_rows": int(n_prices_total),
                 "n_signals": len(signals),
                 "n_sources": len(out),
+                "sort_mode": sort_mode,
+                "sort_half_life_days": sort_half_life_days if sort_mode == "decay_weighted" else None,
                 "message": f"{len(out)} sources across {len(signals)} signals",
             },
             "rows": out,

@@ -234,6 +234,49 @@ def test_signal_attribution_skips_mentions_without_price_data(tmp_path: Path):
     assert rows[0]["horizons"][30]["n_with_price_data"] == 0
 
 
+def test_signal_attribution_decay_weighted_sort_demotes_stale_one_hit_wonders(tmp_path: Path):
+    """A one-shot perfect call should rank below a higher-volume hit-rate
+    leader once decay + log(1+n) are applied."""
+    conn = _conn(tmp_path)
+    # src_oneshot: single +10% call from 200d ago
+    pub_stale = NOW - timedelta(days=200)
+    _insert_doc(conn, "src_oneshot", pub_stale, "URA looks great")
+    _insert_price(conn, "URA", pub_stale - timedelta(days=1), 100.0)
+    _insert_price(conn, "URA", pub_stale, 100.0)
+    _insert_price(conn, "URA", pub_stale + timedelta(days=30), 110.0)
+    _insert_price(conn, "URA", pub_stale + timedelta(days=33), 110.0)
+
+    # src_consistent: 6 +2% calls from the last 10 days (recent + high volume + perfect hit-rate)
+    for i in range(6):
+        pub = NOW - timedelta(days=10 - i)
+        _insert_doc(conn, "src_consistent", pub, f"BTC bullish #{i}", doc_id=f"d-bc-{i}")
+        _insert_price(conn, "BTC", pub - timedelta(days=1), 50000.0)
+        _insert_price(conn, "BTC", pub, 50000.0)
+        _insert_price(conn, "BTC", pub + timedelta(days=30), 51000.0)
+        _insert_price(conn, "BTC", pub + timedelta(days=33), 51000.0)
+    conn.commit()
+
+    # raw_return mode: oneshot's +10% beats consistent's +2% per-call
+    rows_raw = signal_attribution(conn, horizons=(30,), sort_mode="raw_return")
+    assert rows_raw[0]["source_id"] == "src_oneshot"
+
+    # decay_weighted mode: 200d-old solo hit gets crushed by the recent stack
+    rows_decay = signal_attribution(conn, horizons=(30,), sort_mode="decay_weighted", now=NOW)
+    assert rows_decay[0]["source_id"] == "src_consistent"
+    # And the new score field is exposed on each row
+    assert "decay_weighted_score" in rows_decay[0]
+    # Consistent's score must be strictly higher
+    consistent_score = next(r["decay_weighted_score"] for r in rows_decay if r["source_id"] == "src_consistent")
+    oneshot_score = next(r["decay_weighted_score"] for r in rows_decay if r["source_id"] == "src_oneshot")
+    assert consistent_score > oneshot_score
+
+
+def test_signal_attribution_sort_mode_validation(tmp_path: Path):
+    conn = _conn(tmp_path)
+    with pytest.raises(ValueError):
+        signal_attribution(conn, sort_mode="bogus")
+
+
 def test_signal_attribution_breaks_out_per_vertical(tmp_path: Path):
     """Source mentions URA (commodity) and SPY (index). v2 must give
     per-vertical hit-rate + return per horizon.

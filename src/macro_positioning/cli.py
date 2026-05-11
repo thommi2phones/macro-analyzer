@@ -28,6 +28,8 @@ from macro_positioning.ingestion.source_lifecycle import (
 )
 from macro_positioning.learning import (
     attribution as learning_attribution,
+    author_attribution as learning_author_attribution,
+    conviction_calibration as learning_conviction_calibration,
     mention_precision as learning_mention_precision,
     score_outcome_correlation as learning_correlation,
     signal_attribution as learning_signal_attribution,
@@ -242,10 +244,38 @@ def cmd_learning_signals(args: argparse.Namespace) -> int:
     conn = _learning_connect()
     try:
         horizons = tuple(args.horizons) if args.horizons else (7, 30, 90)
-        rows = learning_signal_attribution(conn, horizons=horizons)
+        rows = learning_signal_attribution(
+            conn, horizons=horizons, sort_mode=args.sort_mode
+        )
     finally:
         conn.close()
     print(_json.dumps(rows, indent=2))
+    return 0
+
+
+def cmd_learning_authors(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        horizons = tuple(args.horizons) if args.horizons else (7, 30, 90)
+        rows = learning_author_attribution(
+            conn, horizons=horizons, include_meta=args.with_meta
+        )
+    finally:
+        conn.close()
+    print(_json.dumps(rows, indent=2))
+    return 0
+
+
+def cmd_learning_conviction(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        horizons = tuple(args.horizons) if args.horizons else (7, 30, 90)
+        result = learning_conviction_calibration(conn, horizons=horizons)
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
     return 0
 
 
@@ -402,7 +432,44 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="repeatable: forward-return horizon in days (defaults to 7,30,90)",
     )
+    p_sig.add_argument(
+        "--sort-mode",
+        default="decay_weighted",
+        choices=["decay_weighted", "raw_return"],
+        help="default decay_weighted: hit_rate × log(1+n) × recency decay",
+    )
     p_sig.set_defaults(func=cmd_learning_signals)
+
+    p_auth = learn_sub.add_parser(
+        "authors",
+        help="per-author hit-rate + forward-return on manual drops (R1)",
+    )
+    p_auth.add_argument(
+        "--horizon",
+        dest="horizons",
+        type=int,
+        action="append",
+        help="repeatable: forward-return horizon in days (defaults to 7,30,90)",
+    )
+    p_auth.add_argument(
+        "--with-meta",
+        action="store_true",
+        help="include _meta diagnostic block (recommended on empty DB)",
+    )
+    p_auth.set_defaults(func=cmd_learning_authors)
+
+    p_conv = learn_sub.add_parser(
+        "conviction-calibration",
+        help="bucket forward returns by user.conviction (1-5) (R2)",
+    )
+    p_conv.add_argument(
+        "--horizon",
+        dest="horizons",
+        type=int,
+        action="append",
+        help="repeatable: forward-return horizon in days (defaults to 7,30,90)",
+    )
+    p_conv.set_defaults(func=cmd_learning_conviction)
 
     p_hist = learn_sub.add_parser(
         "signal-history",

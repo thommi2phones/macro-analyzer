@@ -412,6 +412,33 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_trade_reviews_completed
         ON trade_reviews (completed_at DESC)
     """,
+    # ─── Score hindsight overlay ─────────────────────────────────────────
+    # Per-trade-review Q4 (setup_score_hindsight: over | right | under)
+    # written by journal-feedback-loop's feedback_writer when a review
+    # lands. Consumed by learning/score_outcome_correlation to surface
+    # systematic scorer over/under-confidence patterns. One row per
+    # review; FK to both trade_reviews and trades + score_id for the
+    # composite "which score was being judged" lookup.
+    """
+    CREATE TABLE IF NOT EXISTS score_hindsight_overlay (
+        overlay_id TEXT PRIMARY KEY,
+        review_id TEXT NOT NULL,
+        trade_id TEXT NOT NULL,
+        score_id TEXT,
+        hindsight_verdict TEXT NOT NULL,     -- enum: over | right | under
+        recorded_at TEXT NOT NULL,
+        FOREIGN KEY (review_id) REFERENCES trade_reviews (review_id),
+        FOREIGN KEY (trade_id) REFERENCES trades (trade_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_score_hindsight_trade
+        ON score_hindsight_overlay (trade_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_score_hindsight_verdict
+        ON score_hindsight_overlay (hindsight_verdict, recorded_at DESC)
+    """,
 ]
 
 

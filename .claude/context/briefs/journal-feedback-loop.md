@@ -76,7 +76,7 @@ When a review lands (`feedback_writer.py`):
 | Review field → | Writes to / triggers |
 |---|---|
 | Q2 `sources_credited` | One `source_outcomes` row per credited source. `attribution_weight` = 1/N (equal split for now; refine in v2). Carries `outcome_pnl_percent` from `trades.pnl_percent` |
-| Q4 `setup_score_hindsight` | Append to a calibration log (new file `data/score_calibration.jsonl` or table). `learning/score_outcome_correlation` reads this overlay so the scorer sees "I said 80, hindsight said over" patterns |
+| Q4 `setup_score_hindsight` | Insert into `score_hindsight_overlay` table (PM will add when wiring feedback_writer — for now, ML loop v2's overlay reader probes `data/score_calibration.jsonl` as a stop-gap; do NOT ship the JSONL writer, the table is the locked v1 form). One row per review: `(overlay_id PK, review_id FK, trade_id FK, score_id FK, hindsight_verdict, recorded_at)`. `learning/score_outcome_correlation` reads it to surface "I said 80, hindsight said over" patterns |
 | Q5 `surprise_factor` | Aggregated per-regime: a future `regime_instability` indicator on the SPA macro strip reads this |
 | Q1 `thesis_validity` | Surfaced in `learning/regime_accuracy` (item 5 in ML loop phase 2 brief) — closes the loop on regime classifier accuracy |
 

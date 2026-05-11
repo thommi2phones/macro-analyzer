@@ -29,11 +29,15 @@ from macro_positioning.ingestion.source_lifecycle import (
 from macro_positioning.learning import (
     attribution as learning_attribution,
     author_attribution as learning_author_attribution,
+    backfill_model_versions as learning_backfill_model_versions,
+    backfill_quality_scores as learning_backfill_quality_scores,
     conviction_calibration as learning_conviction_calibration,
     mention_precision as learning_mention_precision,
+    quality_summary as learning_quality_summary,
     score_outcome_correlation as learning_correlation,
     signal_attribution as learning_signal_attribution,
     signal_history as learning_signal_history,
+    version_stats as learning_version_stats,
 )
 from macro_positioning.pipelines.run_pipeline import build_pipeline
 from macro_positioning.prices.fetcher import fetch_and_persist as fetch_prices_persist
@@ -303,6 +307,52 @@ def cmd_learning_correlation(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_learning_version_backfill(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        result = learning_backfill_model_versions(conn, dry_run=args.dry_run)
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_learning_version_stats(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        result = learning_version_stats(conn)
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_learning_quality_backfill(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        result = learning_backfill_quality_scores(
+            conn, since_days=args.since, dry_run=args.dry_run
+        )
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_learning_quality_summary(args: argparse.Namespace) -> int:
+    import json as _json
+    conn = _learning_connect()
+    try:
+        result = learning_quality_summary(conn)
+    finally:
+        conn.close()
+    print(_json.dumps(result, indent=2))
+    return 0
+
+
 def cmd_learning_mention_precision(args: argparse.Namespace) -> int:
     import json as _json
     conn = _learning_connect()
@@ -494,6 +544,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_mp.add_argument("--threshold", type=int, default=70, help="adjusted_total_score that counts as 'good'")
     p_mp.add_argument("--horizon", type=int, default=30, help="horizon in days for the score-well check")
     p_mp.set_defaults(func=cmd_learning_mention_precision)
+
+    # ---- learning > version (item 7) ---------------------------------------
+    p_ver = learn_sub.add_parser(
+        "version",
+        help="agent_call_log.model_version helpers (item 7)",
+    )
+    ver_sub = p_ver.add_subparsers(dest="version_command", required=True)
+    p_ver_bf = ver_sub.add_parser("backfill", help="set model_version where NULL (never overwrites)")
+    p_ver_bf.add_argument("--dry-run", action="store_true")
+    p_ver_bf.set_defaults(func=cmd_learning_version_backfill)
+    p_ver_st = ver_sub.add_parser("stats", help="per-(agent, model_version) call counts + success rate")
+    p_ver_st.set_defaults(func=cmd_learning_version_stats)
+
+    # ---- learning > quality (item 4) ---------------------------------------
+    p_qual = learn_sub.add_parser(
+        "quality",
+        help="agent_call_log.quality_score backfill + summary (item 4)",
+    )
+    qual_sub = p_qual.add_subparsers(dest="quality_command", required=True)
+    p_qual_bf = qual_sub.add_parser("backfill", help="heuristic-score NULL rows (conservative)")
+    p_qual_bf.add_argument("--since", type=int, default=None, help="only score rows from the last N days")
+    p_qual_bf.add_argument("--dry-run", action="store_true")
+    p_qual_bf.set_defaults(func=cmd_learning_quality_backfill)
+    p_qual_sum = qual_sub.add_parser("summary", help="avg quality per agent + per (agent, model_version)")
+    p_qual_sum.set_defaults(func=cmd_learning_quality_summary)
 
     return parser
 

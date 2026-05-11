@@ -423,6 +423,59 @@ def cmd_learning_mention_precision(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rules_check(args: argparse.Namespace) -> int:
+    """Run a TradeProposal through the gate evaluator and print the decision."""
+    import json as _json
+    import sqlite3
+
+    from macro_positioning.rules.gate import (
+        GateDecision,
+        TradeProposal,
+        evaluate_trade_proposal,
+    )
+
+    try:
+        p, f, i = (int(x) for x in args.confluence.split(","))
+    except (ValueError, AttributeError):
+        print(
+            "error: --confluence wants 3 comma-separated ints, e.g. 3,2,1",
+            file=sys.stderr,
+        )
+        return 2
+
+    tps_tuple: tuple[float, ...] = ()
+    if args.tps:
+        try:
+            tps_tuple = tuple(float(x) for x in args.tps.split(","))
+        except ValueError:
+            print("error: --tps wants comma-separated numbers", file=sys.stderr)
+            return 2
+
+    proposal = TradeProposal(
+        ticker=args.ticker,
+        side=args.side,
+        entry=args.entry,
+        stop=args.stop,
+        position_size=args.size,
+        account_equity=args.equity,
+        confluence_subscores=(p, f, i),
+        setup_category=args.setup,
+        tps=tps_tuple,
+    )
+
+    initialize_database(settings.sqlite_path)
+    conn = sqlite3.connect(settings.sqlite_path)
+    try:
+        decision: GateDecision = evaluate_trade_proposal(
+            proposal, conn, mode=args.mode
+        )
+    finally:
+        conn.close()
+
+    print(_json.dumps(decision.as_dict(), indent=2))
+    return 0 if decision.approved else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="macro-positioning",
@@ -587,6 +640,46 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_jr.add_argument("trade_id")
     p_jr.set_defaults(func=cmd_journal_review)
+
+    # ---- rules --------------------------------------------------------------
+    p_rules = sub.add_parser(
+        "rules",
+        help="trading-rule framework: gate-check a proposal against confluence/risk/portfolio caps",
+    )
+    rules_sub = p_rules.add_subparsers(dest="rules_command", required=True)
+
+    p_rc = rules_sub.add_parser(
+        "check",
+        help="evaluate a TradeProposal against all v1 rules (advisory by default)",
+    )
+    p_rc.add_argument("--ticker", required=True)
+    p_rc.add_argument("--side", choices=["long", "short"], required=True)
+    p_rc.add_argument("--entry", type=float, required=True)
+    p_rc.add_argument("--stop", type=float, required=True)
+    p_rc.add_argument("--size", type=float, required=True, help="position size in units")
+    p_rc.add_argument(
+        "--equity",
+        type=float,
+        required=True,
+        help="account equity used as the risk-percent denominator",
+    )
+    p_rc.add_argument(
+        "--confluence",
+        required=True,
+        help="three comma-separated subscores: pattern,fib,indicator (e.g. 3,2,1)",
+    )
+    p_rc.add_argument("--tps", default="", help="comma-separated take-profit prices (optional)")
+    p_rc.add_argument(
+        "--setup",
+        default=None,
+        help="setup category (flag|pennant|channel|hs|cup|range|ema|breakout)",
+    )
+    p_rc.add_argument(
+        "--mode",
+        choices=["advisory", "enforce"],
+        default="advisory",
+    )
+    p_rc.set_defaults(func=cmd_rules_check)
 
     return parser
 

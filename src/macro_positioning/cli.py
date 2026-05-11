@@ -476,6 +476,140 @@ def cmd_rules_check(args: argparse.Namespace) -> int:
     return 0 if decision.approved else 1
 
 
+def cmd_rules_plan(args: argparse.Namespace) -> int:
+    """Capture an entry-time trade plan."""
+    import json as _json
+    import sqlite3
+
+    from macro_positioning.rules import repository as rrepo
+    from macro_positioning.rules.confluence import score_confluence
+    from macro_positioning.rules.portfolio import bucket_for_ticker
+    from macro_positioning.rules.risk import account_risk_pct
+
+    tps: list[float] = []
+    if args.tps:
+        try:
+            tps = [float(x) for x in args.tps.split(",")]
+        except ValueError:
+            print("error: --tps wants comma-separated numbers", file=sys.stderr)
+            return 2
+
+    confluence_total = pattern_s = fib_s = ind_s = None
+    if args.confluence:
+        try:
+            p, f, i = (int(x) for x in args.confluence.split(","))
+        except ValueError:
+            print("error: --confluence wants 3 comma-separated ints", file=sys.stderr)
+            return 2
+        cb = score_confluence(p, f, i)
+        confluence_total, pattern_s, fib_s, ind_s = cb.total, cb.pattern, cb.fib, cb.indicator
+
+    initialize_database(settings.sqlite_path)
+    conn = sqlite3.connect(settings.sqlite_path)
+    try:
+        # Resolve ticker → bucket
+        row = conn.execute(
+            """
+            SELECT a.ticker
+            FROM trades t
+            LEFT JOIN assets a ON a.asset_id = t.asset_id
+            WHERE t.trade_id = ?
+            """,
+            (args.trade_id,),
+        ).fetchone()
+        if row is None:
+            print(f"error: unknown trade_id {args.trade_id!r}", file=sys.stderr)
+            return 1
+        bucket = bucket_for_ticker(row[0] or "")
+
+        risk_pct = None
+        if args.equity is not None:
+            try:
+                risk_pct = account_risk_pct(args.entry, args.stop, args.size, args.equity)
+            except ValueError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
+
+        plan_payload = {
+            "planned_entry": args.entry,
+            "planned_stop": args.stop,
+            "planned_tps": tps,
+            "planned_size": args.size,
+            "planned_account_equity": args.equity,
+            "planned_risk_pct": risk_pct,
+            "planned_setup_category": args.category,
+            "planned_confluence_score": confluence_total,
+            "planned_pattern_subscore": pattern_s,
+            "planned_fib_subscore": fib_s,
+            "planned_indicator_subscore": ind_s,
+            "planned_correlated_bucket": bucket,
+            "planned_entry_strategy": args.strategy,
+            "notes": args.notes,
+        }
+        try:
+            plan_id = rrepo.save_plan(conn, args.trade_id, plan_payload)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        except sqlite3.IntegrityError:
+            print(f"error: plan already exists for trade {args.trade_id!r}", file=sys.stderr)
+            return 1
+        rrepo.hydrate_trade_rule_columns(
+            conn, args.trade_id,
+            setup_category=args.category,
+            confluence_score=confluence_total,
+            pattern_subscore=pattern_s,
+            fib_subscore=fib_s,
+            indicator_subscore=ind_s,
+            account_risk_pct=risk_pct,
+            correlated_bucket=bucket,
+            entry_followed_retest=(
+                1 if args.strategy == "breakout_retest"
+                else 0 if args.strategy is not None
+                else None
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    print(_json.dumps({
+        "plan_id": plan_id,
+        "trade_id": args.trade_id,
+        "planned_risk_pct": risk_pct,
+        "planned_confluence_score": confluence_total,
+        "planned_correlated_bucket": bucket,
+    }, indent=2))
+    return 0
+
+
+def cmd_rules_adherence(args: argparse.Namespace) -> int:
+    """Show the rule-adherence breakdown for a trade (re-computed live)."""
+    import json as _json
+    import sqlite3
+
+    from macro_positioning.journal import repository as jrepo
+    from macro_positioning.rules import repository as rrepo
+    from macro_positioning.rules.adherence import compute_adherence
+
+    conn = sqlite3.connect(settings.sqlite_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        trade_row = conn.execute(
+            "SELECT * FROM trades WHERE trade_id = ?", (args.trade_id,)
+        ).fetchone()
+        if trade_row is None:
+            print(f"error: unknown trade_id {args.trade_id!r}", file=sys.stderr)
+            return 1
+        plan = rrepo.get_plan(conn, args.trade_id)
+        review = jrepo.get_review(conn, args.trade_id)
+        result = compute_adherence(dict(trade_row), plan, review)
+    finally:
+        conn.close()
+    print(_json.dumps(result.as_dict(), indent=2))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="macro-positioning",
@@ -680,6 +814,41 @@ def build_parser() -> argparse.ArgumentParser:
         default="advisory",
     )
     p_rc.set_defaults(func=cmd_rules_check)
+
+    p_rp = rules_sub.add_parser(
+        "plan",
+        help="capture the immutable entry-time trade plan (one per trade)",
+    )
+    p_rp.add_argument("trade_id")
+    p_rp.add_argument("--entry", type=float, required=True)
+    p_rp.add_argument("--stop", type=float, required=True)
+    p_rp.add_argument("--size", type=float, required=True)
+    p_rp.add_argument("--tps", default="", help="comma-separated take-profit prices")
+    p_rp.add_argument("--equity", type=float, default=None, help="account equity (denominator for risk_pct)")
+    p_rp.add_argument(
+        "--category",
+        choices=["flag", "pennant", "channel", "hs", "cup", "range", "ema", "breakout"],
+        default=None,
+    )
+    p_rp.add_argument(
+        "--confluence",
+        default=None,
+        help="3 comma-separated subscores: pattern,fib,indicator",
+    )
+    p_rp.add_argument(
+        "--strategy",
+        choices=["breakout_retest", "breakout_impulse", "dip_buy", "range_fade", "other"],
+        default="breakout_retest",
+    )
+    p_rp.add_argument("--notes", default=None)
+    p_rp.set_defaults(func=cmd_rules_plan)
+
+    p_ra = rules_sub.add_parser(
+        "adherence",
+        help="recompute and print the rule-adherence breakdown for a trade",
+    )
+    p_ra.add_argument("trade_id")
+    p_ra.set_defaults(func=cmd_rules_adherence)
 
     return parser
 

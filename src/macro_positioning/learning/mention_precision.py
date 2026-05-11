@@ -20,9 +20,13 @@ windowed by k) for context.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+
+
+log = logging.getLogger(__name__)
 
 
 def _parse_iso(ts: str) -> datetime | None:
@@ -100,6 +104,18 @@ def mention_precision(
         later_scores[ticker].append((dt, int(adj_total)))
 
     if not promotions:
+        # Diagnostic: how many score rows exist vs. how many had a
+        # mentions:* origin? Lets the dashboard distinguish "no scoring
+        # yet" from "scoring is happening but mentions never promoted".
+        n_total_scores = conn.execute("SELECT COUNT(*) FROM trade_scores").fetchone()[0]
+        if n_total_scores == 0:
+            reason = "no trade_scores rows yet — run `score run` to populate"
+        else:
+            reason = (
+                f"{n_total_scores} trade_scores rows exist but none had a "
+                "mentions:* origin in reasoning_trail_json.watchlist_origins"
+            )
+        log.info("mention_precision: %s", reason)
         return {
             "n_promoted": 0,
             "n_good": 0,
@@ -108,6 +124,11 @@ def mention_precision(
             "score_threshold": score_threshold,
             "horizon_days": horizon_days,
             "ranked_by_promotion": [],
+            "_meta": {
+                "lens": "mention_precision",
+                "n_total_scores": int(n_total_scores),
+                "message": reason,
+            },
         }
 
     # Trades by ticker (any trade with entry_date >= promotion satisfies (b)).

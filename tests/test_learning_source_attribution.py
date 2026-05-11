@@ -14,6 +14,7 @@ from macro_positioning.learning.source_attribution import (
     attribution,
     attribution_30d,
     attribution_90d,
+    recommended_attribution_weights,
     signal_attribution,
     signal_history,
 )
@@ -70,7 +71,9 @@ def test_attribution_aggregates_per_source_and_sorts_by_weighted(tmp_path: Path)
     _insert_outcome(conn, "src_b", 1.0, 4.0, NOW - timedelta(days=1))
     conn.commit()
 
-    rows = attribution(conn, window_days=30, now=NOW)
+    # recency_half_life_days=0 disables the v2 read-side decay so we
+    # can assert the pure stored-weight math here.
+    rows = attribution(conn, window_days=30, recency_half_life_days=0, now=NOW)
     by_id = {r["source_id"]: r for r in rows}
     assert by_id["src_a"]["n_outcomes"] == 2
     assert by_id["src_a"]["total_pnl_pct"] == pytest.approx(8.0)
@@ -79,6 +82,67 @@ def test_attribution_aggregates_per_source_and_sorts_by_weighted(tmp_path: Path)
     assert by_id["src_a"]["weighted_pnl_pct"] == pytest.approx(6.0)
     # src_a (6.0) > src_b (4.0) → first
     assert rows[0]["source_id"] == "src_a"
+
+
+def test_attribution_recency_decay_favors_fresh_contributions(tmp_path: Path):
+    """Two sources, same stored weight, same |pnl|, opposite sign.
+    Recency decay should pull the leaderboard toward the fresher one."""
+    conn = _conn(tmp_path)
+    _insert_outcome(conn, "src_fresh", 1.0, 10.0, NOW - timedelta(days=1))
+    _insert_outcome(conn, "src_stale", 1.0, 10.0, NOW - timedelta(days=25))
+    conn.commit()
+
+    # half-life 5d → 25d-old row counts at 0.5^5 ≈ 0.031
+    rows = attribution(conn, window_days=30, recency_half_life_days=5, now=NOW)
+    by_id = {r["source_id"]: r for r in rows}
+    assert by_id["src_fresh"]["sum_effective_weight"] > by_id["src_stale"]["sum_effective_weight"] * 10
+    # Both sources earned the same pnl% per row → weighted_pnl_pct equal,
+    # but the *effective weight* tells the dashboard who matters more.
+    assert by_id["src_fresh"]["sum_stored_weight"] == pytest.approx(1.0)
+    assert by_id["src_stale"]["sum_stored_weight"] == pytest.approx(1.0)
+
+
+def test_attribution_include_meta_returns_diagnostic_on_empty(tmp_path: Path):
+    conn = _conn(tmp_path)
+    out = attribution(conn, include_meta=True)
+    assert isinstance(out, dict)
+    assert out["rows"] == []
+    assert out["_meta"]["rows_in_table_total"] == 0
+    assert "feedback_writer hasn't fired yet" in out["_meta"]["message"]
+
+
+def test_attribution_include_meta_returns_summary_on_populated(tmp_path: Path):
+    conn = _conn(tmp_path)
+    _insert_outcome(conn, "src_a", 1.0, 5.0, NOW - timedelta(days=1))
+    conn.commit()
+    out = attribution(conn, include_meta=True, now=NOW)
+    assert out["_meta"]["n_sources"] == 1
+    assert out["_meta"]["rows_in_window"] == 1
+
+
+def test_recommended_attribution_weights_equal_split_fallback():
+    w = recommended_attribution_weights(["a", "b", "c"])
+    # No mention_age_days passed → all sources get half-life-aged weight
+    # of 0.5 → normalized to 1/3 each.
+    assert sum(w.values()) == pytest.approx(1.0)
+    assert w["a"] == pytest.approx(w["b"]) == pytest.approx(w["c"])
+
+
+def test_recommended_attribution_weights_recency_favors_fresh():
+    w = recommended_attribution_weights(
+        ["fresh", "stale"],
+        mention_age_days={"fresh": 0.0, "stale": 28.0},
+        half_life_days=14.0,
+    )
+    assert w["fresh"] > w["stale"]
+    assert sum(w.values()) == pytest.approx(1.0)
+    # fresh (age 0 → weight 1.0) vs stale (age 28 → weight 0.25)
+    # → fresh / total = 1.0 / 1.25 = 0.8
+    assert w["fresh"] == pytest.approx(0.8, abs=0.01)
+
+
+def test_recommended_attribution_weights_empty():
+    assert recommended_attribution_weights([]) == {}
 
 
 def test_attribution_window_excludes_old_rows(tmp_path: Path):
@@ -168,6 +232,50 @@ def test_signal_attribution_skips_mentions_without_price_data(tmp_path: Path):
     assert len(rows) == 1
     assert rows[0]["n_signals"] == 1
     assert rows[0]["horizons"][30]["n_with_price_data"] == 0
+
+
+def test_signal_attribution_breaks_out_per_vertical(tmp_path: Path):
+    """Source mentions URA (commodity) and SPY (index). v2 must give
+    per-vertical hit-rate + return per horizon.
+    URA: 100 → 110 (+10%) — commodity hits.
+    SPY: 400 → 380 (-5%) — index misses.
+    """
+    conn = _conn(tmp_path)
+    pub = NOW - timedelta(days=120)
+
+    _insert_doc(conn, "src_a", pub, "URA looks great, SPY is rolling over")
+    # URA price path
+    _insert_price(conn, "URA", pub - timedelta(days=1), 100.0)
+    _insert_price(conn, "URA", pub, 100.0)
+    _insert_price(conn, "URA", pub + timedelta(days=30), 110.0)
+    _insert_price(conn, "URA", pub + timedelta(days=33), 110.0)
+    # SPY price path
+    _insert_price(conn, "SPY", pub - timedelta(days=1), 400.0)
+    _insert_price(conn, "SPY", pub, 400.0)
+    _insert_price(conn, "SPY", pub + timedelta(days=30), 380.0)
+    _insert_price(conn, "SPY", pub + timedelta(days=33), 380.0)
+    conn.commit()
+
+    rows = signal_attribution(conn, horizons=(30,))
+    assert len(rows) == 1
+    h30 = rows[0]["horizons"][30]
+    by_v = h30["by_vertical"]
+    assert "commodity" in by_v and "index" in by_v
+    assert by_v["commodity"]["hit_rate"] == pytest.approx(1.0)
+    assert by_v["commodity"]["avg_forward_return_pct"] > 5.0
+    assert by_v["index"]["hit_rate"] == pytest.approx(0.0)
+    assert by_v["index"]["avg_forward_return_pct"] < 0.0
+    # Source row carries ticker_verticals for quick top-N display
+    assert set(rows[0]["ticker_verticals"]) >= {"commodity", "index"}
+
+
+def test_signal_attribution_include_meta(tmp_path: Path):
+    conn = _conn(tmp_path)
+    out = signal_attribution(conn, include_meta=True)
+    assert isinstance(out, dict)
+    assert out["rows"] == []
+    assert out["_meta"]["n_documents"] == 0
+    assert "no documents" in out["_meta"]["message"]
 
 
 def test_signal_history_buckets_by_month(tmp_path: Path):

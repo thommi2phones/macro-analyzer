@@ -9,113 +9,57 @@ practice. The user takes only a small fraction of any source's calls;
 we still want to grade sources on *every expression they emit*. For
 each (source, document, mentioned-ticker) triple, look up the forward
 price return at 7/30/90d horizons and roll up per source.
+
+────────────────────────────────────────────────────────────────────
+Coordination contract with `journal/feedback_writer.py`
+────────────────────────────────────────────────────────────────────
+The journal-feedback-loop chat will write `source_outcomes` rows when
+trade reviews land. Field mapping this module relies on:
+
+    source_id            ← from Q2 sources_credited (each gets one row)
+    trade_id             ← the closed trade
+    attribution_weight   ← initially 1/N equal split; v2 may use
+                           `recommended_attribution_weights()` below
+                           which weights by mention recency.
+    outcome_pnl_percent  ← trades.pnl_percent (mandatory — rows where
+                           this is NULL are skipped by `attribution()`)
+    recorded_at          ← ISO 8601 UTC; drives the window filter
+    outcome_pnl          ← optional (we don't read it; dashboard uses %)
+    thesis_id            ← optional FK
+    contribution_type    ← optional tag (we don't read it; informational)
+
+If feedback_writer changes any of those four required fields' meanings,
+the regression will surface in test_learning_source_attribution.py
+fixtures — please update fixtures + this contract together.
 """
 
 from __future__ import annotations
 
+import json
+import logging
+import math
 import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Iterable
 
+from macro_positioning.core.settings import settings
 from macro_positioning.ingestion.source_lifecycle import load_sources
 from macro_positioning.scoring.mention_extractor import extract_tickers_from_text
 
 
-# ---------------------------------------------------------------------------
-# 1a — closed-trade P&L lens (source_outcomes driven)
-# ---------------------------------------------------------------------------
-
-def attribution(
-    conn: sqlite3.Connection,
-    *,
-    window_days: int = 30,
-    now: datetime | None = None,
-) -> list[dict]:
-    """Per-source aggregated P&L over the last `window_days`.
-
-    Reads `source_outcomes` rows recorded within the window. Each row
-    already carries `outcome_pnl_percent` (the trade's realized %) and
-    `attribution_weight` (how much of the trade's thesis the source
-    contributed). Weighted P&L is the dot-product of those two.
-
-    Returns rows sorted by `weighted_pnl_pct desc`. Empty when no
-    closed trades have been attributed yet — that's the expected state
-    until the first close lands.
-    """
-    now = now or datetime.now(timezone.utc)
-    cutoff = (now - timedelta(days=window_days)).isoformat()
-
-    cur = conn.execute(
-        """
-        SELECT source_id, attribution_weight, outcome_pnl_percent, recorded_at
-        FROM source_outcomes
-        WHERE recorded_at >= ?
-          AND outcome_pnl_percent IS NOT NULL
-        """,
-        (cutoff,),
-    )
-    rows = cur.fetchall()
-    if not rows:
-        return []
-
-    bucket: dict[str, dict] = defaultdict(
-        lambda: {
-            "n_outcomes": 0,
-            "sum_pnl_pct": 0.0,
-            "sum_weighted_pnl_pct": 0.0,
-            "sum_weight": 0.0,
-            "last_recorded_at": None,
-        }
-    )
-    for source_id, weight, pnl_pct, recorded_at in rows:
-        b = bucket[source_id]
-        b["n_outcomes"] += 1
-        b["sum_pnl_pct"] += float(pnl_pct)
-        b["sum_weighted_pnl_pct"] += float(pnl_pct) * float(weight or 0.0)
-        b["sum_weight"] += float(weight or 0.0)
-        if not b["last_recorded_at"] or recorded_at > b["last_recorded_at"]:
-            b["last_recorded_at"] = recorded_at
-
-    out: list[dict] = []
-    for source_id, b in bucket.items():
-        n = b["n_outcomes"]
-        avg = b["sum_pnl_pct"] / n if n else 0.0
-        weighted = (
-            b["sum_weighted_pnl_pct"] / b["sum_weight"] if b["sum_weight"] else 0.0
-        )
-        out.append(
-            {
-                "source_id": source_id,
-                "n_outcomes": n,
-                "total_pnl_pct": round(b["sum_pnl_pct"], 4),
-                "avg_pnl_pct": round(avg, 4),
-                "weighted_pnl_pct": round(weighted, 4),
-                "last_recorded_at": b["last_recorded_at"],
-                "window_days": window_days,
-            }
-        )
-    out.sort(key=lambda r: r["weighted_pnl_pct"], reverse=True)
-    return out
-
-
-def attribution_30d(conn: sqlite3.Connection) -> list[dict]:
-    return attribution(conn, window_days=30)
-
-
-def attribution_90d(conn: sqlite3.Connection) -> list[dict]:
-    return attribution(conn, window_days=90)
+log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# 1b — expression trend lens (documents × prices)
+# Helpers shared across both lenses
 # ---------------------------------------------------------------------------
 
-def _parse_iso(ts: str) -> datetime | None:
+def _parse_iso(ts: str | None) -> datetime | None:
     if not ts:
         return None
     try:
-        # Accept both "YYYY-MM-DD" and ISO datetimes.
         if "T" in ts:
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         else:
@@ -127,13 +71,287 @@ def _parse_iso(ts: str) -> datetime | None:
         return None
 
 
+def _recency_multiplier(age_days: float, half_life_days: float) -> float:
+    """Exponential decay: a row exactly `half_life_days` old counts at 0.5.
+    Bounded to [0, 1]."""
+    if half_life_days <= 0:
+        return 1.0
+    return float(math.pow(0.5, max(0.0, age_days) / half_life_days))
+
+
+# ---------------------------------------------------------------------------
+# Vertical mapping — ticker → asset_class buckets used by 1b
+# ---------------------------------------------------------------------------
+
+_VERTICAL_CACHE: dict[str, str] | None = None
+
+
+def _load_ticker_verticals() -> dict[str, str]:
+    """Build {ticker: vertical} once per process.
+
+    Source-of-truth priority:
+      1. config/watchlist.json anchors[].asset_class
+      2. config/asset_themes.json themes[*].watchlist_tickers + asset_class
+      Fallback: 'uncategorized'.
+    """
+    global _VERTICAL_CACHE
+    if _VERTICAL_CACHE is not None:
+        return _VERTICAL_CACHE
+
+    out: dict[str, str] = {}
+    base = Path(settings.base_dir) / "config"
+
+    # Anchors
+    try:
+        w = json.loads((base / "watchlist.json").read_text())
+        for a in w.get("anchors", []):
+            if isinstance(a, dict) and a.get("ticker") and a.get("asset_class"):
+                out[a["ticker"].upper()] = a["asset_class"]
+    except (OSError, ValueError, KeyError) as e:
+        log.debug("watchlist.json read failed: %s", e)
+
+    # Themes — only fill if anchor didn't claim the ticker
+    try:
+        t = json.loads((base / "asset_themes.json").read_text())
+        for _theme_id, theme in t.get("themes", {}).items():
+            if not isinstance(theme, dict):
+                continue
+            cls = theme.get("asset_class") or "uncategorized"
+            for tk in theme.get("watchlist_tickers", []) or []:
+                k = tk.upper()
+                if k not in out:
+                    out[k] = cls
+    except (OSError, ValueError, KeyError) as e:
+        log.debug("asset_themes.json read failed: %s", e)
+
+    _VERTICAL_CACHE = out
+    return out
+
+
+def _vertical_for(ticker: str) -> str:
+    return _load_ticker_verticals().get(ticker.upper(), "uncategorized")
+
+
+# ---------------------------------------------------------------------------
+# 1a — closed-trade P&L lens (source_outcomes driven)
+# ---------------------------------------------------------------------------
+
+def attribution(
+    conn: sqlite3.Connection,
+    *,
+    window_days: int = 30,
+    recency_half_life_days: float | None = None,
+    now: datetime | None = None,
+    include_meta: bool = False,
+) -> list[dict] | dict:
+    """Per-source aggregated P&L over the last `window_days`.
+
+    Reads `source_outcomes` rows recorded within the window. Each row
+    carries `outcome_pnl_percent` (the realized trade %) and a stored
+    `attribution_weight` (how much credit the source got at review
+    time — initially 1/N from feedback_writer).
+
+    Recency decay on read
+    ─────────────────────
+    Beyond the stored weight, this aggregation multiplies each row by
+    a recency factor `0.5 ** (age_days / half_life)`. Default half-life
+    is `window_days / 2` so the leaderboard naturally prefers fresher
+    contributions without dropping older ones entirely. Pass
+    `recency_half_life_days=None` to your call site's overriding value,
+    or `recency_half_life_days=0` to disable decay (rows count at
+    stored weight only).
+
+    Returns rows sorted by `weighted_pnl_pct desc`. Empty (the default
+    today, since no trades have closed yet) when the window contains
+    no attributed rows. Pass `include_meta=True` to get a dict with a
+    `_meta` summary + a `rows` key — useful for surfaces that want to
+    explain *why* there's no data ("0 rows in 30d window; check that
+    feedback_writer has populated source_outcomes").
+    """
+    now = now or datetime.now(timezone.utc)
+    cutoff_dt = now - timedelta(days=window_days)
+    cutoff = cutoff_dt.isoformat()
+    half_life = (
+        recency_half_life_days
+        if recency_half_life_days is not None
+        else max(1.0, window_days / 2.0)
+    )
+
+    # Quickly count total source_outcomes rows for the empty-data
+    # diagnostic (so a fresh DB explains why result is empty).
+    total_rows = conn.execute("SELECT COUNT(*) FROM source_outcomes").fetchone()[0]
+
+    cur = conn.execute(
+        """
+        SELECT source_id, attribution_weight, outcome_pnl_percent, recorded_at
+        FROM source_outcomes
+        WHERE recorded_at >= ?
+          AND outcome_pnl_percent IS NOT NULL
+        """,
+        (cutoff,),
+    )
+    rows = cur.fetchall()
+
+    if not rows:
+        meta = {
+            "lens": "1a_closed_trade",
+            "window_days": window_days,
+            "recency_half_life_days": half_life,
+            "rows_in_table_total": int(total_rows),
+            "rows_in_window": 0,
+            "n_sources": 0,
+            "message": (
+                "no source_outcomes rows in window"
+                + (" — table is empty (feedback_writer hasn't fired yet)"
+                   if total_rows == 0 else
+                   f" — table has {total_rows} rows total, but none within"
+                   f" the last {window_days}d")
+            ),
+        }
+        log.info("attribution: %s", meta["message"])
+        if include_meta:
+            return {"_meta": meta, "rows": []}
+        return []
+
+    bucket: dict[str, dict] = defaultdict(
+        lambda: {
+            "n_outcomes": 0,
+            "sum_pnl_pct": 0.0,
+            "sum_weighted_pnl_pct": 0.0,
+            "sum_effective_weight": 0.0,
+            "sum_stored_weight": 0.0,
+            "last_recorded_at": None,
+        }
+    )
+    for source_id, weight, pnl_pct, recorded_at in rows:
+        stored_w = float(weight or 0.0)
+        rec_dt = _parse_iso(recorded_at) or now
+        age_days = max(0.0, (now - rec_dt).total_seconds() / 86400.0)
+        decay = _recency_multiplier(age_days, half_life)
+        effective_w = stored_w * decay
+
+        b = bucket[source_id]
+        b["n_outcomes"] += 1
+        b["sum_pnl_pct"] += float(pnl_pct)
+        b["sum_weighted_pnl_pct"] += float(pnl_pct) * effective_w
+        b["sum_effective_weight"] += effective_w
+        b["sum_stored_weight"] += stored_w
+        if not b["last_recorded_at"] or recorded_at > b["last_recorded_at"]:
+            b["last_recorded_at"] = recorded_at
+
+    out: list[dict] = []
+    for source_id, b in bucket.items():
+        n = b["n_outcomes"]
+        avg = b["sum_pnl_pct"] / n if n else 0.0
+        weighted = (
+            b["sum_weighted_pnl_pct"] / b["sum_effective_weight"]
+            if b["sum_effective_weight"]
+            else 0.0
+        )
+        out.append(
+            {
+                "source_id": source_id,
+                "n_outcomes": n,
+                "total_pnl_pct": round(b["sum_pnl_pct"], 4),
+                "avg_pnl_pct": round(avg, 4),
+                "weighted_pnl_pct": round(weighted, 4),
+                "sum_effective_weight": round(b["sum_effective_weight"], 4),
+                "sum_stored_weight": round(b["sum_stored_weight"], 4),
+                "last_recorded_at": b["last_recorded_at"],
+                "window_days": window_days,
+                "recency_half_life_days": half_life,
+            }
+        )
+    out.sort(key=lambda r: r["weighted_pnl_pct"], reverse=True)
+
+    if include_meta:
+        return {
+            "_meta": {
+                "lens": "1a_closed_trade",
+                "window_days": window_days,
+                "recency_half_life_days": half_life,
+                "rows_in_table_total": int(total_rows),
+                "rows_in_window": len(rows),
+                "n_sources": len(out),
+                "message": f"{len(out)} sources across {len(rows)} attributions in the last {window_days}d",
+            },
+            "rows": out,
+        }
+    return out
+
+
+def attribution_30d(conn: sqlite3.Connection) -> list[dict]:
+    return attribution(conn, window_days=30)  # type: ignore[return-value]
+
+
+def attribution_90d(conn: sqlite3.Connection) -> list[dict]:
+    return attribution(conn, window_days=90)  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Helper for journal/feedback_writer.py — recommended attribution weights
+# ---------------------------------------------------------------------------
+
+def recommended_attribution_weights(
+    sources_credited: list[str],
+    *,
+    mention_age_days: dict[str, float] | None = None,
+    half_life_days: float = 14.0,
+) -> dict[str, float]:
+    """Recommend per-source attribution_weight for a single
+    `trade_reviews.sources_credited_json` submission.
+
+    Feedback_writer.py default behavior (per the journal-feedback-loop
+    brief, v1) is to write `attribution_weight = 1/N` equal-split. This
+    helper offers a richer alternative: weight each source by the
+    recency of its most-recent supporting mention before the trade was
+    opened, then normalize so the weights sum to 1.0.
+
+    Arguments
+    ─────────
+    sources_credited
+        The list from Q2 of the 7-question review modal.
+    mention_age_days
+        Optional {source_id: age_in_days} captured at trade-open time
+        — i.e. how stale was each source's most-recent qualifying
+        mention. If missing, the source falls back to half_life_days
+        (i.e. weight 0.5 before normalization).
+    half_life_days
+        Decay half-life. Default 14d matches the working life of a
+        macro thesis read against the news cycle.
+
+    Returns
+    ─────────
+    Dict {source_id: weight} normalized to sum 1.0. If all sources
+    have zero contribution (impossible under normal flow), falls back
+    to 1/N equal split rather than dividing by zero.
+
+    This helper is OPT-IN — feedback_writer can keep 1/N if it wants;
+    the consumption side (`attribution()` above) applies its own
+    recency decay regardless of which weights you store.
+    """
+    if not sources_credited:
+        return {}
+    ages = mention_age_days or {}
+    raw: dict[str, float] = {}
+    for sid in sources_credited:
+        age = ages.get(sid, half_life_days)
+        raw[sid] = _recency_multiplier(age, half_life_days)
+    total = sum(raw.values())
+    if total <= 0:
+        n = len(sources_credited)
+        return {sid: 1.0 / n for sid in sources_credited}
+    return {sid: w / total for sid, w in raw.items()}
+
+
+# ---------------------------------------------------------------------------
+# 1b — expression trend lens (documents × prices)
+# ---------------------------------------------------------------------------
+
 def _load_close_lookup(
     conn: sqlite3.Connection, tickers: set[str]
 ) -> dict[str, list[tuple[datetime, float]]]:
-    """Return {ticker: [(observed_dt, close), ...]} sorted ascending.
-
-    Single query per ticker batch keeps SQL roundtrips bounded.
-    """
+    """{ticker: [(observed_dt, close), ...]} sorted ascending."""
     if not tickers:
         return {}
     placeholders = ",".join("?" * len(tickers))
@@ -156,10 +374,7 @@ def _load_close_lookup(
     return out
 
 
-def _close_at_or_before(
-    bars: list[tuple[datetime, float]], target: datetime
-) -> float | None:
-    """Last close at or before `target`. Bars sorted ascending."""
+def _close_at_or_before(bars: list[tuple[datetime, float]], target: datetime) -> float | None:
     last: float | None = None
     for dt, close in bars:
         if dt <= target:
@@ -169,10 +384,7 @@ def _close_at_or_before(
     return last
 
 
-def _close_at_or_after(
-    bars: list[tuple[datetime, float]], target: datetime
-) -> float | None:
-    """First close at or after `target`. Bars sorted ascending."""
+def _close_at_or_after(bars: list[tuple[datetime, float]], target: datetime) -> float | None:
     for dt, close in bars:
         if dt >= target:
             return close
@@ -180,29 +392,18 @@ def _close_at_or_after(
 
 
 def _source_tags() -> dict[str, list[str]]:
-    """Map source_id → routing_tags from config/sources.json.
-
-    Returns {} if the config can't be read; callers handle empty.
-    """
     try:
         return {
             s.source_id: list(s.routing_tags or s.market_focus or [])
             for s in load_sources(include_archived=True)
         }
-    except Exception:
+    except Exception as e:
+        log.debug("load_sources failed: %s", e)
         return {}
 
 
-def _iter_signals(
-    conn: sqlite3.Connection,
-) -> Iterable[tuple[str, datetime, str, str]]:
-    """Yield (source_id, published_dt, document_id, ticker) for every
-    (document, ticker) pair where the doc mentions an allow-listed ticker.
-
-    Uses `extract_tickers_from_text` (already shared with the
-    watchlist resolver) so this is the same definition of "mention"
-    that drives the `mentions:*` watchlist origin.
-    """
+def _iter_signals(conn: sqlite3.Connection) -> Iterable[tuple[str, datetime, str, str]]:
+    """Yield (source_id, published_dt, document_id, ticker)."""
     cur = conn.execute(
         """
         SELECT document_id, source_id, published_at, cleaned_text
@@ -224,41 +425,64 @@ def signal_attribution(
     horizons: tuple[int, ...] = (7, 30, 90),
     min_signals: int = 1,
     now: datetime | None = None,
-) -> list[dict]:
+    include_meta: bool = False,
+) -> list[dict] | dict:
     """Per-source forward-return rollup across every ticker the source
     has mentioned in any document, regardless of whether a trade was
     taken.
 
-    For each (source, doc, ticker) triple:
-      entry  = last close on/before doc.published_at
-      exit_h = first close on/after published_at + h days
-      ret    = (exit_h / entry) - 1  (skip if either close missing)
-
-    Aggregated per source per horizon. Bars older than (max horizon)
-    days from `now` are still included if data exists — the horizon
-    look-up does not require "today" to be after the horizon.
+    NEW IN V2: per-vertical breakdown nested under each horizon.
+    Each signal is bucketed by the *ticker's* asset_class (from
+    config/watchlist.json anchors, falling back to asset_themes.json,
+    then 'uncategorized'). The dashboard can now ask "how does
+    source X do on commodity calls vs. crypto calls?".
     """
     now = now or datetime.now(timezone.utc)
 
-    # Pass 1: collect signals + tickers we'll need prices for.
-    signals: list[tuple[str, datetime, str]] = []  # (source_id, dt, ticker)
+    # Collect signals + tickers we'll need prices for.
+    signals: list[tuple[str, datetime, str]] = []
     tickers: set[str] = set()
     for source_id, dt, _doc_id, ticker in _iter_signals(conn):
         signals.append((source_id, dt, ticker))
         tickers.add(ticker)
 
+    n_docs_total = conn.execute(
+        "SELECT COUNT(*) FROM documents WHERE cleaned_text IS NOT NULL AND cleaned_text != ''"
+    ).fetchone()[0]
+    n_prices_total = conn.execute("SELECT COUNT(*) FROM prices").fetchone()[0]
+
     if not signals:
+        meta = {
+            "lens": "1b_expression_trend",
+            "horizons": list(horizons),
+            "n_documents": int(n_docs_total),
+            "n_prices_rows": int(n_prices_total),
+            "n_signals": 0,
+            "message": (
+                "no signals extracted"
+                + (" — no documents in DB" if n_docs_total == 0 else
+                   " — documents present but none mentioned an allow-listed ticker")
+            ),
+        }
+        log.info("signal_attribution: %s", meta["message"])
+        if include_meta:
+            return {"_meta": meta, "rows": []}
         return []
 
     closes = _load_close_lookup(conn, tickers)
     tags = _source_tags()
 
-    # Per source per horizon accumulators.
-    # by_source[sid] = {
-    #   "n_signals": int,
-    #   "horizons": {h: {"n_with_price_data": int, "sum_ret": float, "n_pos": int}},
-    #   "verticals": Counter
-    # }
+    def _empty_vertical_acc() -> dict:
+        return {"n_signals": 0, "n_with_price_data": 0, "sum_ret": 0.0, "n_pos": 0}
+
+    def _empty_horizon_acc() -> dict:
+        return {
+            "n_with_price_data": 0,
+            "sum_ret": 0.0,
+            "n_pos": 0,
+            "by_vertical": defaultdict(_empty_vertical_acc),
+        }
+
     by_source: dict[str, dict] = {}
 
     for source_id, dt, ticker in signals:
@@ -266,21 +490,23 @@ def signal_attribution(
             source_id,
             {
                 "n_signals": 0,
-                "horizons": {h: {"n_with_price_data": 0, "sum_ret": 0.0, "n_pos": 0} for h in horizons},
-                "verticals": Counter(),
+                "horizons": {h: _empty_horizon_acc() for h in horizons},
+                "source_verticals": Counter(),   # from sources.json routing_tags
+                "ticker_verticals": Counter(),   # from ticker asset_class
                 "first_signal_at": None,
                 "last_signal_at": None,
             },
         )
         bucket["n_signals"] += 1
-        # Track time bounds (ISO strings for printability).
         iso = dt.isoformat()
         if not bucket["first_signal_at"] or iso < bucket["first_signal_at"]:
             bucket["first_signal_at"] = iso
         if not bucket["last_signal_at"] or iso > bucket["last_signal_at"]:
             bucket["last_signal_at"] = iso
         for tag in tags.get(source_id, []):
-            bucket["verticals"][tag] += 1
+            bucket["source_verticals"][tag] += 1
+        vert = _vertical_for(ticker)
+        bucket["ticker_verticals"][vert] += 1
 
         bars = closes.get(ticker, [])
         if not bars:
@@ -299,6 +525,12 @@ def signal_attribution(
             hb["sum_ret"] += ret
             if ret > 0:
                 hb["n_pos"] += 1
+            vb = hb["by_vertical"][vert]
+            vb["n_signals"] += 1
+            vb["n_with_price_data"] += 1
+            vb["sum_ret"] += ret
+            if ret > 0:
+                vb["n_pos"] += 1
 
     out: list[dict] = []
     for source_id, b in by_source.items():
@@ -309,28 +541,61 @@ def signal_attribution(
             n = hb["n_with_price_data"]
             avg = hb["sum_ret"] / n if n else 0.0
             hit = hb["n_pos"] / n if n else 0.0
+            verticals_out: dict[str, dict] = {}
+            for vert, vb in sorted(
+                hb["by_vertical"].items(),
+                key=lambda kv: kv[1]["n_with_price_data"],
+                reverse=True,
+            ):
+                vn = vb["n_with_price_data"]
+                verticals_out[vert] = {
+                    "n_signals": vb["n_signals"],
+                    "n_with_price_data": vn,
+                    "avg_forward_return_pct": round((vb["sum_ret"] / vn * 100) if vn else 0.0, 4),
+                    "hit_rate": round((vb["n_pos"] / vn) if vn else 0.0, 4),
+                }
             horizon_rows[h] = {
                 "n_with_price_data": n,
                 "avg_forward_return_pct": round(avg * 100, 4),
                 "hit_rate": round(hit, 4),
+                "by_vertical": verticals_out,
             }
+        source_verticals = [t for t, _ in b["source_verticals"].most_common(5)]
         out.append(
             {
                 "source_id": source_id,
                 "n_signals": b["n_signals"],
                 "first_signal_at": b["first_signal_at"],
                 "last_signal_at": b["last_signal_at"],
-                "verticals": [t for t, _ in b["verticals"].most_common(5)],
+                "source_verticals": source_verticals,
+                "ticker_verticals": [v for v, _ in b["ticker_verticals"].most_common(5)],
+                # Back-compat alias used by desk_data.py before v2 split.
+                # Equivalent to source_verticals; keep until that consumer
+                # is updated to read the distinct fields.
+                "verticals": source_verticals,
                 "horizons": horizon_rows,
             }
         )
 
-    # Default sort: 30d avg forward return desc when present, else 0.
     def _sort_key(row: dict) -> float:
         h = row["horizons"].get(30) or next(iter(row["horizons"].values()), {})
         return h.get("avg_forward_return_pct", 0.0)
 
     out.sort(key=_sort_key, reverse=True)
+
+    if include_meta:
+        return {
+            "_meta": {
+                "lens": "1b_expression_trend",
+                "horizons": list(horizons),
+                "n_documents": int(n_docs_total),
+                "n_prices_rows": int(n_prices_total),
+                "n_signals": len(signals),
+                "n_sources": len(out),
+                "message": f"{len(out)} sources across {len(signals)} signals",
+            },
+            "rows": out,
+        }
     return out
 
 
@@ -342,14 +607,10 @@ def signal_history(
     bucket: str = "month",
 ) -> list[dict]:
     """Time-series of one source's forward-return performance, bucketed
-    by month (default) so dashboards can plot trend up/down.
-
-    Currently supports `bucket='month'`. Other values raise.
-    """
+    by month (default) so dashboards can plot trend up/down."""
     if bucket != "month":
         raise ValueError(f"unsupported bucket: {bucket!r}")
 
-    # Pass 1: collect just this source's signals.
     cur = conn.execute(
         """
         SELECT published_at, cleaned_text
@@ -370,6 +631,7 @@ def signal_history(
             tickers.add(ticker)
 
     if not signals:
+        log.info("signal_history(%s): no signals", source_id)
         return []
 
     closes = _load_close_lookup(conn, tickers)

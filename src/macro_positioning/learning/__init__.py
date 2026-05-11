@@ -12,6 +12,15 @@ from macro_positioning.learning.author_calibration import (
     conviction_calibration,
 )
 from macro_positioning.learning.mention_precision import mention_precision
+from macro_positioning.learning.model_version_writer import (
+    backfill_model_versions,
+    compose_model_version,
+    version_stats,
+)
+from macro_positioning.learning.quality_scorer import (
+    backfill_quality_scores,
+    quality_summary,
+)
 from macro_positioning.learning.score_outcome_correlation import (
     score_outcome_correlation,
 )
@@ -35,4 +44,9 @@ __all__ = [
     "mention_precision",
     "author_attribution",
     "conviction_calibration",
+    "backfill_model_versions",
+    "compose_model_version",
+    "version_stats",
+    "backfill_quality_scores",
+    "quality_summary",
 ]

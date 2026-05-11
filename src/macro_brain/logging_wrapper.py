@@ -63,6 +63,13 @@ class AgentCallRecord(BaseModel):
     attributed_setup_id: str | None = None
     attributed_trade_id: str | None = None
     attributed_outcome_pnl: float | None = None
+    # ML loop phase 2 item 7: pinned at corpus-write time so prompt
+    # revisions are visible alongside model churn.
+    # Convention: f"{model_name}@{prompt_version}"
+    # e.g. "gemini-2.5-pro@regime_classifier@v1"
+    model_version: str | None = None
+    call_type: str | None = None
+    quality_score: float | None = None
 
 
 def _write_corpus_record(record: AgentCallRecord) -> None:
@@ -158,6 +165,7 @@ def log_agent_call(
             model_provider=model_provider,
             model_name=model_name,
             prompt_version=prompt_version,
+            model_version=f"{model_name}@{prompt_version}",
             input_payload_json=json.dumps(input_payload, default=str),
             output_payload_json=json.dumps(output_payload, default=str),
             context_json=json.dumps(context, default=str) if context else None,

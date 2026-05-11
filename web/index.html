@@ -20,14 +20,15 @@
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
 <!--
-  Mock data first as a baseline (always present in /web). When the
-  FastAPI server is running, /web/data.js is shadowed by the dynamic
-  desk_routes endpoint that overwrites window.MA_DATA with the real
-  snapshot. In static-only preview the dynamic route 404s and the
-  mock baseline stays.
+  Real snapshot loads first if present (dynamic /web/data.js served
+  by desk_routes.py in production). Then data.mock.js merges itself
+  as a baseline — real-snapshot keys win, mock fills any keys the
+  backend doesn't emit yet (concepts, plans, streams, funnelConversion).
+  In static-only preview the dynamic route 404s and the SPA renders
+  the full mock baseline.
 -->
-<script src="data.mock.js"></script>
 <script src="data.js" onerror="void 0"></script>
+<script src="data.mock.js"></script>
 <script type="text/babel" src="tweaks-panel.jsx"></script>
 <script type="text/babel" src="components.jsx"></script>
 <script type="text/babel" src="reasoning.jsx"></script>

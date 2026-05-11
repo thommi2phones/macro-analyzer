@@ -1,8 +1,14 @@
 // Mock data for Macro Analyzer dashboard.
 // Reflects the v3 thesis (capital rotation through hyper-liquidity cycle)
 // + trading framework regime model.
+//
+// Load order in production: this file loads BEFORE /web/data.js. The
+// real snapshot from desk_routes.py overrides keys it provides; keys
+// it doesn't yet emit (concepts, plans, streams, funnelConversion)
+// fall through to the mock baseline below so the SPA still renders.
 
-window.MA_DATA = {
+(function () {
+const _MA_MOCK = {
   // ---------- Regime ----------
   regime: {
     framework: {
@@ -620,3 +626,12 @@ window.MA_DATA = {
     ],
   },
 };
+
+// Merge baseline into MA_DATA with real-snapshot keys winning.
+// When this file loads first and data.js is missing/404 (static
+// preview), MA_DATA becomes the full mock. When data.js loads after
+// and assigns its own object, that wins per-key; the funnel/streams
+// keys it doesn't yet emit still fall through to the mock.
+const _existing = window.MA_DATA || {};
+window.MA_DATA = Object.assign({}, _MA_MOCK, _existing);
+})();

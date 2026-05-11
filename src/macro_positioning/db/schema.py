@@ -412,6 +412,64 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_trade_reviews_completed
         ON trade_reviews (completed_at DESC)
     """,
+    # ─── Trading Rule Framework v1: immutable entry-time trade plan ─────
+    # One row per trade, captured BEFORE the trade goes live. Adherence
+    # scoring compares this row against actual `trades` fields + review,
+    # so the framework can answer "did the trade follow the plan?" without
+    # the answer being tautological (the plan column on trades is the
+    # actual, this row is what was planned). Plans are append-only — no
+    # editing post-creation; the UNIQUE constraint on trade_id enforces
+    # one plan per trade.
+    """
+    CREATE TABLE IF NOT EXISTS trade_plans (
+        plan_id TEXT PRIMARY KEY,
+        trade_id TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        planned_entry REAL NOT NULL,
+        planned_stop REAL NOT NULL,
+        planned_tps_json TEXT,                  -- JSON array of TP prices
+        planned_size REAL NOT NULL,
+        planned_account_equity REAL,            -- denominator at plan time (audit trail)
+        planned_risk_pct REAL,                  -- precomputed: |entry-stop| * size / equity
+        planned_setup_category TEXT,            -- flag | pennant | channel | hs | cup | range | ema | breakout
+        planned_confluence_score INTEGER,       -- 0..8 total
+        planned_pattern_subscore INTEGER,       -- 0..3
+        planned_fib_subscore INTEGER,           -- 0..3
+        planned_indicator_subscore INTEGER,     -- 0..2
+        planned_correlated_bucket TEXT,         -- derived from ticker via config/correlation_buckets.json
+        planned_entry_strategy TEXT,            -- enum: breakout_retest | breakout_impulse | dip_buy | range_fade | other
+        notes TEXT,
+        FOREIGN KEY (trade_id) REFERENCES trades (trade_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_trade
+        ON trade_plans (trade_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_created
+        ON trade_plans (created_at DESC)
+    """,
+    # ─── Trading Rule Framework v1: portfolio exposure time-series ─────
+    # Optional in v1 — no background writer yet. Reserved for the v2
+    # `portfolio cap compliance` dashboard metric, which needs to know
+    # whether exposure was within caps AT THE TIME each trade opened,
+    # not just at review time. Populated on-demand or via a future cron.
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_exposure_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        taken_at TEXT NOT NULL,
+        account_equity REAL NOT NULL,
+        concurrent_trades INTEGER NOT NULL,
+        pct_deployed REAL NOT NULL,
+        bucket_exposures_json TEXT NOT NULL,    -- {bucket_id: {trade_count, pct_of_equity, tickers}}
+        any_cap_breached INTEGER                -- 0/1; cheap flag for dashboard queries
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_portfolio_snap_taken
+        ON portfolio_exposure_snapshots (taken_at DESC)
+    """,
 ]
 
 
@@ -437,6 +495,19 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # questionnaire; "closed_reviewed" rows are done. NULL = legacy /
     # not-yet-touched trades; keep them invisible to the queue.
     ("trades", "review_status", "TEXT"),
+    # ─── Trading Rule Framework v1: per-trade rule fields ─────────────
+    # Populated from the entry-time plan and from the post-close review.
+    # All nullable so legacy trades keep working; dashboard panels treat
+    # NULL as "not measured" rather than "0".
+    ("trades", "setup_category", "TEXT"),
+    ("trades", "confluence_score", "INTEGER"),         # 0..8 composite
+    ("trades", "pattern_subscore", "INTEGER"),         # 0..3
+    ("trades", "fib_subscore", "INTEGER"),             # 0..3
+    ("trades", "indicator_subscore", "INTEGER"),       # 0..2
+    ("trades", "account_risk_pct", "REAL"),            # |entry-stop|*size/equity at entry time
+    ("trades", "correlated_bucket", "TEXT"),           # cached at entry; same value as ticker→bucket lookup
+    ("trades", "entry_followed_retest", "INTEGER"),    # 0/1 — did this honor breakout-retest rule
+    ("trades", "rule_adherence_score", "INTEGER"),     # 0..100; computed by rules.adherence at review submit
 ]
 
 

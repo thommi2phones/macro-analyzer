@@ -479,12 +479,15 @@ SCHEMA_STATEMENTS = [
     # back to the concept it grew from. Status flips draft→live when
     # the operator activates it (creates a trades row); cancelled when
     # invalidated before entry; closed mirrors the trades.status close.
+    # Rules-framework v1 columns (planned_*) capture the immutable
+    # intent at the moment of submission for adherence scoring later.
     """
     CREATE TABLE IF NOT EXISTS trade_plans (
         plan_id TEXT PRIMARY KEY,
+        -- Funnel spine linkage
         concept_id TEXT,
-        asset_id TEXT NOT NULL,
-        side TEXT NOT NULL,
+        asset_id TEXT,
+        side TEXT,
         entry REAL,
         stop REAL,
         targets_json TEXT,                    -- JSON array of {price, weight}
@@ -495,14 +498,30 @@ SCHEMA_STATEMENTS = [
         invalidation TEXT,
         gate_status TEXT,                     -- pass | warn | block | unchecked
         gate_evaluation_json TEXT,
-        status TEXT NOT NULL,                 -- draft | live | cancelled | closed
-        trade_id TEXT,
+        status TEXT,                          -- draft | live | cancelled | closed
+        trade_id TEXT UNIQUE,                 -- links to the actual trade row
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
+        updated_at TEXT,
         activated_at TEXT,
         cancelled_at TEXT,
+        -- Rules framework v1: immutable entry-time plan columns
+        planned_entry REAL,
+        planned_stop REAL,
+        planned_tps_json TEXT,                -- JSON array of TP prices
+        planned_size REAL,
+        planned_account_equity REAL,          -- denominator at plan time (audit trail)
+        planned_risk_pct REAL,               -- precomputed: |entry-stop| * size / equity
+        planned_setup_category TEXT,          -- flag | pennant | channel | hs | cup | range | ema | breakout
+        planned_confluence_score INTEGER,     -- 0..8 total
+        planned_pattern_subscore INTEGER,     -- 0..3
+        planned_fib_subscore INTEGER,         -- 0..3
+        planned_indicator_subscore INTEGER,   -- 0..2
+        planned_correlated_bucket TEXT,       -- derived from ticker via config/correlation_buckets.json
+        planned_entry_strategy TEXT,          -- breakout_retest | breakout_impulse | dip_buy | range_fade | other
+        notes TEXT,
         FOREIGN KEY (concept_id) REFERENCES trade_concepts (concept_id),
-        FOREIGN KEY (asset_id) REFERENCES assets (asset_id)
+        FOREIGN KEY (asset_id) REFERENCES assets (asset_id),
+        FOREIGN KEY (trade_id) REFERENCES trades (trade_id)
     )
     """,
     """
@@ -512,6 +531,34 @@ SCHEMA_STATEMENTS = [
     """
     CREATE INDEX IF NOT EXISTS idx_trade_plans_concept
         ON trade_plans (concept_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_trade
+        ON trade_plans (trade_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_created
+        ON trade_plans (created_at DESC)
+    """,
+    # ─── Trading Rule Framework v1: portfolio exposure time-series ─────
+    # Optional in v1 — no background writer yet. Reserved for the v2
+    # `portfolio cap compliance` dashboard metric, which needs to know
+    # whether exposure was within caps AT THE TIME each trade opened,
+    # not just at review time. Populated on-demand or via a future cron.
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_exposure_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        taken_at TEXT NOT NULL,
+        account_equity REAL NOT NULL,
+        concurrent_trades INTEGER NOT NULL,
+        pct_deployed REAL NOT NULL,
+        bucket_exposures_json TEXT NOT NULL,    -- {bucket_id: {trade_count, pct_of_equity, tickers}}
+        any_cap_breached INTEGER                -- 0/1; cheap flag for dashboard queries
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_portfolio_snap_taken
+        ON portfolio_exposure_snapshots (taken_at DESC)
     """,
     # ─── FRED historical observations ─────────────────────────────────────
     # Append-only time series store for every catalogued FRED series.
@@ -561,6 +608,19 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # plan it was activated from (and through the plan, the concept).
     # Nullable so legacy trades without a plan still validate.
     ("trades", "plan_id", "TEXT"),
+    # ─── Trading Rule Framework v1: per-trade rule fields ─────────────
+    # Populated from the entry-time plan and from the post-close review.
+    # All nullable so legacy trades keep working; dashboard panels treat
+    # NULL as "not measured" rather than "0".
+    ("trades", "setup_category", "TEXT"),
+    ("trades", "confluence_score", "INTEGER"),         # 0..8 composite
+    ("trades", "pattern_subscore", "INTEGER"),         # 0..3
+    ("trades", "fib_subscore", "INTEGER"),             # 0..3
+    ("trades", "indicator_subscore", "INTEGER"),       # 0..2
+    ("trades", "account_risk_pct", "REAL"),            # |entry-stop|*size/equity at entry time
+    ("trades", "correlated_bucket", "TEXT"),           # cached at entry; same value as ticker→bucket lookup
+    ("trades", "entry_followed_retest", "INTEGER"),    # 0/1 — did this honor breakout-retest rule
+    ("trades", "rule_adherence_score", "INTEGER"),     # 0..100; computed by rules.adherence at review submit
 ]
 
 

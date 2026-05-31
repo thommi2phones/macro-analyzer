@@ -1,0 +1,48 @@
+{
+  "$schema_version": "1.0",
+  "description": "Declarative caps for the Trading Rule Framework. Source of truth for `rules.gate.evaluate_trade_proposal` and `rules.adherence.compute_adherence`. Edit + reload — no migration. Calibration adjustments after 30 reviewed trades become the v2 PR per the success-metrics framework.",
+
+  "$units": {
+    "*_pct": "percentage as decimal — 0.005 means 0.5%, 1.0 means 100%",
+    "counts": "integers"
+  },
+
+  "trade_level": {
+    "max_account_risk_per_trade_pct": 0.01,
+    "high_conviction_account_risk_per_trade_pct": 0.015,
+    "standard_allocation_pct_floor": 0.03,
+    "standard_allocation_pct_ceiling": 0.05,
+    "high_conviction_allocation_pct_floor": 0.075,
+    "high_conviction_allocation_pct_ceiling": 0.08
+  },
+
+  "confluence_tiers": {
+    "standard_min": 5,
+    "high_conviction_min": 7,
+    "insufficient_max": 4,
+    "$comment": "0-8 score. Tier 0-4 = insufficient (no trade); 5-6 = standard sizing; 7-8 = high-conviction sizing eligible."
+  },
+
+  "portfolio_level": {
+    "max_concurrent_trades": 5,
+    "max_pct_deployed": 0.40,
+    "max_trades_per_bucket": 1,
+    "max_bucket_exposure_pct": 0.10,
+    "$comment": "max_trades_per_bucket=1 enforces the 'BTC+SOL+ETH = one trade' rule; max_bucket_exposure_pct=10% guards against a single bucket dominating the book even if max_trades_per_bucket=1 lets one big-size trade through."
+  },
+
+  "severities": {
+    "$comment": "How each rule's violation is classified by the gate evaluator. 'hard' would block in enforce mode; 'soft' warns but allows; 'advisory' is FYI only. v1 advisory mode treats all the same (logs everything) but the classification is honored at the column on the wire so a future enforce-mode flip is one config change.",
+    "account_risk_exceeded": "hard",
+    "confluence_insufficient": "hard",
+    "allocation_below_standard_floor": "soft",
+    "allocation_above_high_conviction_ceiling": "hard",
+    "concurrent_trades_exceeded": "hard",
+    "pct_deployed_exceeded": "hard",
+    "bucket_trade_count_exceeded": "soft",
+    "bucket_exposure_pct_exceeded": "hard",
+    "missing_stop": "hard",
+    "missing_tps": "soft",
+    "stop_on_wrong_side": "hard"
+  }
+}

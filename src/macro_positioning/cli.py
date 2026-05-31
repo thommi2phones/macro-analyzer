@@ -439,6 +439,139 @@ def cmd_learning_retrain_status(args: argparse.Namespace) -> int:
     finally:
         conn.close()
     print(_json.dumps(result, indent=2))
+
+
+def _journal_connect():
+    import sqlite3
+    initialize_database(settings.sqlite_path)
+    return sqlite3.connect(settings.sqlite_path)
+
+
+def cmd_journal_pending(_: argparse.Namespace) -> int:
+    import json as _json
+    from macro_positioning.journal import repository as jrepo
+    conn = _journal_connect()
+    try:
+        rows = jrepo.list_pending(conn)
+    finally:
+        conn.close()
+    if not rows:
+        print("(no pending reviews)")
+        return 0
+    print(_json.dumps(rows, indent=2, default=str))
+    return 0
+
+
+def cmd_journal_close(args: argparse.Namespace) -> int:
+    from macro_positioning.journal import webhook as jwebhook
+    conn = _journal_connect()
+    try:
+        try:
+            result = jwebhook.receive_close_event(
+                conn,
+                trade_id=args.trade_id,
+                exit_date=args.exit_date,
+                exit_price=args.exit_price,
+                pnl=args.pnl,
+                pnl_percent=args.pnl_percent,
+                execution_notes=args.notes,
+            )
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"flipped {result['trade_id']} → {result['review_status']}")
+    return 0
+
+
+_THESIS_CHOICES = (
+    "fully_right",
+    "right_outcome_wrong_reason",
+    "right_thesis_wrong_outcome",
+    "fully_wrong",
+)
+_HINDSIGHT_CHOICES = ("over", "right", "under")
+_RETAKE_CHOICES = ("yes", "no", "modified")
+_SURPRISE_CHOICES = ("macro", "sector", "liquidity", "idiosyncratic", "none")
+
+
+def _prompt_choice(label: str, choices: tuple[str, ...]) -> str:
+    while True:
+        print(f"{label} [{'|'.join(choices)}]: ", end="", flush=True)
+        v = input().strip()
+        if v in choices:
+            return v
+        print(f"  pick one of: {', '.join(choices)}")
+
+
+def _prompt_int(label: str, lo: int, hi: int) -> int:
+    while True:
+        print(f"{label} [{lo}-{hi}]: ", end="", flush=True)
+        v = input().strip()
+        try:
+            n = int(v)
+        except ValueError:
+            print("  enter an integer")
+            continue
+        if lo <= n <= hi:
+            return n
+        print(f"  in range {lo}-{hi}")
+
+
+def _prompt_multi(label: str, choices: tuple[str, ...]) -> list[str]:
+    print(f"{label} (comma-separated, choices: {', '.join(choices)}): ", end="", flush=True)
+    raw = input().strip()
+    if not raw:
+        return []
+    picks = [p.strip() for p in raw.split(",") if p.strip()]
+    bad = [p for p in picks if p not in choices]
+    if bad:
+        print(f"  ignoring unknown: {bad}")
+    return [p for p in picks if p in choices]
+
+
+def cmd_journal_review(args: argparse.Namespace) -> int:
+    from macro_positioning.journal import feedback_writer as jfw, repository as jrepo
+    print(f"\n— Review trade {args.trade_id} —\n")
+    review = {
+        "thesis_validity": _prompt_choice("Q1 thesis validity", _THESIS_CHOICES),
+    }
+    print("Q2 sources_credited (comma-separated source_ids, or blank):")
+    raw = input().strip()
+    review["sources_credited"] = [s.strip() for s in raw.split(",") if s.strip()] if raw else []
+    review["execution_scores"] = {
+        "entry": _prompt_int("Q3a entry quality", 1, 5),
+        "stop": _prompt_int("Q3b stop quality", 1, 5),
+        "sizing": _prompt_int("Q3c sizing quality", 1, 5),
+        "exit": _prompt_int("Q3d exit quality", 1, 5),
+    }
+    review["setup_score_hindsight"] = _prompt_choice("Q4 setup score in hindsight", _HINDSIGHT_CHOICES)
+    review["surprise_factor"] = _prompt_multi("Q5 surprise factors", _SURPRISE_CHOICES)
+    print("Q5b surprise note (optional, single line): ", end="", flush=True)
+    review["surprise_note"] = input().strip() or None
+    print("Q6 one-line lesson: ", end="", flush=True)
+    review["lesson"] = input().strip()[:240]
+    review["would_retake"] = _prompt_choice("Q7 would retake", _RETAKE_CHOICES)
+    review["free_form_notes"] = None
+
+    conn = _journal_connect()
+    try:
+        try:
+            review_id = jrepo.insert_review(conn, args.trade_id, review)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        feedback = jfw.apply_review_feedback(conn, args.trade_id, review)
+        conn.commit()
+    finally:
+        conn.close()
+    print(
+        f"\nsubmitted {review_id} · "
+        f"source_outcomes={feedback['source_outcomes_written']} · "
+        f"calibration_appended={feedback['calibration_appended']}"
+    )
     return 0
 
 
@@ -455,6 +588,193 @@ def cmd_learning_mention_precision(args: argparse.Namespace) -> int:
     finally:
         conn.close()
     print(_json.dumps(result, indent=2))
+    return 0
+
+
+def cmd_rules_check(args: argparse.Namespace) -> int:
+    """Run a TradeProposal through the gate evaluator and print the decision."""
+    import json as _json
+    import sqlite3
+
+    from macro_positioning.rules.gate import (
+        GateDecision,
+        TradeProposal,
+        evaluate_trade_proposal,
+    )
+
+    try:
+        p, f, i = (int(x) for x in args.confluence.split(","))
+    except (ValueError, AttributeError):
+        print(
+            "error: --confluence wants 3 comma-separated ints, e.g. 3,2,1",
+            file=sys.stderr,
+        )
+        return 2
+
+    tps_tuple: tuple[float, ...] = ()
+    if args.tps:
+        try:
+            tps_tuple = tuple(float(x) for x in args.tps.split(","))
+        except ValueError:
+            print("error: --tps wants comma-separated numbers", file=sys.stderr)
+            return 2
+
+    proposal = TradeProposal(
+        ticker=args.ticker,
+        side=args.side,
+        entry=args.entry,
+        stop=args.stop,
+        position_size=args.size,
+        account_equity=args.equity,
+        confluence_subscores=(p, f, i),
+        setup_category=args.setup,
+        tps=tps_tuple,
+    )
+
+    initialize_database(settings.sqlite_path)
+    conn = sqlite3.connect(settings.sqlite_path)
+    try:
+        decision: GateDecision = evaluate_trade_proposal(
+            proposal, conn, mode=args.mode
+        )
+    finally:
+        conn.close()
+
+    print(_json.dumps(decision.as_dict(), indent=2))
+    return 0 if decision.approved else 1
+
+
+def cmd_rules_plan(args: argparse.Namespace) -> int:
+    """Capture an entry-time trade plan."""
+    import json as _json
+    import sqlite3
+
+    from macro_positioning.rules import repository as rrepo
+    from macro_positioning.rules.confluence import score_confluence
+    from macro_positioning.rules.portfolio import bucket_for_ticker
+    from macro_positioning.rules.risk import account_risk_pct
+
+    tps: list[float] = []
+    if args.tps:
+        try:
+            tps = [float(x) for x in args.tps.split(",")]
+        except ValueError:
+            print("error: --tps wants comma-separated numbers", file=sys.stderr)
+            return 2
+
+    confluence_total = pattern_s = fib_s = ind_s = None
+    if args.confluence:
+        try:
+            p, f, i = (int(x) for x in args.confluence.split(","))
+        except ValueError:
+            print("error: --confluence wants 3 comma-separated ints", file=sys.stderr)
+            return 2
+        cb = score_confluence(p, f, i)
+        confluence_total, pattern_s, fib_s, ind_s = cb.total, cb.pattern, cb.fib, cb.indicator
+
+    initialize_database(settings.sqlite_path)
+    conn = sqlite3.connect(settings.sqlite_path)
+    try:
+        # Resolve ticker → bucket
+        row = conn.execute(
+            """
+            SELECT a.ticker
+            FROM trades t
+            LEFT JOIN assets a ON a.asset_id = t.asset_id
+            WHERE t.trade_id = ?
+            """,
+            (args.trade_id,),
+        ).fetchone()
+        if row is None:
+            print(f"error: unknown trade_id {args.trade_id!r}", file=sys.stderr)
+            return 1
+        bucket = bucket_for_ticker(row[0] or "")
+
+        risk_pct = None
+        if args.equity is not None:
+            try:
+                risk_pct = account_risk_pct(args.entry, args.stop, args.size, args.equity)
+            except ValueError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
+
+        plan_payload = {
+            "planned_entry": args.entry,
+            "planned_stop": args.stop,
+            "planned_tps": tps,
+            "planned_size": args.size,
+            "planned_account_equity": args.equity,
+            "planned_risk_pct": risk_pct,
+            "planned_setup_category": args.category,
+            "planned_confluence_score": confluence_total,
+            "planned_pattern_subscore": pattern_s,
+            "planned_fib_subscore": fib_s,
+            "planned_indicator_subscore": ind_s,
+            "planned_correlated_bucket": bucket,
+            "planned_entry_strategy": args.strategy,
+            "notes": args.notes,
+        }
+        try:
+            plan_id = rrepo.save_plan(conn, args.trade_id, plan_payload)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
+        except sqlite3.IntegrityError:
+            print(f"error: plan already exists for trade {args.trade_id!r}", file=sys.stderr)
+            return 1
+        rrepo.hydrate_trade_rule_columns(
+            conn, args.trade_id,
+            setup_category=args.category,
+            confluence_score=confluence_total,
+            pattern_subscore=pattern_s,
+            fib_subscore=fib_s,
+            indicator_subscore=ind_s,
+            account_risk_pct=risk_pct,
+            correlated_bucket=bucket,
+            entry_followed_retest=(
+                1 if args.strategy == "breakout_retest"
+                else 0 if args.strategy is not None
+                else None
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    print(_json.dumps({
+        "plan_id": plan_id,
+        "trade_id": args.trade_id,
+        "planned_risk_pct": risk_pct,
+        "planned_confluence_score": confluence_total,
+        "planned_correlated_bucket": bucket,
+    }, indent=2))
+    return 0
+
+
+def cmd_rules_adherence(args: argparse.Namespace) -> int:
+    """Show the rule-adherence breakdown for a trade (re-computed live)."""
+    import json as _json
+    import sqlite3
+
+    from macro_positioning.journal import repository as jrepo
+    from macro_positioning.rules import repository as rrepo
+    from macro_positioning.rules.adherence import compute_adherence
+
+    conn = sqlite3.connect(settings.sqlite_path)
+    try:
+        conn.row_factory = sqlite3.Row
+        trade_row = conn.execute(
+            "SELECT * FROM trades WHERE trade_id = ?", (args.trade_id,)
+        ).fetchone()
+        if trade_row is None:
+            print(f"error: unknown trade_id {args.trade_id!r}", file=sys.stderr)
+            return 1
+        plan = rrepo.get_plan(conn, args.trade_id)
+        review = jrepo.get_review(conn, args.trade_id)
+        result = compute_adherence(dict(trade_row), plan, review)
+    finally:
+        conn.close()
+    print(_json.dumps(result.as_dict(), indent=2))
     return 0
 
 
@@ -686,6 +1006,107 @@ def build_parser() -> argparse.ArgumentParser:
         help="should_retrain flag + reason per agent (item 6)",
     )
     p_rt.set_defaults(func=cmd_learning_retrain_status)
+
+    # ---- journal ------------------------------------------------------------
+    p_journal = sub.add_parser(
+        "journal",
+        help="closed-trade review: list pending, mark closed, submit review",
+    )
+    journal_sub = p_journal.add_subparsers(dest="journal_command", required=True)
+
+    p_jp = journal_sub.add_parser("pending", help="list trades awaiting review")
+    p_jp.set_defaults(func=cmd_journal_pending)
+
+    p_jc = journal_sub.add_parser("close", help="flip a trade to closed_pending_review")
+    p_jc.add_argument("trade_id")
+    p_jc.add_argument("--exit-date", default=None)
+    p_jc.add_argument("--exit-price", type=float, default=None)
+    p_jc.add_argument("--pnl", type=float, default=None)
+    p_jc.add_argument("--pnl-percent", type=float, default=None)
+    p_jc.add_argument("--notes", default=None)
+    p_jc.set_defaults(func=cmd_journal_close)
+
+    p_jr = journal_sub.add_parser(
+        "review",
+        help="interactively answer the 7 questions and submit the review",
+    )
+    p_jr.add_argument("trade_id")
+    p_jr.set_defaults(func=cmd_journal_review)
+
+    # ---- rules --------------------------------------------------------------
+    p_rules = sub.add_parser(
+        "rules",
+        help="trading-rule framework: gate-check a proposal against confluence/risk/portfolio caps",
+    )
+    rules_sub = p_rules.add_subparsers(dest="rules_command", required=True)
+
+    p_rc = rules_sub.add_parser(
+        "check",
+        help="evaluate a TradeProposal against all v1 rules (advisory by default)",
+    )
+    p_rc.add_argument("--ticker", required=True)
+    p_rc.add_argument("--side", choices=["long", "short"], required=True)
+    p_rc.add_argument("--entry", type=float, required=True)
+    p_rc.add_argument("--stop", type=float, required=True)
+    p_rc.add_argument("--size", type=float, required=True, help="position size in units")
+    p_rc.add_argument(
+        "--equity",
+        type=float,
+        required=True,
+        help="account equity used as the risk-percent denominator",
+    )
+    p_rc.add_argument(
+        "--confluence",
+        required=True,
+        help="three comma-separated subscores: pattern,fib,indicator (e.g. 3,2,1)",
+    )
+    p_rc.add_argument("--tps", default="", help="comma-separated take-profit prices (optional)")
+    p_rc.add_argument(
+        "--setup",
+        default=None,
+        help="setup category (flag|pennant|channel|hs|cup|range|ema|breakout)",
+    )
+    p_rc.add_argument(
+        "--mode",
+        choices=["advisory", "enforce"],
+        default="advisory",
+    )
+    p_rc.set_defaults(func=cmd_rules_check)
+
+    p_rp = rules_sub.add_parser(
+        "plan",
+        help="capture the immutable entry-time trade plan (one per trade)",
+    )
+    p_rp.add_argument("trade_id")
+    p_rp.add_argument("--entry", type=float, required=True)
+    p_rp.add_argument("--stop", type=float, required=True)
+    p_rp.add_argument("--size", type=float, required=True)
+    p_rp.add_argument("--tps", default="", help="comma-separated take-profit prices")
+    p_rp.add_argument("--equity", type=float, default=None, help="account equity (denominator for risk_pct)")
+    p_rp.add_argument(
+        "--category",
+        choices=["flag", "pennant", "channel", "hs", "cup", "range", "ema", "breakout"],
+        default=None,
+    )
+    p_rp.add_argument(
+        "--confluence",
+        default=None,
+        help="3 comma-separated subscores: pattern,fib,indicator",
+    )
+    p_rp.add_argument(
+        "--strategy",
+        choices=["breakout_retest", "breakout_impulse", "dip_buy", "range_fade", "other"],
+        default="breakout_retest",
+    )
+    p_rp.add_argument("--notes", default=None)
+    p_rp.set_defaults(func=cmd_rules_plan)
+
+    p_ra = rules_sub.add_parser(
+        "adherence",
+        help="recompute and print the rule-adherence breakdown for a trade",
+    )
+    p_ra.add_argument("trade_id")
+    p_ra.set_defaults(func=cmd_rules_adherence)
 
     return parser
 

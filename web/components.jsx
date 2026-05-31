@@ -277,9 +277,90 @@ function SourceDetailPanel({ s }) {
   );
 }
 
+// ─── Likert — 1..N button row, mobile-stackable ──────────────────
+function Likert({ value, onChange, min = 1, max = 5, labels = null }) {
+  const buttons = [];
+  for (let i = min; i <= max; i++) {
+    const on = value === i;
+    buttons.push(
+      <button
+        key={i}
+        type="button"
+        className={`likert-btn ${on ? "on" : ""}`}
+        onClick={() => onChange(i)}
+        aria-pressed={on}
+      >
+        <span className="likert-num mono">{i}</span>
+        {labels && labels[i - min] && (
+          <span className="likert-lbl">{labels[i - min]}</span>
+        )}
+      </button>
+    );
+  }
+  return <div className="likert-row">{buttons}</div>;
+}
+
+// ─── EnumPicker — radio chip row ─────────────────────────────────
+function EnumPicker({ value, onChange, options }) {
+  // options: array of {value,label} OR map {value: label}
+  const entries = Array.isArray(options)
+    ? options
+    : Object.entries(options).map(([v, l]) => ({ value: v, label: l }));
+  return (
+    <div className="enum-picker">
+      {entries.map(o => {
+        const on = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className={`enum-chip ${on ? "on" : ""}`}
+            onClick={() => onChange(o.value)}
+            aria-pressed={on}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── MultiPicker — multi-select chips ────────────────────────────
+function MultiPicker({ values, onChange, options }) {
+  const entries = Array.isArray(options)
+    ? options
+    : Object.entries(options).map(([v, l]) => ({ value: v, label: l }));
+  const set = new Set(values || []);
+  const toggle = (v) => {
+    const next = new Set(set);
+    if (next.has(v)) next.delete(v); else next.add(v);
+    onChange(Array.from(next));
+  };
+  return (
+    <div className="enum-picker multi">
+      {entries.map(o => {
+        const on = set.has(o.value);
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className={`enum-chip ${on ? "on" : ""}`}
+            onClick={() => toggle(o.value)}
+            aria-pressed={on}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Export
 Object.assign(window, {
   ScoreChip, TierIndicator, RegimeBadge, SubScoreBar, SourcePill,
   Sparkline, PnL, DrillSheet, SetupCard, SideLabel, ConvictionStripe,
   SourceDetailPanel,
+  Likert, EnumPicker, MultiPicker,
 });

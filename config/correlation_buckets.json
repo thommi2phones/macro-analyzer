@@ -1,0 +1,77 @@
+{
+  "$schema_version": "1.0",
+  "description": "Correlated-asset buckets for portfolio-cap rule enforcement. Tickers in the same bucket count as one allocation toward the per-bucket exposure cap — so a max-2-per-bucket rule prevents stacking three full-size crypto-L1 trades and calling it diversified. Source of truth for `rules.portfolio.bucket_for_ticker`. Edit and re-deploy; no DB migration required.",
+  "$resolution_rules": {
+    "ticker_match": "case-insensitive exact match",
+    "unmatched_ticker_bucket": "uncorrelated",
+    "membership": "a ticker belongs to at most one bucket (first match wins, ordering below is intentional)"
+  },
+  "buckets": [
+    {
+      "bucket_id": "crypto_l1",
+      "label": "Crypto L1",
+      "members": ["BTC", "ETH", "SOL", "AVAX", "DOT", "ADA"],
+      "rationale": "Top-tier blockchains move together on macro liquidity and BTC dominance shifts"
+    },
+    {
+      "bucket_id": "crypto_alt",
+      "label": "Crypto alts / memes",
+      "members": ["XRP", "DOGE", "SHIB", "HBAR", "SUI", "APT", "ARB", "OP"],
+      "rationale": "High-beta to BTC; positioning concentration is a known account-killer"
+    },
+    {
+      "bucket_id": "precious_metals",
+      "label": "Precious metals",
+      "members": ["GLD", "SLV", "GDX", "GDXJ", "SIL", "XAUUSD", "XAGUSD"],
+      "rationale": "Gold + silver miners and spot move on the same real-rate / dollar driver"
+    },
+    {
+      "bucket_id": "energy_oil",
+      "label": "Energy — oil complex",
+      "members": ["USO", "UCO", "XLE", "XOP", "OIH", "CVX", "XOM", "EOG"],
+      "rationale": "Single commodity, single supply/demand axis"
+    },
+    {
+      "bucket_id": "energy_uranium",
+      "label": "Uranium",
+      "members": ["URA", "URNM", "CCJ", "UEC", "DNN"],
+      "rationale": "Thin, correlated theme; positioning crowding is the risk"
+    },
+    {
+      "bucket_id": "tech_megacap",
+      "label": "Tech megacap / AI",
+      "members": ["NVDA", "MSFT", "GOOGL", "GOOG", "META", "AAPL", "AMZN", "TSLA", "AMD", "AVGO"],
+      "rationale": "Index-like co-movement; QQQ is the same trade in a wrapper"
+    },
+    {
+      "bucket_id": "tech_indices",
+      "label": "Tech / growth indices",
+      "members": ["QQQ", "ARKK", "SOXX", "SMH", "XLK"],
+      "rationale": "Composite tech beta; pairs with tech_megacap (operator decides whether to merge for cap purposes)"
+    },
+    {
+      "bucket_id": "broad_market",
+      "label": "Broad-market beta",
+      "members": ["SPY", "VOO", "IVV", "IWM", "DIA", "VTI"],
+      "rationale": "All beta to the same regime read"
+    },
+    {
+      "bucket_id": "defense",
+      "label": "Defense / aerospace",
+      "members": ["ITA", "PPA", "XAR", "LMT", "RTX", "NOC", "GD"],
+      "rationale": "Procurement cycle is the single driver"
+    },
+    {
+      "bucket_id": "rates",
+      "label": "Rates / duration",
+      "members": ["TLT", "IEF", "SHY", "TBT", "TMV"],
+      "rationale": "All long/short the same yield curve"
+    },
+    {
+      "bucket_id": "fx_usd",
+      "label": "Dollar / FX",
+      "members": ["DXY", "UUP", "UDN"],
+      "rationale": "Single macro driver"
+    }
+  ]
+}

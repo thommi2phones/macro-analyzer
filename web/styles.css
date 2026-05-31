@@ -1638,3 +1638,126 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 .sg-tt-name {
   font-family: var(--serif); font-size: 14px; margin-bottom: 4px;
 }
+
+/* ============== Journal: pending reviews strip ============== */
+.pending-reviews-strip { border: 1px solid var(--amber); background: linear-gradient(90deg, rgba(214,160,74,0.06), rgba(214,160,74,0.01)); }
+.pending-reviews-strip .block-num.amber { color: var(--amber); }
+.pending-badge {
+  background: var(--amber); color: var(--bg-0);
+  padding: 4px 10px; font-size: 14px; font-weight: 700; border-radius: 2px;
+}
+.pending-chips-row {
+  display: flex; gap: 10px; flex-wrap: wrap; padding: 4px 0 2px;
+}
+.pending-chip {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 8px 12px; background: var(--bg-card-2);
+  border: 1px solid var(--line-2); cursor: pointer;
+  font-family: inherit; color: var(--text);
+  transition: border-color 120ms, transform 120ms;
+}
+.pending-chip:hover { border-color: var(--amber); transform: translateY(-1px); }
+.pending-chip.win { border-left: 3px solid var(--green); }
+.pending-chip.loss { border-left: 3px solid var(--red); }
+.pc-asset { font-size: 13px; letter-spacing: 0.04em; }
+.pc-pnl { font-size: 12px; }
+.pc-cta { font-size: 10px; color: var(--text-mute-2); letter-spacing: 0.12em; text-transform: uppercase; }
+
+/* ============== Likert / Enum / Multi pickers ============== */
+.likert-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.likert-btn {
+  flex: 1 1 56px; min-width: 56px;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 8px 6px; background: var(--bg-card-2);
+  border: 1px solid var(--line-2); color: var(--text);
+  cursor: pointer; transition: all 120ms;
+}
+.likert-btn:hover { border-color: var(--accent); }
+.likert-btn.on { background: var(--accent); color: var(--bg-0); border-color: var(--accent); }
+.likert-num { font-size: 16px; font-weight: 600; }
+.likert-lbl { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; opacity: 0.7; }
+
+.enum-picker { display: flex; gap: 6px; flex-wrap: wrap; }
+.enum-chip {
+  padding: 6px 12px; background: var(--bg-card-2);
+  border: 1px solid var(--line-2); color: var(--text);
+  cursor: pointer; font-size: 12px; transition: all 120ms;
+}
+.enum-chip:hover { border-color: var(--accent); }
+.enum-chip.on { background: var(--accent); color: var(--bg-0); border-color: var(--accent); }
+.enum-picker.multi .enum-chip.on { background: var(--gold-soft); color: var(--bg-0); border-color: var(--gold-soft); }
+
+/* ============== Review modal form ============== */
+.review-form { display: flex; flex-direction: column; gap: 18px; }
+.rv-section { display: flex; flex-direction: column; gap: 8px; }
+.rv-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rv-num { color: var(--gold); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+.rv-label { font-size: 13px; color: var(--text); }
+.rv-hint { font-size: 10px; color: var(--text-mute-2); margin-left: auto; letter-spacing: 0.08em; text-transform: uppercase; }
+.rv-body {}
+
+.rv-text {
+  width: 100%; padding: 8px 10px; font-family: inherit; font-size: 13px;
+  background: var(--bg-inset); border: 1px solid var(--line-2); color: var(--text);
+}
+.rv-text:focus { outline: none; border-color: var(--accent); }
+.rv-textarea {
+  width: 100%; padding: 10px; font-family: inherit; font-size: 13px;
+  background: var(--bg-inset); border: 1px solid var(--line-2); color: var(--text);
+  resize: vertical;
+}
+.mt8 { margin-top: 8px; }
+
+.exec-grid { display: grid; gap: 10px; }
+.exec-row { display: grid; gap: 6px; }
+.exec-lbl {
+  font-size: 10px; color: var(--text-mute-2);
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+
+.rv-notes-toggle { margin-top: 4px; }
+.rv-error {
+  background: rgba(217,119,88,0.08); color: var(--red);
+  padding: 8px 12px; border: 1px solid var(--red-soft); font-size: 12px;
+}
+.rv-submit-row {
+  display: flex; gap: 10px; justify-content: flex-end;
+  padding-top: 8px; border-top: 1px solid var(--line); margin-top: 8px;
+}
+
+/* ============== Lessons library (J6) ============== */
+.lessons-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 8px 0; }
+.lessons-search { max-width: 220px; }
+.lessons-list { display: flex; flex-direction: column; }
+.lessons-empty { padding: 16px; text-align: center; }
+.lesson-row { border-top: 1px solid var(--line-soft); }
+.lesson-row:first-child { border-top: none; }
+.lesson-head {
+  display: grid;
+  grid-template-columns: 64px 78px auto 1fr 24px;
+  align-items: center; gap: 10px;
+  padding: 10px 4px; cursor: pointer;
+}
+.lesson-head:hover { background: var(--bg-card-2); }
+.lesson-text { color: var(--text-mute); font-size: 12px; }
+.lesson-toggle { color: var(--text-mute-2); text-align: right; }
+.thesis-pill {
+  font-size: 10px; padding: 2px 7px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  border: 1px solid var(--line-2); color: var(--text-mute);
+}
+.thesis-pill.thesis-fully_right { border-color: var(--green); color: var(--green); }
+.thesis-pill.thesis-fully_wrong { border-color: var(--red); color: var(--red); }
+.thesis-pill.thesis-right_outcome_wrong_reason { border-color: var(--amber); color: var(--amber); }
+.thesis-pill.thesis-right_thesis_wrong_outcome { border-color: var(--amber); color: var(--amber); }
+
+.lesson-detail { padding: 8px 4px 14px; display: flex; flex-direction: column; gap: 6px; }
+.ld-row { display: grid; grid-template-columns: 110px 1fr; gap: 10px; font-size: 12px; }
+.ld-lbl { color: var(--text-mute-2); letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px; }
+
+@media (max-width: 640px) {
+  .lesson-head { grid-template-columns: 56px 60px auto 24px; row-gap: 4px; }
+  .lesson-head .lesson-text { grid-column: 1 / -1; }
+  .pending-chip { width: 100%; justify-content: space-between; }
+  .ld-row { grid-template-columns: 1fr; }
+}

@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from macro_positioning.core.settings import settings
@@ -608,27 +608,162 @@ def build_missed_trades_section() -> list[dict]:
 
 
 def build_process_scorecard_section() -> dict:
-    """Process discipline scorecard.
+    """Process discipline scorecard — repurposed as the Trading Rule
+    Framework v1 success-metrics surface (J1 on /journal).
 
-    Schema (per data.mock.js processScorecard):
+    Schema (unchanged from before — the SPA renders any 6 metrics):
       days: int
-      score: int (overall)
+      score: int          # 0..100 overall (mean of per-metric scores)
       metrics: [{label, value, of}]
 
-    Zero-state shape so /journal still renders.
+    Six metrics, all 30d window, all on the 0..100 scale:
+      1. Rule adherence — mean of trades.rule_adherence_score
+      2. Confluence-tier hit rate — win-rate for confluence>=6 trades
+      3. Risk-per-trade compliance — % of trades with risk under their tier cap
+      4. Portfolio cap compliance — % of trade-open moments under all caps
+         (defaults to 100 until the snapshot writer lands; v2)
+      5. Setup-category diversification — 100*(1-HHI), higher = more diverse
+      6. Plan→outcome fidelity — 100*(1-mean entry+stop relative error)
+
+    Trades without the required inputs (no plan, no confluence_score,
+    etc) are excluded from the metrics they can't contribute to, so
+    a partial book still yields a meaningful score. Overall `score` is
+    the unweighted mean of the six metric values.
     """
+    metrics: list[dict] = []
+    if not settings.sqlite_path.exists():
+        return _scorecard_zero_state()
+
+    try:
+        from macro_positioning.rules import load_caps
+        caps = load_caps()
+    except Exception:
+        return _scorecard_zero_state()
+
+    horizon_days = 30
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=horizon_days)).isoformat()
+
+    with sqlite3.connect(settings.sqlite_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT trade_id, asset_id, exit_date, pnl_percent,
+                   confluence_score, account_risk_pct, setup_category,
+                   entry_price, stop_loss, position_size,
+                   rule_adherence_score
+            FROM trades
+            WHERE status = 'closed'
+              AND (exit_date IS NULL OR exit_date >= ?)
+            """,
+            (cutoff,),
+        ).fetchall()
+        trades = [dict(r) for r in rows]
+
+        # 1. Rule adherence — mean of recorded scores
+        adherence_vals = [t["rule_adherence_score"] for t in trades if t["rule_adherence_score"] is not None]
+        adherence_value = round(sum(adherence_vals) / len(adherence_vals)) if adherence_vals else 0
+        metrics.append({"label": "Rule adherence (30d mean)", "value": adherence_value, "of": 100})
+
+        # 2. Confluence-tier hit rate — win rate among high-confluence trades
+        hi_conf = [t for t in trades if t["confluence_score"] is not None and t["confluence_score"] >= 6 and t["pnl_percent"] is not None]
+        if hi_conf:
+            wins = sum(1 for t in hi_conf if t["pnl_percent"] > 0)
+            hit_rate = round(100 * wins / len(hi_conf))
+        else:
+            hit_rate = 0
+        metrics.append({"label": "High-confluence hit rate", "value": hit_rate, "of": 100})
+
+        # 3. Risk-per-trade compliance
+        std_cap = caps["trade_level"]["max_account_risk_per_trade_pct"]
+        hc_cap = caps["trade_level"]["high_conviction_account_risk_per_trade_pct"]
+        risk_population = [t for t in trades if t["account_risk_pct"] is not None]
+        if risk_population:
+            within = 0
+            for t in risk_population:
+                cap = hc_cap if (t["confluence_score"] is not None and t["confluence_score"] >= 7) else std_cap
+                if t["account_risk_pct"] <= cap:
+                    within += 1
+            risk_pct_value = round(100 * within / len(risk_population))
+        else:
+            risk_pct_value = 0
+        metrics.append({"label": "Risk-per-trade compliance", "value": risk_pct_value, "of": 100})
+
+        # 4. Portfolio cap compliance — no snapshot writer in v1; check
+        # the latest snapshot if any exist, else default optimistic.
+        cap_value = _portfolio_cap_compliance(conn)
+        metrics.append({"label": "Portfolio cap compliance", "value": cap_value, "of": 100})
+
+        # 5. Setup-category diversification — 100*(1-HHI)
+        cats = [t["setup_category"] for t in trades if t["setup_category"]]
+        if cats:
+            from collections import Counter
+            counts = Counter(cats)
+            total = sum(counts.values())
+            hhi = sum((n / total) ** 2 for n in counts.values())
+            diversity_value = round(100 * (1 - hhi))
+        else:
+            diversity_value = 0
+        metrics.append({"label": "Setup-category diversification", "value": diversity_value, "of": 100})
+
+        # 6. Plan→outcome fidelity — entry+stop relative error vs plan
+        fidelity_rows = conn.execute(
+            """
+            SELECT t.entry_price, t.stop_loss,
+                   p.planned_entry, p.planned_stop
+            FROM trade_plans p
+            JOIN trades t ON t.trade_id = p.trade_id
+            WHERE t.status = 'closed'
+              AND (t.exit_date IS NULL OR t.exit_date >= ?)
+              AND p.planned_entry > 0 AND p.planned_stop > 0
+            """,
+            (cutoff,),
+        ).fetchall()
+        if fidelity_rows:
+            errors: list[float] = []
+            for r in fidelity_rows:
+                if r["entry_price"] is not None:
+                    errors.append(abs(r["entry_price"] - r["planned_entry"]) / r["planned_entry"])
+                if r["stop_loss"] is not None:
+                    errors.append(abs(r["stop_loss"] - r["planned_stop"]) / r["planned_stop"])
+            mean_err = sum(errors) / len(errors) if errors else 0.0
+            fidelity_value = max(0, min(100, round(100 * (1 - mean_err))))
+        else:
+            fidelity_value = 0
+        metrics.append({"label": "Plan→outcome fidelity", "value": fidelity_value, "of": 100})
+
+    overall = round(sum(m["value"] for m in metrics) / len(metrics)) if metrics else 0
+    return {"days": horizon_days, "score": overall, "metrics": metrics}
+
+
+def _scorecard_zero_state() -> dict:
     return {
         "days": 30,
         "score": 0,
         "metrics": [
-            {"label": "Entry planned in advance", "value": 0, "of": 100},
-            {"label": "Invalidation defined", "value": 0, "of": 100},
-            {"label": "Size predefined", "value": 0, "of": 100},
-            {"label": "Setup matched playbook", "value": 0, "of": 100},
-            {"label": "Outcome logged within 24h", "value": 0, "of": 100},
-            {"label": "Lesson written", "value": 0, "of": 100},
+            {"label": "Rule adherence (30d mean)", "value": 0, "of": 100},
+            {"label": "High-confluence hit rate", "value": 0, "of": 100},
+            {"label": "Risk-per-trade compliance", "value": 0, "of": 100},
+            {"label": "Portfolio cap compliance", "value": 0, "of": 100},
+            {"label": "Setup-category diversification", "value": 0, "of": 100},
+            {"label": "Plan→outcome fidelity", "value": 0, "of": 100},
         ],
     }
+
+
+def _portfolio_cap_compliance(conn: sqlite3.Connection) -> int:
+    """% of recorded exposure snapshots that did NOT breach any cap.
+
+    No writer in v1, so the snapshots table is typically empty —
+    default to 100 ("no breaches recorded") so the panel renders
+    without the field looking broken. Once a snapshot tick lands,
+    this becomes an honest measurement.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS total, SUM(CASE WHEN any_cap_breached = 0 THEN 1 ELSE 0 END) AS clean FROM portfolio_exposure_snapshots"
+    ).fetchone()
+    if row is None or not row["total"]:
+        return 100  # default optimistic
+    return round(100 * (row["clean"] or 0) / row["total"])
 
 
 def build_source_leaderboard_section() -> list[dict]:

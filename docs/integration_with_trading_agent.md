@@ -249,3 +249,159 @@ Both systems **must work without the other**:
 - Shared authentication (API keys per system)
 - Real-time streaming (polling + request-response is sufficient)
 - Unified UI (each system has its own dashboard; combined view is future work)
+
+---
+
+## Trade-Close Webhook (PUSH from Trading Agent → Macro Analyzer)
+
+When the Trading Agent closes a position (manual or automated), it POSTs the close event to the macro side so the journal-feedback loop flips the trade into `closed_pending_review` and prompts a structured review.
+
+**Endpoint:** `POST /api/integration/trade-close`
+
+**Auth:** Same bearer-token middleware as the rest of the API (`MPA_AUTH_TOKEN`). Empty in dev = open.
+
+**Request body (JSON):**
+
+| field             | type    | required | notes |
+|-------------------|---------|----------|-------|
+| `trade_id`        | string  | yes      | Must match an existing `trades.trade_id` on the macro side (otherwise 404) |
+| `exit_date`       | string  | no       | ISO-8601 UTC timestamp |
+| `exit_price`      | number  | no       | |
+| `pnl`             | number  | no       | absolute, in account currency |
+| `pnl_percent`     | number  | no       | percentage, e.g. `3.04` for +3.04% |
+| `execution_notes` | string  | no       | free-text — e.g. `"stop hit"` / `"discretionary trim"` |
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8001/api/integration/trade-close \
+  -H 'content-type: application/json' \
+  -d '{
+    "trade_id": "trd-2026-014",
+    "exit_date": "2026-05-10T14:30:00Z",
+    "exit_price": 138.20,
+    "pnl": 580.00,
+    "pnl_percent": 4.38,
+    "execution_notes": "trim into strength"
+  }'
+```
+
+**Responses:**
+
+| status | body | meaning |
+|--------|------|---------|
+| 200    | `{"trade_id": "...", "status": "closed", "review_status": "closed_pending_review"}` | flipped (or already in that state — idempotent) |
+| 404    | `{"detail": "unknown trade_id: '...'"}` | trade not found on macro side |
+| 422    | Pydantic validation envelope | malformed body (missing `trade_id`, wrong types) |
+
+**Idempotency:** Re-POSTing the same payload is safe. If the trade is already `closed_reviewed`, the webhook does NOT revert it — `pnl` / `exit_price` are backfilled if provided but the state stays reviewed. If it's still `closed_pending_review`, exit metadata is updated.
+
+**Side effects:** Sets `trades.status='closed'` and (only on first close) `trades.review_status='closed_pending_review'`. Backfills `exit_date`, `exit_price`, `pnl`, `pnl_percent`, `execution_notes` if supplied. The journal SPA's "pending reviews" strip picks the trade up on the next page load; the user submits the 7-question review via `POST /api/reviews/{trade_id}`, which writes derived `source_outcomes` rows and a calibration log entry.
+
+**Failure mode:** If the macro side is unreachable, the Trading Agent should retry with exponential backoff. The review loop is best-effort feedback — never block trade execution on a failed webhook.
+
+---
+
+## Trade-Check Gate (PULL from Trading Agent → Macro Analyzer)
+
+The Macro Analyzer runs the Trading Rule Framework v1 as a measure-and-flag layer. Trading systems (the external trading agent, or a future native execution layer inside Macro Analyzer) can ask the gate to evaluate a hypothetical trade against:
+
+- Confluence Score (0–8, three subscores: Pattern 0–3, Fib 0–3, Indicator 0–2) and tier (insufficient / standard / high_conviction)
+- Account-risk-per-trade % (= |entry − stop| × position_size / equity) vs per-tier caps
+- Allocation % vs per-tier floor and absolute ceiling
+- Stop sanity (must be on the correct side of entry; entry ≠ stop)
+- Portfolio-level caps: max concurrent trades, % deployed, max trades per correlated bucket, max bucket exposure %
+
+Caps live in `config/risk_caps.json`; correlation buckets in `config/correlation_buckets.json`. Edit + restart — no migration.
+
+**Endpoint:** `POST /api/integration/trade-check`
+
+**Auth:** Same bearer-token middleware as the rest of the API (`MPA_AUTH_TOKEN`). Empty in dev = open.
+
+**Request body:**
+
+| field                              | type        | required | notes |
+|------------------------------------|-------------|----------|-------|
+| `ticker`                           | string      | yes      | |
+| `side`                             | `long`\|`short` | yes  | drives stop-direction check |
+| `entry`                            | number > 0  | yes      | |
+| `stop`                             | number > 0  | yes      | |
+| `position_size`                    | number > 0  | yes      | units of the underlying |
+| `account_equity`                   | number > 0  | yes      | denominator for risk_pct & allocation_pct |
+| `confluence_subscores.pattern`     | int 0..3    | yes      | |
+| `confluence_subscores.fib`         | int 0..3    | yes      | |
+| `confluence_subscores.indicator`   | int 0..2    | yes      | |
+| `setup_category`                   | string      | no       | flag/pennant/channel/hs/cup/range/ema/breakout |
+| `tps`                              | number[]    | no       | empty list → `missing_tps` soft violation |
+| `mode`                             | `advisory`\|`enforce` | no | default `advisory` (v1) |
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8001/api/integration/trade-check \
+  -H 'content-type: application/json' \
+  -d '{
+    "ticker": "NVDA",
+    "side": "long",
+    "entry": 500,
+    "stop": 475,
+    "position_size": 8,
+    "account_equity": 100000,
+    "confluence_subscores": {"pattern": 3, "fib": 2, "indicator": 1},
+    "setup_category": "flag",
+    "tps": [525, 550]
+  }'
+```
+
+**Response shape:**
+
+```json
+{
+  "approved": true,
+  "mode": "advisory",
+  "confluence": {"pattern": 3, "fib": 2, "indicator": 1, "total": 6, "tier": "standard"},
+  "risk_pct": 0.002,
+  "allocation_pct": 0.04,
+  "exposure": {
+    "concurrent_trades": 0,
+    "pct_deployed": 0.0,
+    "by_bucket": {}
+  },
+  "violations": [],
+  "suggested_size": null,
+  "suggested_stop": null
+}
+```
+
+**Violation codes (severity):**
+
+| code                                       | severity   | meaning |
+|--------------------------------------------|------------|---------|
+| `confluence_insufficient`                  | hard       | confluence below standard tier — do not enter |
+| `account_risk_exceeded`                    | hard       | risk % over the cap for the trade's confluence tier |
+| `allocation_below_standard_floor`          | soft       | allocation under the standard-tier floor |
+| `allocation_above_high_conviction_ceiling` | hard       | allocation above the absolute ceiling (~8%) |
+| `concurrent_trades_exceeded`               | hard       | adding this trade would breach max-concurrent cap |
+| `pct_deployed_exceeded`                    | hard       | adding this trade would push deployed-% over cap |
+| `bucket_trade_count_exceeded`              | soft       | bucket would hold more trades than allowed |
+| `bucket_exposure_pct_exceeded`             | hard       | bucket would hold more notional than allowed |
+| `missing_stop`                             | hard       | entry == stop, no risk defined |
+| `missing_tps`                              | soft       | no take-profit levels supplied |
+| `stop_on_wrong_side`                       | hard       | long stop ≥ entry or short stop ≤ entry |
+
+**Modes:**
+
+- **`advisory` (default in v1):** evaluator runs end-to-end and returns all violations + their severity. `approved` is always `true`. Use for logging, dashboarding, and pre-adoption measurement.
+- **`enforce`:** `approved` is `false` if any violation has severity `hard`. Soft violations remain advisory. Trading agents are free to honor or ignore `approved`; the gate doesn't sit in the order path until the consumer wires it in.
+
+**Suggested adjustments:**
+
+- `suggested_size`: populated when `account_risk_exceeded` fires. Returns the largest position size that complies with the standard 1% account-risk cap given the proposed entry/stop. Re-submit with this size to verify.
+- `suggested_stop`: reserved for v2 (would need pattern context).
+
+**Two consumers, one evaluator:**
+
+- **External trading agent (current target):** calls this HTTP endpoint before order submission. One-line insertion in the agent's pre-execute path. Honoring `approved` (vs logging it) is the agent's choice.
+- **Future native execution layer:** imports `macro_positioning.rules.gate.evaluate_trade_proposal` directly. The pure function is identical; the HTTP route is just a thin wrapper. Designed so the gate doesn't have to be re-architected when execution moves in-process.
+
+**No side effects:** the gate is read-only. It queries open trades for portfolio exposure but never writes to the DB. Safe to call as often as the consumer likes.

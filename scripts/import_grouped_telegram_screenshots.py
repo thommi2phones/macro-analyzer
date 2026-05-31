@@ -80,6 +80,11 @@ class Classified:
     ocr_author: Optional[str] = None
     ocr_ticker: Optional[str] = None
     ocr_timeframe: Optional[str] = None
+    # ISO 8601 timestamp extracted from the TradingView header overlay
+    # ("Big_Nuts created with TradingView.com, May 07, 2026 03:01 UTC-7").
+    # This is the *chart capture date* — critical for time-weighted scoring
+    # so a 6-month-old setup carries less signal than yesterday's.
+    ocr_published_at: Optional[str] = None
     ocr_text: str = ""
 
 
@@ -134,6 +139,7 @@ def _classify(path: Path) -> Classified:
         ocr_author=sug.author,
         ocr_ticker=sug.ticker,
         ocr_timeframe=sug.timeframe,
+        ocr_published_at=sug.published_at,
         ocr_text=sug.raw_text or "",
     )
 
@@ -385,7 +391,18 @@ def main() -> int:
             # Caption: the message screenshot's OCR text minus the
             # "Forwarded from" line (already captured as author).
             caption = ""
-            published_at = datetime.now(UTC).isoformat()
+            # published_at: prefer the CHART's TradingView header date —
+            # that's the actual analysis capture moment. Fall back to the
+            # message OCR's date (rare), then today. Critical for time-
+            # weighted scoring downstream.
+            chart_dates = [c.ocr_published_at for c in g.charts if c.ocr_published_at]
+            msg_date = g.message.ocr_published_at if g.message else None
+            if chart_dates:
+                published_at = chart_dates[0]
+            elif msg_date:
+                published_at = msg_date
+            else:
+                published_at = datetime.now(UTC).isoformat()
             if g.message:
                 lines = [l for l in g.message.ocr_text.splitlines()
                          if l.strip() and "Forwarded from" not in l]

@@ -228,13 +228,14 @@ def list_recent_inputs(limit: int = 50) -> list[dict]:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             """
-            SELECT document_id, source_id, title, content_type, ingested_at,
+            SELECT document_id, source_id, title, content_type,
+                   ingested_at, published_at,
                    author, author_id, raw_text, cleaned_text,
                    attachment_path, attachment_paths_json,
                    user_metadata_json, tags_json, extracted_features_json
             FROM documents
             WHERE source_id LIKE 'manual:%'
-            ORDER BY ingested_at DESC
+            ORDER BY COALESCE(published_at, ingested_at) DESC
             LIMIT ?
             """,
             (limit,),

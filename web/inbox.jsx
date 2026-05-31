@@ -1276,7 +1276,37 @@ function Inbox() {
                       onClick={() => hasAnalysis && setExpandedDoc(isExpanded ? null : h.document_id)}
                       title={hasAnalysis ? "click to view full extracted analysis" : undefined}
                     >
-                      <td className="mono dim">{(h.ingested_at || "").slice(0, 19).replace("T", " ")}</td>
+                      <td className="mono dim" title={`imported: ${(h.ingested_at || "").slice(0, 19).replace("T", " ")}`}>
+                        {/* WHEN = chart's TradingView date (when the analysis
+                            was actually made) — the real time-weighting axis.
+                            Falls back to ingested_at for non-chart drops. */}
+                        {(() => {
+                          const pub = (h.published_at || "").slice(0, 10);
+                          const ing = (h.ingested_at || "").slice(0, 10);
+                          // If published_at differs meaningfully from ingestion,
+                          // show it as the headline date. Otherwise just show
+                          // ingestion (likely a same-day note with no chart).
+                          if (pub && pub !== ing) {
+                            // Render relative age too so the time axis reads naturally
+                            const days = Math.floor(
+                              (Date.now() - new Date(h.published_at).getTime()) / 86_400_000
+                            );
+                            const rel = days <= 0 ? "today"
+                                      : days === 1 ? "yesterday"
+                                      : days < 7 ? `${days}d ago`
+                                      : days < 30 ? `${Math.floor(days/7)}w ago`
+                                      : days < 365 ? `${Math.floor(days/30)}mo ago`
+                                      : `${Math.floor(days/365)}y ago`;
+                            return (
+                              <>
+                                <div>{pub}</div>
+                                <div style={{ fontSize: 10, opacity: 0.6 }}>{rel}</div>
+                              </>
+                            );
+                          }
+                          return (h.ingested_at || "").slice(0, 19).replace("T", " ");
+                        })()}
+                      </td>
                       <td>
                         {h.content_type === "manual_chart" ? "chart" : "note"}
                         {Array.isArray(h.attachment_paths) && h.attachment_paths.length > 1 ? (

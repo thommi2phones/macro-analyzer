@@ -12,6 +12,7 @@ neutral/moderate default rather than raising.
 from __future__ import annotations
 
 import math
+import sqlite3
 from datetime import date
 from typing import TYPE_CHECKING, Literal
 
@@ -58,10 +59,15 @@ class GrowthInflationQuadrant(BaseModel):
     summary: str
     growth_series_used: str
     inflation_series_used: str
+    growth_4w_delta: float | None = None
+    inflation_4w_delta: float | None = None
+    trajectory: Literal["improving", "deteriorating", "mixed", "flat", "unknown"] = "unknown"
 
 
 def classify_growth_inflation_quadrant(
     observations: list[MarketObservation],
+    *,
+    prior_observations: list[MarketObservation] | None = None,
 ) -> GrowthInflationQuadrant:
     """Classify the current macro regime into one of four quadrants.
 
@@ -150,6 +156,33 @@ def classify_growth_inflation_quadrant(
     else:  # expanding + subdued
         quadrant = "goldilocks"
 
+    # --- 4-week trajectory (optional) ---
+    growth_delta: float | None = None
+    inflation_delta: float | None = None
+    trajectory: Literal["improving", "deteriorating", "mixed", "flat", "unknown"] = "unknown"
+    if prior_observations is not None:
+        cur_g = _find_value(observations, growth_series) if growth_series != "unavailable" else None
+        prev_g = _find_value(prior_observations, growth_series) if growth_series != "unavailable" else None
+        if cur_g is not None and prev_g is not None:
+            growth_delta = round(cur_g - prev_g, 4)
+        cur_i = _find_value(observations, inflation_series) if inflation_series != "unavailable" else None
+        prev_i = _find_value(prior_observations, inflation_series) if inflation_series != "unavailable" else None
+        if cur_i is not None and prev_i is not None:
+            inflation_delta = round(cur_i - prev_i, 4)
+        if growth_delta is not None or inflation_delta is not None:
+            g_eps = 0.05  # tiny-move threshold (units differ; rough)
+            i_eps = 0.05
+            g_sign = 0 if growth_delta is None or abs(growth_delta) < g_eps else (1 if growth_delta > 0 else -1)
+            i_sign = 0 if inflation_delta is None or abs(inflation_delta) < i_eps else (1 if inflation_delta > 0 else -1)
+            if g_sign == 0 and i_sign == 0:
+                trajectory = "flat"
+            elif g_sign >= 0 and i_sign <= 0 and (g_sign + abs(i_sign)) > 0:
+                trajectory = "improving"
+            elif g_sign <= 0 and i_sign >= 0 and (abs(g_sign) + i_sign) > 0:
+                trajectory = "deteriorating"
+            else:
+                trajectory = "mixed"
+
     confidence = round((growth_conf + infl_conf) / 2, 2)
 
     _QUADRANT_SUMMARIES = {
@@ -168,6 +201,9 @@ def classify_growth_inflation_quadrant(
         summary=_QUADRANT_SUMMARIES[quadrant],
         growth_series_used=growth_series,
         inflation_series_used=inflation_series,
+        growth_4w_delta=growth_delta,
+        inflation_4w_delta=inflation_delta,
+        trajectory=trajectory,
     )
 
 
@@ -195,14 +231,93 @@ _FCI_NORMALISE: dict[str, tuple[float, float]] = {
 }
 
 
-def compute_fci(observations: list[MarketObservation]) -> FCIResult:
+def _fci_from_raw_values(raw: dict[str, float]) -> FCIResult:
+    """Compute FCI given a raw map of {series_id: value}. Inner math —
+    callable from observations-based and conn-based paths."""
+    components: dict[str, float] = {}
+    if "NFCI" in raw:
+        components["NFCI"] = round(raw["NFCI"], 4)
+    for sid in ("ANFCI", "STLFSI4"):
+        if sid in raw:
+            components[sid] = round(raw[sid], 4)
+    for sid, (neutral, scale) in _FCI_NORMALISE.items():
+        if sid in raw:
+            components[sid] = round((raw[sid] - neutral) * scale, 4)
+    return _fci_from_components(components)
+
+
+def _fci_from_components(components: dict[str, float]) -> FCIResult:
+    if not components:
+        return FCIResult(
+            score=0.0,
+            label="neutral",
+            primary_driver="unavailable",
+            components={},
+            summary="Financial conditions data unavailable; defaulting to neutral.",
+        )
+    if "NFCI" in components:
+        score = components["NFCI"]
+    else:
+        score = sum(components.values()) / len(components)
+    score = round(score, 4)
+    if score > 0.3:
+        label: Literal["tightening", "neutral", "easing"] = "tightening"
+    elif score < -0.3:
+        label = "easing"
+    else:
+        label = "neutral"
+    primary_driver = max(components, key=lambda k: abs(components[k]))
+    summaries = {
+        "tightening": (
+            f"Financial conditions are restrictive (score {score:+.3f}). "
+            "Credit spreads / volatility elevated; headwind for risk assets and credit."
+        ),
+        "neutral": (
+            f"Financial conditions are broadly neutral (score {score:+.3f}). "
+            "No systemic stress signal; monitor for direction change."
+        ),
+        "easing": (
+            f"Financial conditions are accommodative (score {score:+.3f}). "
+            "Liquidity supportive for risk assets; watch for leverage build-up."
+        ),
+    }
+    return FCIResult(
+        score=score,
+        label=label,
+        primary_driver=primary_driver,
+        components=components,
+        summary=summaries[label],
+    )
+
+
+_FCI_INPUT_SERIES = ("NFCI", "ANFCI", "STLFSI4", "VIXCLS", "TEDRATE", "BAMLH0A0HYM2")
+
+
+def compute_fci(
+    observations: list[MarketObservation] | None = None,
+    *,
+    conn: "sqlite3.Connection | None" = None,
+) -> FCIResult:
     """Compute a Financial Conditions Index score.
 
-    Primary: NFCI (Chicago Fed) — already a composite on NFCI scale.
-    If absent: average normalised scores from ANFCI, STLFSI4, VIX, TED, HY OAS.
-
-    NFCI > +0.3 = tightening | NFCI < -0.3 = easing | else neutral.
+    DB-first when `conn` is provided: reads latest values from
+    `fred_observations`. Otherwise reads from the supplied observations
+    list. NFCI > +0.3 = tightening | < -0.3 = easing | else neutral.
     """
+    if conn is not None:
+        from macro_positioning.market.fred_history import latest_value
+        raw: dict[str, float] = {}
+        for sid in _FCI_INPUT_SERIES:
+            v = latest_value(conn, sid)
+            if v is not None:
+                raw[sid] = v
+        if raw:
+            return _fci_from_raw_values(raw)
+        # cold-cache: fall through to observations path (may also be empty)
+
+    if observations is None:
+        observations = []
+
     components: dict[str, float] = {}
 
     nfci = _find_value(observations, "NFCI")
@@ -220,55 +335,7 @@ def compute_fci(observations: list[MarketObservation]) -> FCIResult:
             normalised = (v - neutral) * scale
             components[sid] = round(normalised, 4)
 
-    if not components:
-        return FCIResult(
-            score=0.0,
-            label="neutral",
-            primary_driver="unavailable",
-            components={},
-            summary="Financial conditions data unavailable; defaulting to neutral.",
-        )
-
-    # Use NFCI as primary if available, else average all normalised components
-    if "NFCI" in components:
-        score = components["NFCI"]
-    else:
-        score = sum(components.values()) / len(components)
-
-    score = round(score, 4)
-
-    if score > 0.3:
-        label: Literal["tightening", "neutral", "easing"] = "tightening"
-    elif score < -0.3:
-        label = "easing"
-    else:
-        label = "neutral"
-
-    # Primary driver: component with highest absolute deviation from 0
-    primary_driver = max(components, key=lambda k: abs(components[k]))
-
-    _FCI_SUMMARIES = {
-        "tightening": (
-            f"Financial conditions are restrictive (score {score:+.3f}). "
-            "Credit spreads / volatility elevated; headwind for risk assets and credit."
-        ),
-        "neutral": (
-            f"Financial conditions are broadly neutral (score {score:+.3f}). "
-            "No systemic stress signal; monitor for direction change."
-        ),
-        "easing": (
-            f"Financial conditions are accommodative (score {score:+.3f}). "
-            "Liquidity supportive for risk assets; watch for leverage build-up."
-        ),
-    }
-
-    return FCIResult(
-        score=score,
-        label=label,
-        primary_driver=primary_driver,
-        components=components,
-        summary=_FCI_SUMMARIES[label],
-    )
+    return _fci_from_components(components)
 
 
 # ---------------------------------------------------------------------------

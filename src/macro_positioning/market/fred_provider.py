@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import httpx
 
 from macro_positioning.core.models import MarketObservation, Thesis
 from macro_positioning.core.settings import settings
+from macro_positioning.market.fred_history import FredObservation
 from macro_positioning.market.providers import MarketDataProvider
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,53 @@ class FREDMarketDataProvider(MarketDataProvider):
             interpretation=f"{metric}: {value} {unit} (as of {date_str})",
             source=f"FRED:{series_id}",
         )
+
+    def fetch_history(
+        self,
+        series_id: str,
+        start: str = "1900-01-01",
+        end: str | None = None,
+    ) -> list[FredObservation]:
+        """Fetch the full available history for a series and return
+        FredObservation rows. Skips FRED's missing-marker (".")."""
+        params: dict[str, str | int] = {
+            "series_id": series_id,
+            "api_key": self.api_key,
+            "file_type": "json",
+            "observation_start": start,
+            "sort_order": "asc",
+        }
+        if end:
+            params["observation_end"] = end
+
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.get(FRED_BASE_URL, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+        fetched_at = datetime.now(UTC)
+        out: list[FredObservation] = []
+        for obs in data.get("observations", []):
+            value = obs.get("value", ".")
+            if value == "." or value is None or value == "":
+                continue
+            try:
+                v = float(value)
+            except (ValueError, TypeError):
+                continue
+            try:
+                obs_date = date.fromisoformat(obs.get("date", ""))
+            except ValueError:
+                continue
+            out.append(FredObservation(
+                series_id=series_id,
+                observation_date=obs_date,
+                value=v,
+                realtime_start=obs.get("realtime_start"),
+                realtime_end=obs.get("realtime_end") or "9999-12-31",
+                fetched_at=fetched_at,
+            ))
+        return out
 
     def fetch_category(self, category_series: dict[str, tuple[str, str, str]]) -> list[MarketObservation]:
         """Fetch only a specific category of series (e.g. RATES_SERIES)."""

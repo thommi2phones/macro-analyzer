@@ -374,6 +374,228 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_input_authors_last_seen
         ON input_authors (last_seen_at DESC)
     """,
+    # Per-image rows for bulk chart drops. One trade idea = one `documents`
+    # row + N attachments here. Per-image fields (timeframe, role) let
+    # chart_vision adapt its prompt per chart, and let later analytics ask
+    # things like "do trades with a `stop logic` chart attached outperform?"
+    # Supersedes the flat `documents.attachment_paths_json` which stays
+    # populated for back-compat with code reading it directly.
+    """
+    CREATE TABLE IF NOT EXISTS manual_chart_attachments (
+        attachment_id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        attachment_path TEXT NOT NULL,
+        timeframe TEXT NOT NULL,
+        role TEXT,
+        note TEXT,
+        order_index INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (document_id) REFERENCES documents (document_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_manual_chart_attachments_doc
+        ON manual_chart_attachments (document_id, order_index)
+    """,
+    # ─── Trade review feedback loop ──────────────────────────────────────
+    # One row per closed-trade review. Same 7-question framework every
+    # time so structured fields (thesis_validity, execution_scores, etc)
+    # accumulate into queryable signal that calibrates scorer + source
+    # weights. Free-text `lesson` + `free_form_notes` capture what the
+    # structure misses. JSON columns hold the multi-pick / multi-Likert
+    # answers without table-explosion.
+    """
+    CREATE TABLE IF NOT EXISTS trade_reviews (
+        review_id TEXT PRIMARY KEY,
+        trade_id TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        thesis_validity TEXT,                 -- enum: fully_right | right_outcome_wrong_reason | right_thesis_wrong_outcome | fully_wrong
+        sources_credited_json TEXT,           -- list of source_id (JSON array)
+        execution_scores_json TEXT,           -- {entry, stop, sizing, exit} each 1-5
+        setup_score_hindsight TEXT,           -- enum: over | right | under
+        surprise_factor_json TEXT,            -- list of enum: macro | sector | liquidity | idiosyncratic | none
+        surprise_note TEXT,
+        lesson TEXT,                          -- one-line, capped client-side at ~200 chars
+        would_retake TEXT,                    -- enum: yes | no | modified
+        free_form_notes TEXT,
+        FOREIGN KEY (trade_id) REFERENCES trades (trade_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_reviews_trade
+        ON trade_reviews (trade_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_reviews_completed
+        ON trade_reviews (completed_at DESC)
+    """,
+    # ─── Score hindsight overlay ─────────────────────────────────────────
+    # Per-trade-review Q4 (setup_score_hindsight: over | right | under)
+    # written by journal-feedback-loop's feedback_writer when a review
+    # lands. Consumed by learning/score_outcome_correlation to surface
+    # systematic scorer over/under-confidence patterns. One row per
+    # review; FK to both trade_reviews and trades + score_id for the
+    # composite "which score was being judged" lookup.
+    """
+    CREATE TABLE IF NOT EXISTS score_hindsight_overlay (
+        overlay_id TEXT PRIMARY KEY,
+        review_id TEXT NOT NULL,
+        trade_id TEXT NOT NULL,
+        score_id TEXT,
+        hindsight_verdict TEXT NOT NULL,     -- enum: over | right | under
+        recorded_at TEXT NOT NULL,
+        FOREIGN KEY (review_id) REFERENCES trade_reviews (review_id),
+        FOREIGN KEY (trade_id) REFERENCES trades (trade_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_score_hindsight_trade
+        ON score_hindsight_overlay (trade_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_score_hindsight_verdict
+        ON score_hindsight_overlay (hindsight_verdict, recorded_at DESC)
+    """,
+    # ─── Funnel spine: concepts → plans → trades ─────────────────────────
+    # Concepts are marked watchlist items the operator wants to track as
+    # potential setups. They survive past a single session and keep their
+    # score snapshot, thesis note, and lineage to the trade_plan they
+    # eventually promote into. Suggestions surfaced by the system land
+    # here with suggested_by_system=1 until the operator marks them.
+    """
+    CREATE TABLE IF NOT EXISTS trade_concepts (
+        concept_id TEXT PRIMARY KEY,
+        asset_id TEXT NOT NULL,
+        source TEXT NOT NULL,                 -- watchlist_auto | watchlist_manual | inbox | other
+        status TEXT NOT NULL,                 -- active | promoted | retired
+        suggested_by_system INTEGER NOT NULL DEFAULT 0,
+        suggestion_reason TEXT,
+        score_at_mark REAL,
+        tier_at_mark TEXT,
+        side_at_mark TEXT,
+        thesis_text TEXT,
+        trade_plan_id TEXT,
+        marked_at TEXT NOT NULL,
+        promoted_at TEXT,
+        retired_at TEXT,
+        retire_reason TEXT,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (asset_id) REFERENCES assets (asset_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_concepts_status
+        ON trade_concepts (status, marked_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_concepts_asset_active
+        ON trade_concepts (asset_id, status)
+    """,
+    # Trade plans = step ③ Identify. Each plan captures the entry/stop/
+    # targets/sizing the operator intends to act on, optionally linked
+    # back to the concept it grew from. Status flips draft→live when
+    # the operator activates it (creates a trades row); cancelled when
+    # invalidated before entry; closed mirrors the trades.status close.
+    # Rules-framework v1 columns (planned_*) capture the immutable
+    # intent at the moment of submission for adherence scoring later.
+    """
+    CREATE TABLE IF NOT EXISTS trade_plans (
+        plan_id TEXT PRIMARY KEY,
+        -- Funnel spine linkage
+        concept_id TEXT,
+        asset_id TEXT,
+        side TEXT,
+        entry REAL,
+        stop REAL,
+        targets_json TEXT,                    -- JSON array of {price, weight}
+        size_usd REAL,
+        size_r REAL,
+        time_horizon TEXT,                    -- intraday | swing | position
+        thesis TEXT,
+        invalidation TEXT,
+        gate_status TEXT,                     -- pass | warn | block | unchecked
+        gate_evaluation_json TEXT,
+        status TEXT,                          -- draft | live | cancelled | closed
+        trade_id TEXT UNIQUE,                 -- links to the actual trade row
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        activated_at TEXT,
+        cancelled_at TEXT,
+        -- Rules framework v1: immutable entry-time plan columns
+        planned_entry REAL,
+        planned_stop REAL,
+        planned_tps_json TEXT,                -- JSON array of TP prices
+        planned_size REAL,
+        planned_account_equity REAL,          -- denominator at plan time (audit trail)
+        planned_risk_pct REAL,               -- precomputed: |entry-stop| * size / equity
+        planned_setup_category TEXT,          -- flag | pennant | channel | hs | cup | range | ema | breakout
+        planned_confluence_score INTEGER,     -- 0..8 total
+        planned_pattern_subscore INTEGER,     -- 0..3
+        planned_fib_subscore INTEGER,         -- 0..3
+        planned_indicator_subscore INTEGER,   -- 0..2
+        planned_correlated_bucket TEXT,       -- derived from ticker via config/correlation_buckets.json
+        planned_entry_strategy TEXT,          -- breakout_retest | breakout_impulse | dip_buy | range_fade | other
+        notes TEXT,
+        FOREIGN KEY (concept_id) REFERENCES trade_concepts (concept_id),
+        FOREIGN KEY (asset_id) REFERENCES assets (asset_id),
+        FOREIGN KEY (trade_id) REFERENCES trades (trade_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_status
+        ON trade_plans (status, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_concept
+        ON trade_plans (concept_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_trade
+        ON trade_plans (trade_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_trade_plans_created
+        ON trade_plans (created_at DESC)
+    """,
+    # ─── Trading Rule Framework v1: portfolio exposure time-series ─────
+    # Optional in v1 — no background writer yet. Reserved for the v2
+    # `portfolio cap compliance` dashboard metric, which needs to know
+    # whether exposure was within caps AT THE TIME each trade opened,
+    # not just at review time. Populated on-demand or via a future cron.
+    """
+    CREATE TABLE IF NOT EXISTS portfolio_exposure_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        taken_at TEXT NOT NULL,
+        account_equity REAL NOT NULL,
+        concurrent_trades INTEGER NOT NULL,
+        pct_deployed REAL NOT NULL,
+        bucket_exposures_json TEXT NOT NULL,    -- {bucket_id: {trade_count, pct_of_equity, tickers}}
+        any_cap_breached INTEGER                -- 0/1; cheap flag for dashboard queries
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_portfolio_snap_taken
+        ON portfolio_exposure_snapshots (taken_at DESC)
+    """,
+    # ─── FRED historical observations ─────────────────────────────────────
+    # Append-only time series store for every catalogued FRED series.
+    # PK includes realtime_end so revision vintages don't collide; the
+    # default-vintage path uses '9999-12-31' so re-fetches stay idempotent.
+    """
+    CREATE TABLE IF NOT EXISTS fred_observations (
+        series_id        TEXT NOT NULL,
+        observation_date TEXT NOT NULL,
+        value            REAL NOT NULL,
+        realtime_start   TEXT,
+        realtime_end     TEXT NOT NULL DEFAULT '9999-12-31',
+        fetched_at       TEXT NOT NULL,
+        PRIMARY KEY (series_id, observation_date, realtime_end)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_fred_obs_series_date
+        ON fred_observations (series_id, observation_date DESC)
+    """,
 ]
 
 
@@ -398,6 +620,25 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # community ("Feather Hands"). Nullable; rendered as a breadcrumb in
     # the SPA so attribution reads "Big_Nuts · Market Traders · Feather Hands".
     ("input_authors", "parent_channel", "TEXT"),
+    # Trade-close review status. Drives the /journal pending-reviews
+    # queue: "closed_pending_review" rows pop up the framework
+    # questionnaire; "closed_reviewed" rows are done. NULL = legacy /
+    # not-yet-touched trades; keep them invisible to the queue.
+    ("trades", "review_status", "TEXT"),
+    # Funnel spine lineage: each closed/open trade links back to the
+    # plan it was activated from (and through the plan, the concept).
+    # Nullable so legacy trades without a plan still validate.
+    ("trades", "plan_id", "TEXT"),
+    # ─── Trading Rule Framework v1: per-trade rule fields ─────────────
+    ("trades", "setup_category", "TEXT"),
+    ("trades", "confluence_score", "INTEGER"),         # 0..8 composite
+    ("trades", "pattern_subscore", "INTEGER"),         # 0..3
+    ("trades", "fib_subscore", "INTEGER"),             # 0..3
+    ("trades", "indicator_subscore", "INTEGER"),       # 0..2
+    ("trades", "account_risk_pct", "REAL"),
+    ("trades", "correlated_bucket", "TEXT"),
+    ("trades", "entry_followed_retest", "INTEGER"),
+    ("trades", "rule_adherence_score", "INTEGER"),
 ]
 
 

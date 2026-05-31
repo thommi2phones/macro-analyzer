@@ -1,8 +1,59 @@
 // /journal — review desk view.
 
+// ─── 7-question framework: locked enum sets (mirror brief + backend) ───
+const THESIS_VALIDITY_OPTS = [
+  { value: "fully_right",                 label: "Fully right" },
+  { value: "right_outcome_wrong_reason",  label: "Right outcome · wrong reason" },
+  { value: "right_thesis_wrong_outcome",  label: "Right thesis · wrong outcome" },
+  { value: "fully_wrong",                 label: "Fully wrong" },
+];
+const HINDSIGHT_OPTS = [
+  { value: "over",  label: "Scored too high" },
+  { value: "right", label: "About right" },
+  { value: "under", label: "Scored too low" },
+];
+const SURPRISE_OPTS = [
+  { value: "macro",         label: "Macro" },
+  { value: "sector",        label: "Sector" },
+  { value: "liquidity",     label: "Liquidity" },
+  { value: "idiosyncratic", label: "Idiosyncratic" },
+  { value: "none",          label: "No surprise" },
+];
+const RETAKE_OPTS = [
+  { value: "yes",      label: "Yes, same way" },
+  { value: "modified", label: "Yes, modified" },
+  { value: "no",       label: "No" },
+];
+const EXEC_LIKERT_LABELS = ["bad", "", "ok", "", "great"];
+
 function Journal() {
   const D = window.MA_DATA;
   const [scope, setScope] = React.useState("30d");
+
+  // Pending reviews: local list so submit removes optimistically.
+  const [pending, setPending] = React.useState(() => D.pendingReviews || []);
+  const [reviewing, setReviewing] = React.useState(null);
+  // Lessons library: prepend submitted ones locally for dev demo.
+  const [lessons, setLessons] = React.useState(() => D.lessonsLibrary || []);
+
+  const onReviewSubmitted = (trade, payload) => {
+    setPending(prev => prev.filter(t => t.trade_id !== trade.trade_id));
+    setLessons(prev => [
+      {
+        trade_id: trade.trade_id,
+        ticker: trade.ticker,
+        completedAt: new Date().toISOString(),
+        pnlPct: trade.pnlPct,
+        thesisValidity: payload.thesis_validity,
+        lesson: payload.lesson,
+        executionScores: payload.execution_scores,
+        surpriseFactor: payload.surprise_factor,
+        wouldRetake: payload.would_retake,
+        sourcesCredited: payload.sources_credited,
+      },
+      ...prev,
+    ]);
+  };
 
   const closed = D.closedTrades;
   const wins = closed.filter(t => t.pnlPct > 0).length;
@@ -12,8 +63,90 @@ function Journal() {
   const grossNeg = Math.abs(closed.filter(t => t.pnlPct < 0).reduce((s, t) => s + t.pnlPct, 0));
   const profitFactor = grossNeg > 0 ? grossPos / grossNeg : 0;
 
+  const conv = D.funnelConversion || null;
+
   return (
     <div className="journal-view">
+      <PendingReviewsStrip pending={pending} onPick={setReviewing} />
+      <ReviewModal
+        trade={reviewing}
+        onClose={() => setReviewing(null)}
+        onSubmitted={onReviewSubmitted}
+      />
+
+      <section className="step-header">
+        <span className="step-num mono">STEP ⑤ · REVIEW</span>
+        <span className="step-title">Journal — close the loop on what you traded and why.</span>
+      </section>
+
+      {conv && (
+        <section className="block">
+          <header className="block-head sm">
+            <div className="block-title">
+              <span className="block-num mono">J0</span>
+              <span>Funnel conversion · 30d</span>
+              <span className="block-sub">concept → plan → live → closed, with hit-rate by source</span>
+            </div>
+          </header>
+          <div className="conv-grid">
+            <div className="conv-step">
+              <div className="conv-num mono">{conv.marked30d}</div>
+              <div className="conv-lbl">marked</div>
+            </div>
+            <span className="conv-arrow">→</span>
+            <div className="conv-step">
+              <div className="conv-num mono">{conv.promoted30d}</div>
+              <div className="conv-lbl">promoted</div>
+              <div className="conv-rate muted small">
+                {conv.marked30d > 0 ? Math.round((conv.promoted30d / conv.marked30d) * 100) : 0}%
+              </div>
+            </div>
+            <span className="conv-arrow">→</span>
+            <div className="conv-step">
+              <div className="conv-num mono">{conv.activated30d}</div>
+              <div className="conv-lbl">activated</div>
+              <div className="conv-rate muted small">
+                {conv.promoted30d > 0 ? Math.round((conv.activated30d / conv.promoted30d) * 100) : 0}%
+              </div>
+            </div>
+            <span className="conv-arrow">→</span>
+            <div className="conv-step">
+              <div className="conv-num mono">{conv.closed30d}</div>
+              <div className="conv-lbl">closed</div>
+              <div className="conv-rate muted small">
+                {conv.activated30d > 0 ? Math.round((conv.closed30d / conv.activated30d) * 100) : 0}%
+              </div>
+            </div>
+          </div>
+          <table className="wl-table">
+            <thead>
+              <tr>
+                <th>SOURCE</th>
+                <th className="num">TRADES</th>
+                <th className="num">WINS</th>
+                <th className="num">HIT RATE</th>
+                <th className="num">AVG P&amp;L%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {conv.hitRateBySource.map(s => (
+                <tr key={s.source}>
+                  <td className="mono small">{s.source}</td>
+                  <td className="num">{s.trades}</td>
+                  <td className="num">{s.wins}</td>
+                  <td className="num mono">
+                    {s.trades > 0 ? Math.round((s.wins / s.trades) * 100) : 0}%
+                  </td>
+                  <td className={`num mono ${s.pnlPct >= 0 ? "pos" : "neg"}`}>
+                    {s.pnlPct >= 0 ? "+" : ""}{s.pnlPct.toFixed(2)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       <section className="block">
         <header className="block-head">
           <div className="block-title">
@@ -229,7 +362,408 @@ function Journal() {
           </div>
         </div>
       </section>
+
+      <LessonsLibraryPanel lessons={lessons} />
     </div>
+  );
+}
+
+// ─── J0 strip: pending reviews queue at top of /journal ────────────────
+function PendingReviewsStrip({ pending, onPick }) {
+  if (!pending || pending.length === 0) return null;
+  return (
+    <section className="block pending-reviews-strip">
+      <header className="block-head sm">
+        <div className="block-title">
+          <span className="block-num mono amber">J0</span>
+          <span>Pending reviews</span>
+          <span className="block-sub">
+            {pending.length === 1
+              ? "1 closed trade waiting — review in under 60s"
+              : `${pending.length} closed trades waiting — review in under 60s`}
+          </span>
+        </div>
+        <div className="pending-badge mono">{pending.length}</div>
+      </header>
+      <div className="pending-chips-row">
+        {pending.map(t => (
+          <button
+            key={t.trade_id}
+            className={`pending-chip ${t.pnlPct >= 0 ? "win" : "loss"}`}
+            onClick={() => onPick(t)}
+          >
+            <span className="pc-asset mono">{t.ticker}</span>
+            <span className="pc-side"><SideLabel side={t.side} /></span>
+            <span className={`pc-pnl mono ${t.pnlPct >= 0 ? "pos" : "neg"}`}>
+              {t.pnlPct >= 0 ? "+" : ""}{t.pnlPct.toFixed(2)}%
+            </span>
+            <span className="pc-cta">review →</span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// ─── Review modal (wraps DrillSheet) — the 7-question framework ────────
+function ReviewModal({ trade, onClose, onSubmitted }) {
+  const open = !!trade;
+  const tradeId = trade?.trade_id;
+  const draftKey = tradeId ? `review_draft_${tradeId}` : null;
+
+  const candidateSources = trade?.candidateSources || [];
+
+  const initial = React.useMemo(() => ({
+    thesis_validity: null,
+    sources_credited: [],
+    execution_scores: { entry: null, stop: null, sizing: null, exit: null },
+    setup_score_hindsight: null,
+    surprise_factor: [],
+    surprise_note: "",
+    lesson: "",
+    would_retake: null,
+    free_form_notes: "",
+  }), []);
+
+  const [form, setForm] = React.useState(initial);
+  const [showNotes, setShowNotes] = React.useState(false);
+  const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  // Load draft / reset on trade change.
+  React.useEffect(() => {
+    if (!open || !draftKey) return;
+    setError(null);
+    setSubmitting(false);
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (raw) {
+        setForm({ ...initial, ...JSON.parse(raw) });
+        return;
+      }
+    } catch (e) { /* corrupt draft — fall through */ }
+    setForm(initial);
+    setShowNotes(false);
+  }, [open, draftKey, initial]);
+
+  // Autosave draft on every change.
+  React.useEffect(() => {
+    if (!open || !draftKey) return;
+    try { localStorage.setItem(draftKey, JSON.stringify(form)); }
+    catch (e) { /* quota exceeded — silent */ }
+  }, [form, open, draftKey]);
+
+  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
+  const setExec = (k, v) =>
+    setForm(prev => ({ ...prev, execution_scores: { ...prev.execution_scores, [k]: v } }));
+
+  const validate = () => {
+    if (!form.thesis_validity) return "Pick a thesis-validity option (Q1).";
+    const e = form.execution_scores;
+    for (const k of ["entry", "stop", "sizing", "exit"]) {
+      if (!e[k]) return `Score every execution dimension (Q3 · ${k}).`;
+    }
+    if (!form.setup_score_hindsight) return "Pick a hindsight call (Q4).";
+    if (!form.lesson.trim()) return "Write a one-line lesson (Q6).";
+    if (!form.would_retake) return "Pick a retake answer (Q7).";
+    return null;
+  };
+
+  const onSubmit = async () => {
+    const err = validate();
+    if (err) { setError(err); return; }
+    setError(null);
+    setSubmitting(true);
+    const payload = {
+      thesis_validity: form.thesis_validity,
+      sources_credited: form.sources_credited,
+      execution_scores: form.execution_scores,
+      setup_score_hindsight: form.setup_score_hindsight,
+      surprise_factor: form.surprise_factor,
+      surprise_note: form.surprise_note.trim() || null,
+      lesson: form.lesson.trim(),
+      would_retake: form.would_retake,
+      free_form_notes: form.free_form_notes.trim() || null,
+    };
+    try {
+      const r = await fetch(`/api/reviews/${tradeId}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      // Dev mode: backend may not know the mock trade. Treat 404 as "ok,
+      // demo-only" so dogfooding the SPA still flows. 422 is a real bug.
+      if (!r.ok && r.status !== 404) {
+        const body = await r.text();
+        throw new Error(`HTTP ${r.status} — ${body.slice(0, 200)}`);
+      }
+    } catch (e) {
+      // network down → still proceed for demo, but surface in console
+      console.warn("review POST failed; proceeding locally", e);
+    }
+    try { localStorage.removeItem(draftKey); } catch (e) { /* ignore */ }
+    setSubmitting(false);
+    onSubmitted(trade, payload);
+    onClose();
+  };
+
+  return (
+    <DrillSheet
+      open={open}
+      onClose={onClose}
+      title={trade ? `Review ${trade.ticker}` : "Review"}
+      subtitle={trade
+        ? `${trade.side} · ${trade.pnlPct >= 0 ? "+" : ""}${trade.pnlPct?.toFixed(2)}% · ${trade.holdDays}d · score@entry ${trade.scoreEntry}`
+        : ""}
+    >
+      {trade && (
+        <div className="review-form">
+          <ReviewSection n="Q1" label="Was the thesis correct?">
+            <EnumPicker
+              value={form.thesis_validity}
+              onChange={(v) => set("thesis_validity", v)}
+              options={THESIS_VALIDITY_OPTS}
+            />
+          </ReviewSection>
+
+          <ReviewSection
+            n="Q2"
+            label="Which sources actually drove this trade?"
+            hint={candidateSources.length
+              ? "Selected at entry — uncheck what didn't deliver"
+              : "Multi-select all that mattered"}
+          >
+            {candidateSources.length > 0 ? (
+              <MultiPicker
+                values={form.sources_credited}
+                onChange={(v) => set("sources_credited", v)}
+                options={candidateSources.map(s => ({ value: s, label: s }))}
+              />
+            ) : (
+              <input
+                className="rv-text"
+                placeholder="comma-separated source ids"
+                value={(form.sources_credited || []).join(", ")}
+                onChange={(e) => set(
+                  "sources_credited",
+                  e.target.value.split(",").map(s => s.trim()).filter(Boolean),
+                )}
+              />
+            )}
+          </ReviewSection>
+
+          <ReviewSection n="Q3" label="Execution quality">
+            <div className="exec-grid">
+              {["entry", "stop", "sizing", "exit"].map(k => (
+                <div key={k} className="exec-row">
+                  <div className="exec-lbl">{k.toUpperCase()}</div>
+                  <Likert
+                    value={form.execution_scores[k]}
+                    onChange={(v) => setExec(k, v)}
+                    min={1}
+                    max={5}
+                    labels={EXEC_LIKERT_LABELS}
+                  />
+                </div>
+              ))}
+            </div>
+          </ReviewSection>
+
+          <ReviewSection n="Q4" label="Setup score in hindsight">
+            <EnumPicker
+              value={form.setup_score_hindsight}
+              onChange={(v) => set("setup_score_hindsight", v)}
+              options={HINDSIGHT_OPTS}
+            />
+          </ReviewSection>
+
+          <ReviewSection n="Q5" label="Surprise factor">
+            <MultiPicker
+              values={form.surprise_factor}
+              onChange={(v) => set("surprise_factor", v)}
+              options={SURPRISE_OPTS}
+            />
+            <input
+              className="rv-text mt8"
+              placeholder="One-line note (optional)"
+              value={form.surprise_note}
+              onChange={(e) => set("surprise_note", e.target.value)}
+              maxLength={200}
+            />
+          </ReviewSection>
+
+          <ReviewSection
+            n="Q6"
+            label="One-line lesson"
+            hint={`${form.lesson.length}/200`}
+          >
+            <input
+              className="rv-text"
+              placeholder="What's the take-away?"
+              value={form.lesson}
+              onChange={(e) => set("lesson", e.target.value.slice(0, 200))}
+              maxLength={200}
+            />
+          </ReviewSection>
+
+          <ReviewSection n="Q7" label="Would you take this trade again?">
+            <EnumPicker
+              value={form.would_retake}
+              onChange={(v) => set("would_retake", v)}
+              options={RETAKE_OPTS}
+            />
+          </ReviewSection>
+
+          <div className="rv-notes-toggle">
+            <button
+              type="button"
+              className="btn-mini"
+              onClick={() => setShowNotes(v => !v)}
+            >
+              {showNotes ? "− Hide notes" : "+ Add notes"}
+            </button>
+          </div>
+          {showNotes && (
+            <textarea
+              className="rv-textarea"
+              placeholder="Free-form notes (optional)"
+              value={form.free_form_notes}
+              onChange={(e) => set("free_form_notes", e.target.value)}
+              rows={4}
+            />
+          )}
+
+          {error && <div className="rv-error">{error}</div>}
+
+          <div className="rv-submit-row">
+            <button className="btn-secondary" onClick={onClose} disabled={submitting}>Cancel</button>
+            <button className="btn-primary" onClick={onSubmit} disabled={submitting}>
+              {submitting ? "Submitting…" : "Submit review"}
+            </button>
+          </div>
+        </div>
+      )}
+    </DrillSheet>
+  );
+}
+
+function ReviewSection({ n, label, hint, children }) {
+  return (
+    <div className="rv-section">
+      <div className="rv-head">
+        <span className="rv-num mono">{n}</span>
+        <span className="rv-label">{label}</span>
+        {hint && <span className="rv-hint mono">{hint}</span>}
+      </div>
+      <div className="rv-body">{children}</div>
+    </div>
+  );
+}
+
+// ─── J6: lessons library ───────────────────────────────────────────────
+function LessonsLibraryPanel({ lessons }) {
+  const [tickerQ, setTickerQ] = React.useState("");
+  const [thesisFilter, setThesisFilter] = React.useState("all");
+  const [expanded, setExpanded] = React.useState(null);
+
+  const filtered = (lessons || []).filter(l => {
+    if (thesisFilter !== "all" && l.thesisValidity !== thesisFilter) return false;
+    if (tickerQ && !l.ticker.toUpperCase().includes(tickerQ.toUpperCase())) return false;
+    return true;
+  });
+
+  const filterPills = [
+    { value: "all", label: "all" },
+    ...THESIS_VALIDITY_OPTS.map(o => ({ value: o.value, label: o.label.split("·")[0].trim().toLowerCase() })),
+  ];
+
+  return (
+    <section className="block">
+      <header className="block-head sm">
+        <div className="block-title">
+          <span className="block-num mono">J6</span>
+          <span>Lessons library</span>
+          <span className="block-sub">searchable across reviewed trades · {filtered.length}/{(lessons || []).length}</span>
+        </div>
+      </header>
+      <div className="lessons-controls">
+        <input
+          className="rv-text lessons-search"
+          placeholder="filter by ticker…"
+          value={tickerQ}
+          onChange={(e) => setTickerQ(e.target.value)}
+        />
+        <div className="enum-picker">
+          {filterPills.map(p => (
+            <button
+              key={p.value}
+              type="button"
+              className={`enum-chip ${thesisFilter === p.value ? "on" : ""}`}
+              onClick={() => setThesisFilter(p.value)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="lessons-list">
+        {filtered.length === 0 && (
+          <div className="lessons-empty muted">No lessons match.</div>
+        )}
+        {filtered.map(l => {
+          const isOpen = expanded === l.trade_id;
+          return (
+            <div key={l.trade_id} className="lesson-row">
+              <div
+                className="lesson-head"
+                onClick={() => setExpanded(isOpen ? null : l.trade_id)}
+              >
+                <span className="mono asset-cell">{l.ticker}</span>
+                <span className={`num mono ${l.pnlPct >= 0 ? "pos" : "neg"}`}>
+                  {l.pnlPct >= 0 ? "+" : ""}{l.pnlPct.toFixed(2)}%
+                </span>
+                <span className={`thesis-pill thesis-${l.thesisValidity}`}>
+                  {(THESIS_VALIDITY_OPTS.find(o => o.value === l.thesisValidity) || {}).label || l.thesisValidity}
+                </span>
+                <span className="lesson-text">{l.lesson}</span>
+                <span className="lesson-toggle mono">{isOpen ? "−" : "+"}</span>
+              </div>
+              {isOpen && (
+                <div className="lesson-detail">
+                  <div className="ld-row">
+                    <span className="ld-lbl">EXECUTION</span>
+                    <span className="mono">
+                      entry {l.executionScores.entry} · stop {l.executionScores.stop} ·
+                      sizing {l.executionScores.sizing} · exit {l.executionScores.exit}
+                    </span>
+                  </div>
+                  <div className="ld-row">
+                    <span className="ld-lbl">SURPRISE</span>
+                    <span>
+                      {l.surpriseFactor && l.surpriseFactor.length
+                        ? l.surpriseFactor.join(", ")
+                        : <span className="muted">none</span>}
+                    </span>
+                  </div>
+                  <div className="ld-row">
+                    <span className="ld-lbl">RETAKE</span>
+                    <span>{l.wouldRetake}</span>
+                  </div>
+                  <div className="ld-row">
+                    <span className="ld-lbl">SOURCES</span>
+                    <span>
+                      {(l.sourcesCredited || []).map(s =>
+                        <span key={s} className="tag-chip">{s}</span>
+                      )}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -244,4 +778,4 @@ function WeightBar({ w }) {
   );
 }
 
-Object.assign(window, { Journal });
+Object.assign(window, { Journal, PendingReviewsStrip, ReviewModal, LessonsLibraryPanel });

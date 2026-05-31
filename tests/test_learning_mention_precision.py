@@ -69,6 +69,9 @@ def test_empty_returns_empty_shape(tmp_path: Path):
     assert out["n_promoted"] == 0
     assert out["precision_at_k"] == 0.0
     assert out["ranked_by_promotion"] == []
+    # v2: informative _meta block on empty
+    assert "_meta" in out
+    assert "no trade_scores rows" in out["_meta"]["message"]
 
 
 def test_promotion_then_score_improves_counts_as_good(tmp_path: Path):

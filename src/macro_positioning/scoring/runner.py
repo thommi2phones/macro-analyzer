@@ -31,6 +31,11 @@ from pydantic import BaseModel, Field
 
 from macro_positioning.core.settings import settings
 from macro_positioning.db.schema import initialize_database
+from macro_positioning.market.fred_history import (
+    change_over,
+    incremental_refresh,
+    latest_value,
+)
 from macro_positioning.prices.fetcher import load_recent_prices
 from macro_positioning.prices.technicals import (
     compute_technical_features,
@@ -364,15 +369,31 @@ def run_scoring_pass(
         }
         benchmark_returns = _preload_benchmark_returns(needed_benchmarks, conn)
 
-        # Liquidity snapshot — FCI series not persisted in this repo's
-        # SQLite yet (fred_provider returns latest-only, no history).
-        # Pass a "missing" payload; scorer falls back to 0.5 with note.
+        # Incremental FRED refresh (best-effort; never raises).
+        # Skipped if no API key configured (e.g. test envs).
+        if settings.fred_api_key:
+            try:
+                from macro_positioning.market.fred_provider import (
+                    ALL_SERIES,
+                    FREDMarketDataProvider,
+                )
+                provider = FREDMarketDataProvider()
+                incremental_refresh(provider, conn, ALL_SERIES.keys())
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "FRED incremental refresh skipped", exc_info=True
+                )
+
+        # Liquidity snapshot from persisted NFCI history.
         regime_bullish = regime.framework_regime in _BULLISH_FRAMEWORK_REGIMES
+        nfci_latest = latest_value(conn, "NFCI")
+        nfci_4w_change = change_over(conn, "NFCI", days=28)
         liquidity_payload = {
-            "nfci_latest": None,
-            "nfci_4w_change": None,
+            "nfci_latest": nfci_latest,
+            "nfci_4w_change": nfci_4w_change,
             "regime_bullish": regime_bullish,
-            "source": "missing",
+            "source": "fred:NFCI" if nfci_latest is not None else "missing",
         }
 
         # 5. Score each + persist

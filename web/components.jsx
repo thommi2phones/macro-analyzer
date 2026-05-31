@@ -231,8 +231,136 @@ function SetupCard({ s, onOpen, active = false }) {
   );
 }
 
+// ─── Per-source detail panel (used in /streams + /dev DrillSheets) ──
+function SourceDetailPanel({ s }) {
+  const rows = [
+    ["ID",            s.source_id || "—"],
+    ["Author",        s.author || "—"],
+    ["Market focus",  s.market_focus || "—"],
+    ["Research style",s.research_style || "—"],
+    ["Fetch cadence", s.fetch_cadence || "—"],
+    ["Freshness SLA", s.freshness_sla_hours ? `${s.freshness_sla_hours}h` : "—"],
+    ["Channels",      (s.channels || []).join(", ") || "—"],
+    ["Onboarded",     s.onboarded_at || "—"],
+  ];
+  const attrib = s.attrib30d ?? 0;
+  return (
+    <div className="source-detail">
+      {rows.map(([label, val]) => (
+        <div key={label} className="detail-row">
+          <span className="detail-label">{label}</span>
+          <span className="detail-val mono">{val}</span>
+        </div>
+      ))}
+      <div className="detail-row">
+        <span className="detail-label">30d attribution</span>
+        <span className={`detail-val mono ${attrib >= 0 ? "pos" : "neg"}`}>
+          {attrib >= 0 ? "+" : ""}${(attrib / 1000).toFixed(2)}k
+        </span>
+      </div>
+      {(s.tags || []).length > 0 && (
+        <div className="detail-row">
+          <span className="detail-label">Tags</span>
+          <span className="detail-val">
+            {(s.tags || []).map(t => <span key={t} className="tag-chip">{t}</span>)}
+          </span>
+        </div>
+      )}
+      {s.latestTitle && (
+        <div className="detail-section">
+          <div className="detail-section-head">Latest item</div>
+          <div className="detail-title">{s.latestTitle}</div>
+          {s.latestSnippet && <p className="detail-snippet muted small">{s.latestSnippet}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Likert — 1..N button row, mobile-stackable ──────────────────
+function Likert({ value, onChange, min = 1, max = 5, labels = null }) {
+  const buttons = [];
+  for (let i = min; i <= max; i++) {
+    const on = value === i;
+    buttons.push(
+      <button
+        key={i}
+        type="button"
+        className={`likert-btn ${on ? "on" : ""}`}
+        onClick={() => onChange(i)}
+        aria-pressed={on}
+      >
+        <span className="likert-num mono">{i}</span>
+        {labels && labels[i - min] && (
+          <span className="likert-lbl">{labels[i - min]}</span>
+        )}
+      </button>
+    );
+  }
+  return <div className="likert-row">{buttons}</div>;
+}
+
+// ─── EnumPicker — radio chip row ─────────────────────────────────
+function EnumPicker({ value, onChange, options }) {
+  // options: array of {value,label} OR map {value: label}
+  const entries = Array.isArray(options)
+    ? options
+    : Object.entries(options).map(([v, l]) => ({ value: v, label: l }));
+  return (
+    <div className="enum-picker">
+      {entries.map(o => {
+        const on = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className={`enum-chip ${on ? "on" : ""}`}
+            onClick={() => onChange(o.value)}
+            aria-pressed={on}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── MultiPicker — multi-select chips ────────────────────────────
+function MultiPicker({ values, onChange, options }) {
+  const entries = Array.isArray(options)
+    ? options
+    : Object.entries(options).map(([v, l]) => ({ value: v, label: l }));
+  const set = new Set(values || []);
+  const toggle = (v) => {
+    const next = new Set(set);
+    if (next.has(v)) next.delete(v); else next.add(v);
+    onChange(Array.from(next));
+  };
+  return (
+    <div className="enum-picker multi">
+      {entries.map(o => {
+        const on = set.has(o.value);
+        return (
+          <button
+            key={o.value}
+            type="button"
+            className={`enum-chip ${on ? "on" : ""}`}
+            onClick={() => toggle(o.value)}
+            aria-pressed={on}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // Export
 Object.assign(window, {
   ScoreChip, TierIndicator, RegimeBadge, SubScoreBar, SourcePill,
   Sparkline, PnL, DrillSheet, SetupCard, SideLabel, ConvictionStripe,
+  SourceDetailPanel,
+  Likert, EnumPicker, MultiPicker,
 });

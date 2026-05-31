@@ -2,11 +2,49 @@
 
 const { useState: useStateP, useMemo: useMemoP } = React;
 
-function Positioning({ onOpenReasoning, onOpenTradeForm }) {
+function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
   const D = window.MA_DATA;
   const [filter, setFilter] = useStateP("ALL");
   const [sortBy, setSortBy] = useStateP("score");
   const [sortDir, setSortDir] = useStateP("desc");
+  const [, force] = useStateP(0);
+  const rerender = () => force(n => n + 1);
+
+  // Map of asset → active concept id so the watchlist row can show
+  // "marked" instead of the "advance" button after a click. Recomputed
+  // on every render so concept retirement on /concepts is reflected here.
+  const activeConceptByAsset = useMemoP(() => {
+    const m = {};
+    for (const c of (D.concepts || [])) {
+      if (c.status === "active") m[c.asset] = c.id;
+    }
+    return m;
+  }, [D.concepts && D.concepts.length, sortBy, sortDir, filter]);
+
+  const advanceToConcept = (row) => {
+    if (activeConceptByAsset[row.asset]) {
+      // Already marked — just navigate.
+      if (onAdvanceToConcept) onAdvanceToConcept();
+      return;
+    }
+    const id = `concept-${Date.now().toString(36)}`;
+    D.concepts = (D.concepts || []).concat([{
+      id,
+      asset: row.asset,
+      source: "watchlist_manual",
+      status: "active",
+      suggestedBySystem: false,
+      suggestionReason: null,
+      scoreAtMark: row.score,
+      tierAtMark: row.tier,
+      sideAtMark: row.side,
+      thesis: "",
+      markedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+      tradePlanId: null,
+    }]);
+    rerender();
+    if (onAdvanceToConcept) onAdvanceToConcept();
+  };
 
   // ── Watchlist filtering + sorting ────────────────────────────
   const watchlist = useMemoP(() => {
@@ -64,9 +102,8 @@ function Positioning({ onOpenReasoning, onOpenTradeForm }) {
         </div>
       </section>
 
-      {/* ── Watchlist + Active trades two-col ───────────── */}
-      <section className="two-col">
-        {/* Watchlist scored table */}
+      {/* ── Watchlist (active trades + log moved to /live) ─ */}
+      <section>
         <div className="block">
           <header className="block-head">
             <div className="block-title">
@@ -98,10 +135,13 @@ function Positioning({ onOpenReasoning, onOpenTradeForm }) {
                 <th className="num">VOL</th>
                 <th onClick={sortToggle("rr")} className="sortable num">R/R</th>
                 <th className="num">LAST</th>
+                <th>FUNNEL</th>
               </tr>
             </thead>
             <tbody>
-              {watchlist.map(r => (
+              {watchlist.map(r => {
+                const marked = activeConceptByAsset[r.asset];
+                return (
                 <tr key={r.asset} className={`tier-row tier-${r.tier}`}>
                   <td className="mono asset-cell">{r.asset}</td>
                   <td><SideLabel side={r.side} /></td>
@@ -121,17 +161,20 @@ function Positioning({ onOpenReasoning, onOpenTradeForm }) {
                   <td className="num">{r.vol}</td>
                   <td className="num">{r.rr.toFixed(2)}</td>
                   <td className="num muted">{r.last}</td>
+                  <td>
+                    {marked
+                      ? <span className="status-chip status-active">● marked</span>
+                      : <button className="btn-ghost xs" onClick={() => advanceToConcept(r)}>
+                          advance →
+                        </button>}
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
 
-        {/* Right column: Active trades + Trade log */}
-        <div className="right-col">
-          <ActiveTradesPanel trades={D.activeTrades} />
-          <TradeLogPanel onSubmit={onOpenTradeForm} />
-        </div>
       </section>
 
     </div>

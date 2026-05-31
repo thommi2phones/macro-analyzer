@@ -1,0 +1,56 @@
+{
+  "$schema_version": "1.0",
+  "description": "Per-regime forward-price expectations used by ML loop items 4 (per-call quality backfill for regime_classifier) and 5 (regime classifier accuracy backtest). Each regime label maps to a list of (ticker, direction, threshold_pct, horizon_days) expectations. ALL listed expectations must hold for the regime call to be considered confirmed. Conservative by design — false positives pollute training data.",
+  "default_horizon_days": 30,
+  "secondary_horizon_days": 60,
+  "regimes": {
+    "risk_on_expansion": {
+      "expectations": [
+        {"ticker": "SPY", "direction": "up", "threshold_pct": 2.0, "horizon_days": 30}
+      ],
+      "negation_expectations": [
+        {"ticker": "VIX", "direction": "down", "threshold_pct": 5.0, "horizon_days": 30}
+      ]
+    },
+    "risk_off_contraction": {
+      "expectations": [
+        {"ticker": "SPY", "direction": "down", "threshold_pct": 2.0, "horizon_days": 30}
+      ],
+      "negation_expectations": [
+        {"ticker": "TLT", "direction": "up", "threshold_pct": 1.0, "horizon_days": 30}
+      ]
+    },
+    "commodity_led_inflation": {
+      "expectations": [
+        {"ticker": "DBC", "direction": "up", "threshold_pct": 2.0, "horizon_days": 30}
+      ]
+    },
+    "commodity_expansion": {
+      "expectations": [
+        {"ticker": "DBC", "direction": "up", "threshold_pct": 2.0, "horizon_days": 30},
+        {"ticker": "GLD", "direction": "up", "threshold_pct": 1.0, "horizon_days": 30}
+      ]
+    },
+    "monetary_debasement_hard_asset": {
+      "expectations": [
+        {"ticker": "GLD", "direction": "up", "threshold_pct": 3.0, "horizon_days": 30},
+        {"ticker": "BTC", "direction": "up", "threshold_pct": 5.0, "horizon_days": 30}
+      ]
+    },
+    "dovish_liquidity_wave": {
+      "expectations": [
+        {"ticker": "QQQ", "direction": "up", "threshold_pct": 3.0, "horizon_days": 30}
+      ]
+    },
+    "transitional_chop": {
+      "expectations": [
+        {"ticker": "SPY", "direction": "flat", "threshold_pct": 3.0, "horizon_days": 30}
+      ]
+    },
+    "war_escalation": {
+      "expectations": [
+        {"ticker": "GLD", "direction": "up", "threshold_pct": 2.0, "horizon_days": 30}
+      ]
+    }
+  }
+}

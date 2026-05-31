@@ -1328,3 +1328,5 @@ function Inbox() {
     </div>
   );
 }
+
+Object.assign(window, { Inbox });

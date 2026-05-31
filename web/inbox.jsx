@@ -1284,12 +1284,42 @@ function Inbox() {
                         ) : null}
                       </td>
                       <td>
-                        <strong>{meta.ticker || features?.ticker || "—"}</strong>
-                        {(meta.side || features?.direction) ? (
-                          <span className="dim mono"> · {meta.side || (features?.direction || "").toUpperCase()}</span>
-                        ) : null}
+                        {/* Ticker fallback order: user-typed → Claude top-level
+                            → Claude setups[0] → first non-null in setups[]
+                            → em-dash. Some schema variants nest ticker
+                            inside setups so the flat lookup misses. */}
+                        {(() => {
+                          const fromSetups = features?.setups?.find?.(s => s?.ticker)?.ticker;
+                          const t = meta.ticker || features?.ticker || features?.asset || features?.instrument || fromSetups;
+                          const sideRaw = meta.side || features?.direction || features?.trade_direction
+                                       || features?.setups?.find?.(s => s?.side || s?.direction)?.side
+                                       || features?.setups?.find?.(s => s?.side || s?.direction)?.direction;
+                          return (
+                            <>
+                              <strong>{t || "—"}</strong>
+                              {sideRaw ? (
+                                <span className="dim mono"> · {String(sideRaw).toUpperCase()}</span>
+                              ) : null}
+                            </>
+                          );
+                        })()}
                       </td>
-                      <td>{h.author_id?.replace(":", " · ") || "—"}</td>
+                      <td>
+                        {/* Proper breadcrumb: person · channel · community.
+                            Falls back to the raw slug if metadata is missing. */}
+                        {(() => {
+                          const person = h.author || h.author_id?.split(":").pop() || "—";
+                          const ch = h.user_metadata?.channel;
+                          const parent = h.user_metadata?.parent_channel;
+                          return (
+                            <>
+                              <strong>{person}</strong>
+                              {ch && <span className="dim"> · {ch}</span>}
+                              {parent && <span className="dim"> · {parent}</span>}
+                            </>
+                          );
+                        })()}
+                      </td>
                       <td className="mono dim">{tags.join(", ")}</td>
                       <td>
                         {pending ? <span className="badge-pending">pending</span>

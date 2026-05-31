@@ -2,6 +2,51 @@
 
 function Dev() {
   const D = window.MA_DATA;
+  const useS = React.useState;
+
+  // D4 source health — search + sort + drilldown
+  const [srcQ, setSrcQ]       = useS("");
+  const [srcSort, setSrcSort] = useS({ col: "weight", dir: "desc" });
+  const [openSrc, setOpenSrc] = useS(null);
+
+  const sortedHealth = React.useMemo(() => {
+    let rows = (D.sourceHealth || []).slice();
+    if (srcQ.trim()) {
+      const q = srcQ.toLowerCase();
+      rows = rows.filter(s =>
+        s.name.toLowerCase().includes(q) ||
+        (s.kind || "").toLowerCase().includes(q) ||
+        (s.tags || []).some(t => t.toLowerCase().includes(q))
+      );
+    }
+    rows.sort((a, b) => {
+      const v = srcSort.dir === "asc" ? 1 : -1;
+      const av = a[srcSort.col], bv = b[srcSort.col];
+      if (typeof av === "string") return v * av.localeCompare(bv);
+      return v * ((av || 0) - (bv || 0));
+    });
+    return rows;
+  }, [D.sourceHealth, srcQ, srcSort]);
+
+  function toggleSort(col) {
+    setSrcSort(s => s.col === col
+      ? { col, dir: s.dir === "asc" ? "desc" : "asc" }
+      : { col, dir: "desc" }
+    );
+  }
+
+  function SortTh({ col, label, numeric }) {
+    const active = srcSort.col === col;
+    return (
+      <th
+        className={`th-sort${numeric ? " num" : ""}${active ? " th-active" : ""}`}
+        onClick={() => toggleSort(col)}
+      >
+        {label}{active ? (srcSort.dir === "asc" ? " ▲" : " ▼") : ""}
+      </th>
+    );
+  }
+
   return (
     <div className="dev-view">
 
@@ -168,48 +213,73 @@ function Dev() {
           <div className="block-title">
             <span className="block-num mono">D4</span>
             <span>Source health</span>
-            <span className="block-sub">freshness · weight · 30d attribution</span>
+            <span className="block-sub">
+              freshness · weight · 30d attribution
+              {srcQ.trim() ? ` · ${sortedHealth.length} of ${(D.sourceHealth||[]).length} shown` : ""}
+            </span>
           </div>
           <div className="block-actions">
+            <input
+              className="src-search"
+              placeholder="search…"
+              value={srcQ}
+              onChange={e => setSrcQ(e.target.value)}
+            />
             <span className={`int-pill ${D.integration.tactical.connected ? "ok" : "off"}`}>
               {D.integration.tactical.connected ? "● tactical online" : "○ tactical offline"}
               <span className="muted mono"> · contract {D.integration.tactical.contractVersion} · {D.integration.tactical.mode}</span>
             </span>
           </div>
         </header>
-        <table className="wl-table dev-table">
-          <thead>
-            <tr>
-              <th>SOURCE</th>
-              <th>KIND</th>
-              <th className="num">LAST FETCH</th>
-              <th>FRESHNESS</th>
-              <th className="num">WEIGHT</th>
-              <th className="num">ATTRIB 30D</th>
-              <th>TAGS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {D.sourceHealth.map(s => (
-              <tr key={s.name}>
-                <td className="src-name">{s.name}</td>
-                <td className="muted small">{s.kind}</td>
-                <td className="num mono muted">{s.lastFetch}</td>
-                <td>
-                  <FreshnessIndicator value={s.freshness} />
-                </td>
-                <td className="num"><WeightBar w={s.weight} /></td>
-                <td className={`num ${s.attrib30d >= 0 ? "pos" : "neg"}`}>
-                  {s.attrib30d >= 0 ? "+" : ""}${(s.attrib30d / 1000).toFixed(2)}k
-                </td>
-                <td>
-                  {s.tags.map(t => <span key={t} className="tag-chip">{t}</span>)}
-                </td>
+        {sortedHealth.length === 0 ? (
+          <div className="empty-state mono muted" style={{ padding: "1rem" }}>
+            no sources match "{srcQ}"
+          </div>
+        ) : (
+          <table className="wl-table dev-table">
+            <thead>
+              <tr>
+                <SortTh col="name"     label="SOURCE" />
+                <SortTh col="kind"     label="KIND" />
+                <th className="num">LAST FETCH</th>
+                <SortTh col="freshness" label="FRESHNESS" />
+                <SortTh col="weight"   label="WEIGHT"    numeric />
+                <SortTh col="attrib30d" label="ATTRIB 30D" numeric />
+                <th>TAGS</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sortedHealth.map(s => (
+                <tr key={s.name} className="src-row-clickable" onClick={() => setOpenSrc(s)}>
+                  <td className="src-name src-name-link">{s.name}</td>
+                  <td className="muted small">{s.kind}</td>
+                  <td className="num mono muted">{s.lastFetch}</td>
+                  <td>
+                    <FreshnessIndicator value={s.freshness} />
+                  </td>
+                  <td className="num"><WeightBar w={s.weight} /></td>
+                  <td className={`num ${s.attrib30d >= 0 ? "pos" : "neg"}`}>
+                    {s.attrib30d >= 0 ? "+" : ""}${(s.attrib30d / 1000).toFixed(2)}k
+                  </td>
+                  <td>
+                    {s.tags.map(t => <span key={t} className="tag-chip">{t}</span>)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
+
+      {/* Per-source detail drilldown */}
+      <DrillSheet
+        open={!!openSrc}
+        onClose={() => setOpenSrc(null)}
+        title={openSrc ? openSrc.name : ""}
+        subtitle={openSrc ? openSrc.kind : ""}
+      >
+        {openSrc && <SourceDetailPanel s={openSrc} />}
+      </DrillSheet>
 
       {/* Score → outcome correlation */}
       <section className="block">

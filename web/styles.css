@@ -1369,4 +1369,48 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
   background: none; border: none; color: inherit; font: inherit; cursor: pointer;
   padding: 0; display: inline-flex; align-items: center; gap: 6px;
 }
+
+/* ─── Source search input ──────────────────────────────────────────── */
+.src-search {
+  font-family: var(--mono); font-size: 0.72rem;
+  padding: 4px 8px;
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 4px;
+  background: var(--bg2, #111); color: var(--text, #e0e0e0);
+  width: 160px;
+  transition: border-color 0.15s;
+}
+.src-search:focus { outline: none; border-color: var(--accent, #d6b15a); }
+.src-search::placeholder { color: var(--text-mute-3, #555); }
+
+/* ─── Sortable column headers ──────────────────────────────────────── */
+.th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+.th-sort:hover { color: var(--accent, #d6b15a); }
+.th-sort.th-active { color: var(--accent, #d6b15a); }
+
+/* ─── Clickable source rows ────────────────────────────────────────── */
+.src-row-clickable { cursor: pointer; }
+.src-row-clickable:hover td { background: rgba(255,255,255,0.03); }
+.src-name-link { text-decoration: underline dotted rgba(214,177,90,0.4); }
+.src-row-clickable:hover .src-name-link { color: var(--accent, #d6b15a); text-decoration-color: var(--accent, #d6b15a); }
+
+.stream-row-clickable { cursor: pointer; }
+.stream-row-clickable:hover { background: rgba(255,255,255,0.025); }
+.stream-drill-hint { font-size: 10px; opacity: 0; transition: opacity 0.15s; }
+.stream-row-clickable:hover .stream-drill-hint { opacity: 1; }
+
+/* ─── SourceDetailPanel (in DrillSheet) ────────────────────────────── */
+.source-detail { display: flex; flex-direction: column; gap: 12px; }
+.detail-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  gap: 12px; font-size: 0.8rem; border-bottom: 1px solid rgba(255,255,255,0.04);
+  padding-bottom: 8px;
+}
+.detail-row:last-child { border-bottom: none; }
+.detail-label { color: var(--text-mute-3, #555); min-width: 120px; flex-shrink: 0; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.detail-val { font-family: var(--mono); font-size: 0.78rem; text-align: right; flex: 1; }
+.detail-section { padding-top: 8px; }
+.detail-section-head { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-mute-3, #555); margin-bottom: 6px; }
+.detail-title { font-family: var(--serif); font-size: 14px; margin-bottom: 4px; }
+.detail-snippet { font-size: 0.75rem; line-height: 1.5; margin: 0; }
 .tb-status-btn:hover { color: var(--accent, #e0c060); }

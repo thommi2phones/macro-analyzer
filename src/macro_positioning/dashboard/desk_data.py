@@ -791,21 +791,47 @@ def build_source_health_section() -> list[dict]:
 
     Schema (per data.mock.js sourceHealth[]):
       name, kind, lastFetch (HH:MM), freshness (0..1), weight, attrib30d, tags
+      + detail fields: source_id, author, market_focus, research_style,
+        fetch_cadence, freshness_sla_hours, channels, onboarded_at
     """
     sources = load_sources(include_archived=False)
+
+    # Wire real 30d attribution where closed-trade outcomes exist
+    attrib_map: dict[str, float] = {}
+    if settings.sqlite_path.exists():
+        try:
+            from macro_positioning.learning.source_attribution import attribution_30d
+            with sqlite3.connect(settings.sqlite_path) as conn:
+                attrib_map = {
+                    r["source_id"]: r["weighted_pnl_pct"]
+                    for r in attribution_30d(conn)
+                }
+        except Exception:
+            pass
+
     rows = []
     for s in sources:
-        # TODO: pull last_fetched + 30d attribution from real tables
+        # TODO: pull last_fetched from real fetch-tracking tables
         sla = s.freshness_sla_hours or 0
         score = 1.0 if sla else 1.0  # placeholder until fetch tracking
         rows.append({
+            # Core health fields
             "name": s.name,
             "kind": _SOURCE_TYPE_DISPLAY.get(s.source_type, s.source_type),
             "lastFetch": "—",
             "freshness": round(score, 2),
             "weight": s.trust_weight,
-            "attrib30d": 0,
+            "attrib30d": round(attrib_map.get(s.source_id, 0), 2),
             "tags": s.routing_tags[:5],
+            # Detail fields (used by SourceDetailPanel drilldown)
+            "source_id": s.source_id,
+            "author": s.author or "",
+            "market_focus": s.market_focus or "",
+            "research_style": s.research_style or "",
+            "fetch_cadence": s.fetch_cadence or "",
+            "freshness_sla_hours": s.freshness_sla_hours,
+            "channels": list(s.channels or []),
+            "onboarded_at": s.onboarded_at or "",
         })
     return rows
 

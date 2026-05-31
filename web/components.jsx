@@ -231,8 +231,55 @@ function SetupCard({ s, onOpen, active = false }) {
   );
 }
 
+// ─── Per-source detail panel (used in /streams + /dev DrillSheets) ──
+function SourceDetailPanel({ s }) {
+  const rows = [
+    ["ID",            s.source_id || "—"],
+    ["Author",        s.author || "—"],
+    ["Market focus",  s.market_focus || "—"],
+    ["Research style",s.research_style || "—"],
+    ["Fetch cadence", s.fetch_cadence || "—"],
+    ["Freshness SLA", s.freshness_sla_hours ? `${s.freshness_sla_hours}h` : "—"],
+    ["Channels",      (s.channels || []).join(", ") || "—"],
+    ["Onboarded",     s.onboarded_at || "—"],
+  ];
+  const attrib = s.attrib30d ?? 0;
+  return (
+    <div className="source-detail">
+      {rows.map(([label, val]) => (
+        <div key={label} className="detail-row">
+          <span className="detail-label">{label}</span>
+          <span className="detail-val mono">{val}</span>
+        </div>
+      ))}
+      <div className="detail-row">
+        <span className="detail-label">30d attribution</span>
+        <span className={`detail-val mono ${attrib >= 0 ? "pos" : "neg"}`}>
+          {attrib >= 0 ? "+" : ""}${(attrib / 1000).toFixed(2)}k
+        </span>
+      </div>
+      {(s.tags || []).length > 0 && (
+        <div className="detail-row">
+          <span className="detail-label">Tags</span>
+          <span className="detail-val">
+            {(s.tags || []).map(t => <span key={t} className="tag-chip">{t}</span>)}
+          </span>
+        </div>
+      )}
+      {s.latestTitle && (
+        <div className="detail-section">
+          <div className="detail-section-head">Latest item</div>
+          <div className="detail-title">{s.latestTitle}</div>
+          {s.latestSnippet && <p className="detail-snippet muted small">{s.latestSnippet}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Export
 Object.assign(window, {
   ScoreChip, TierIndicator, RegimeBadge, SubScoreBar, SourcePill,
   Sparkline, PnL, DrillSheet, SetupCard, SideLabel, ConvictionStripe,
+  SourceDetailPanel,
 });

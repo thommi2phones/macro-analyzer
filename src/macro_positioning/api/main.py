@@ -52,6 +52,26 @@ async def _bearer_auth(request: Request, call_next):
         )
     return await call_next(request)
 
+
+# Disable browser caching of SPA source files so reloads always pick up
+# fresh JSX/JS during development. Babel-standalone transforms .jsx in
+# the browser; without these headers, the cached transform survives even
+# `Cmd+Shift+R` and edits silently don't appear.
+@app.middleware("http")
+async def _no_cache_spa_assets(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/web/") and (
+        path.endswith(".jsx")
+        or path.endswith(".js")
+        or path.endswith(".html")
+        or path.endswith(".css")
+    ):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 # Desk routes (dynamic /web/data.js + /api/desk/data) MUST register
 # BEFORE the StaticFiles mount so they take precedence over the static
 # data.mock.js fallback.
@@ -71,6 +91,50 @@ repository = SQLiteRepository(settings.sqlite_path)
 # handled by desk_router above and shadows the static fallback at
 # web/data.mock.js. SPA reads `window.MA_DATA` on first paint.
 _WEB_DIR = settings.base_dir / "web"
+
+
+# Dynamic index.html with mtime-based cache-bust on every <script src=*.jsx>.
+# This MUST register before the StaticFiles mount so it shadows the file at
+# web/index.html. Each JSX URL gets `?v={file_mtime}` appended, so the
+# browser is forced to re-fetch as soon as the source file changes — no
+# manual `?v=N` bumping in the HTML, and no Cmd+Shift+R needed.
+import re as _re
+from fastapi.responses import HTMLResponse as _HTMLResponse
+
+# Cache-bust both <script src="*.jsx"> AND <link href="*.css"> with the
+# file's mtime. Without the CSS rule the browser will happily serve a
+# stale stylesheet for hours after a rule change.
+_SCRIPT_SRC_RE = _re.compile(r'(<script[^>]*\bsrc=")([^"?]+\.jsx)(\?[^"]*)?(")')
+_LINK_HREF_RE = _re.compile(r'(<link[^>]*\bhref=")([^"?]+\.css)(\?[^"]*)?(")')
+
+
+@app.get("/web/index.html", include_in_schema=False)
+@app.get("/web/", include_in_schema=False)
+def _spa_index() -> _HTMLResponse:
+    index_path = _WEB_DIR / "index.html"
+    raw = index_path.read_text(encoding="utf-8")
+
+    def _bust(match: "_re.Match[str]") -> str:
+        prefix, src, _existing_q, suffix = match.groups()
+        asset_path = _WEB_DIR / src
+        try:
+            mtime = int(asset_path.stat().st_mtime)
+        except OSError:
+            mtime = 0
+        return f"{prefix}{src}?v={mtime}{suffix}"
+
+    rewritten = _SCRIPT_SRC_RE.sub(_bust, raw)
+    rewritten = _LINK_HREF_RE.sub(_bust, rewritten)
+    return _HTMLResponse(
+        rewritten,
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 if _WEB_DIR.is_dir():
     app.mount("/web", StaticFiles(directory=_WEB_DIR, html=True), name="web")
 
@@ -80,6 +144,20 @@ if _WEB_DIR.is_dir():
 @app.get("/desk")
 def desk_root_redirect() -> RedirectResponse:
     return RedirectResponse(url="/web/index.html", status_code=307)
+
+
+# One-shot cache nuke. Hit /reset to clear all browser caches, cookies,
+# storage, and any service workers for this origin — then redirect to /
+# so the SPA reloads cleanly. Useful when stale JSX gets stuck in the
+# browser despite no-cache headers (Chrome's disk cache can be sticky).
+@app.get("/reset", include_in_schema=False)
+def reset_browser_cache() -> RedirectResponse:
+    response = RedirectResponse(url="/web/index.html", status_code=303)
+    # Clear-Site-Data is a W3C header Chrome / Edge / Firefox honor —
+    # asks the browser to wipe everything for this origin in one shot.
+    response.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/health")

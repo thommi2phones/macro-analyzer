@@ -20,6 +20,71 @@ from macro_positioning.manual.models import AuthorRef
 _SLUG_NON_ALNUM = re.compile(r"[^a-z0-9]+")
 
 
+# ── Seed authors ────────────────────────────────────────────────────────────
+# The user's recurring set of trade-idea sources. Pre-seeded into the
+# input_authors table on app boot so author_ids are stable across DBs and
+# the /inbox dropdown is always populated even before the first submission.
+# `channel` is the primary venue we expect to see them in; `channel_type`
+# matches the SPA's pill set (self|telegram|discord|twitter|tradingview|other).
+# Both can be overridden per-drop via the ManualMetadata form.
+# Hierarchy: person → channel they post in → parent community.
+# Example: Big_Nuts posts in the Market Traders chat, which sits inside the
+# broader Feather Hands community. SPA shows this as a breadcrumb so
+# attribution reads "Big_Nuts · Market Traders · Feather Hands".
+SEED_AUTHORS: list[dict] = [
+    {"display_name": "Big_Nuts",            "channel": "Market Traders",      "channel_type": "telegram", "parent_channel": "Feather Hands"},
+    {"display_name": "MadDog31",            "channel": "Market Traders",      "channel_type": "telegram", "parent_channel": "Feather Hands"},
+    {"display_name": "Market Traders",      "channel": "Market Traders",      "channel_type": "telegram", "parent_channel": "Feather Hands"},
+    {"display_name": "Artur Unlocked",      "channel": "Stock Unlocked",      "channel_type": "telegram"},
+    {"display_name": "Stock Unlocked",      "channel": "Stock Unlocked",      "channel_type": "telegram"},
+    {"display_name": "Me",                  "channel": "self",                "channel_type": "self"},
+    {"display_name": "WOAS",                "channel": "Wolf of All Streets", "channel_type": "twitter"},
+]
+
+
+def seed_known_authors(*, db_path: Optional[Path] = None) -> int:
+    """Idempotently insert the SEED_AUTHORS list into input_authors.
+
+    Returns the number of rows actually inserted (0 on subsequent boots).
+    Existing rows are NEVER updated — once a row exists we trust whatever
+    the user has corrected in place. Called from initialize_database() so
+    fresh DBs always have the full picklist.
+    """
+    db_path = db_path or settings.sqlite_path
+    inserted = 0
+    now_iso = datetime.now(UTC).isoformat()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA busy_timeout=5000")
+        for seed in SEED_AUTHORS:
+            ref = AuthorRef(**seed)
+            author_id = slugify_author(ref)
+            existing = connection.execute(
+                "SELECT 1 FROM input_authors WHERE author_id=?",
+                (author_id,),
+            ).fetchone()
+            if existing:
+                continue
+            connection.execute(
+                "INSERT INTO input_authors "
+                "(author_id, display_name, channel, channel_type, "
+                " parent_channel, notes, first_seen_at, last_seen_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    author_id,
+                    seed["display_name"],
+                    seed.get("channel"),
+                    seed.get("channel_type"),
+                    seed.get("parent_channel"),
+                    "seeded on first boot",
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            inserted += 1
+        connection.commit()
+    return inserted
+
+
 def slugify(text: str) -> str:
     cleaned = _SLUG_NON_ALNUM.sub("-", (text or "").strip().lower()).strip("-")
     return cleaned or "anon"
@@ -98,12 +163,17 @@ def find_author_id(display_name: str, channel: Optional[str]) -> Optional[str]:
 
 
 def list_authors(limit: int = 200) -> list[dict]:
-    """Recent authors with submission counts. Feeds the SPA autocomplete."""
+    """Recent authors with submission counts. Feeds the SPA autocomplete.
+
+    Also returns `parent_channel` so the SPA can render the full
+    person → channel → community breadcrumb when present.
+    """
     with sqlite3.connect(settings.sqlite_path) as connection:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             """
             SELECT a.author_id, a.display_name, a.channel, a.channel_type,
+                   a.parent_channel,
                    a.first_seen_at, a.last_seen_at,
                    (SELECT COUNT(*) FROM documents d WHERE d.author_id=a.author_id) AS submission_count
             FROM input_authors a

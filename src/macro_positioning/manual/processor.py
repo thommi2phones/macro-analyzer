@@ -62,7 +62,10 @@ def _ensure_manual_tag(tags: set[str]) -> set[str]:
 # ── Preview (no persistence) ─────────────────────────────────────────────────
 
 
-def preview(payload: ManualInputPayload) -> PreviewResponse:
+def preview(
+    payload: ManualInputPayload,
+    image_paths: Optional[list[str]] = None,
+) -> PreviewResponse:
     text = _combined_text(payload)
     tickers = sorted(extract_tickers_from_text(text))
     tags = _ensure_manual_tag(detect_tags(text))
@@ -74,11 +77,34 @@ def preview(payload: ManualInputPayload) -> PreviewResponse:
             payload.author.display_name, payload.author.channel
         )
 
+    # Image-derived auto-fill: heuristic OCR over each attached chart.
+    # Imported lazily so /preview keeps working even if pytesseract/Pillow
+    # aren't installed (degrades to text-only suggestions).
+    image_suggestions = None
+    paths = list(image_paths or [])
+    if not paths and payload.attachment_paths:
+        paths = list(payload.attachment_paths)
+    if not paths and payload.attachment_path:
+        paths = [payload.attachment_path]
+    if paths:
+        try:
+            from macro_positioning.manual.heuristic_ocr import analyze_images
+            sug = analyze_images(paths)
+            image_suggestions = sug.to_dict()
+            # Promote OCR-detected ticker into detected_tickers if missing.
+            if sug.ticker and sug.ticker not in tickers:
+                tickers = sorted({*tickers, sug.ticker})
+        except Exception:
+            # Never let OCR errors break preview — log & continue with text-only.
+            import logging
+            logging.getLogger(__name__).exception("Heuristic OCR failed")
+
     return PreviewResponse(
         detected_tickers=tickers,
         suggested_tags=sorted(tags),
         suggested_agents=sorted(agents),
         suggested_author_id=suggested_author_id,
+        image_suggestions=image_suggestions,
     )
 
 
@@ -203,8 +229,9 @@ def list_recent_inputs(limit: int = 50) -> list[dict]:
         rows = connection.execute(
             """
             SELECT document_id, source_id, title, content_type, ingested_at,
-                   author_id, attachment_path, attachment_paths_json,
-                   user_metadata_json, tags_json
+                   author, author_id, raw_text, cleaned_text,
+                   attachment_path, attachment_paths_json,
+                   user_metadata_json, tags_json, extracted_features_json
             FROM documents
             WHERE source_id LIKE 'manual:%'
             ORDER BY ingested_at DESC
@@ -232,6 +259,11 @@ def list_recent_inputs(limit: int = 50) -> list[dict]:
         if not paths and d.get("attachment_path"):
             paths = [d["attachment_path"]]
         d["attachment_paths"] = paths
+        # Surface extracted_features_json as a parsed dict for the SPA.
+        try:
+            d["extracted_features"] = json.loads(d.pop("extracted_features_json") or "null")
+        except json.JSONDecodeError:
+            d["extracted_features"] = None
         out.append(d)
     return out
 

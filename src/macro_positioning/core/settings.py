@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""        # Claude API key
     claude_model: str = "claude-sonnet-4-5"
 
+    # Manual-input chart vision. Default Sonnet (5x cheaper than Opus,
+    # near-Opus quality on chart extraction). Override per-call (e.g.
+    # MPA_VISION_MODEL=claude-opus-4-6 for high-conviction reprocessing
+    # of past drops). Image preprocessing settings tame token cost on the
+    # multimodal call without hurting chart legibility.
+    vision_model: str = "claude-sonnet-4-6"
+    vision_max_image_width: int = 1500       # downscale wider images before send
+    vision_resize_target_width: int = 1024   # post-resize width
+    vision_cache_enabled: bool = True        # hash-dedupe identical bytes
+
     # Routing defaults
     brain_primary_backend: str = "gemini"    # gemini | anthropic | ollama
     brain_vision_backend: str = "gemini"     # gemini | anthropic

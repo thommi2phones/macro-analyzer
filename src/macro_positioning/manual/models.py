@@ -170,12 +170,23 @@ class TradeRecord(BaseModel):
 
 
 class PreviewResponse(BaseModel):
-    """Returned by `POST /api/manual/preview`. No persistence."""
+    """Returned by `POST /api/manual/preview`. No persistence.
+
+    Includes both text-derived suggestions (tickers, tags, agents, author
+    match) and image-derived suggestions populated by the heuristic OCR
+    fast-path when one or more files are attached to the request. The SPA
+    pre-fills form fields from `image_suggestions`; the user verifies.
+    """
 
     detected_tickers: list[str] = Field(default_factory=list)
     suggested_tags: list[str] = Field(default_factory=list)
     suggested_agents: list[str] = Field(default_factory=list)
     suggested_author_id: Optional[str] = None  # slug match if author display+channel hit
+
+    # Image-derived auto-fill (heuristic OCR over uploaded chart screenshots).
+    # Keys mirror the form fields the SPA exposes; missing values stay null
+    # so the user-supplied form value wins on merge.
+    image_suggestions: Optional[dict] = None
 
 
 # ── Ingest response ──────────────────────────────────────────────────────────

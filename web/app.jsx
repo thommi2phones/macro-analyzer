@@ -2,9 +2,68 @@
 
 const { useState: useS, useMemo: useM, useEffect: useE } = React;
 
+// Live wall-clock for the topbar. Updates every 30s; uses ET (America/New_York)
+// since that's the trading session reference. Falls back to local tz if Intl
+// can't resolve the zone (older browsers/restrictive environments).
+function useLiveClock() {
+  const [now, setNow] = React.useState(new Date());
+  React.useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30 * 1000);
+    return () => clearInterval(t);
+  }, []);
+  let timeStr = "", dayStr = "";
+  try {
+    timeStr = new Intl.DateTimeFormat("en-US", {
+      hour: "2-digit", minute: "2-digit", hour12: false,
+      timeZone: "America/New_York",
+    }).format(now) + " ET";
+    const dow = new Intl.DateTimeFormat("en-US", {
+      weekday: "short", timeZone: "America/New_York",
+    }).format(now).toUpperCase();
+    const md = new Intl.DateTimeFormat("en-US", {
+      month: "short", day: "numeric", timeZone: "America/New_York",
+    }).format(now).toUpperCase();
+    dayStr = `${dow} · ${md}`;
+  } catch (e) {
+    timeStr = now.toLocaleTimeString();
+    dayStr = now.toDateString();
+  }
+  return { timeStr, dayStr };
+}
+
 function App() {
   const [view, setView] = useS("positioning");
   const [openSig, setOpenSig] = useS(null);
+  const clock = useLiveClock();
+
+  // Cross-view nav: /inbox dispatches `macro:open-asset` when a user
+  // clicks a chart's ticker in the analyzed extraction. We switch to
+  // the positioning view; if MA_DATA already has a matching signal /
+  // watchlist row we open the reasoning trail for it. Either way the
+  // user lands looking at the right asset.
+  useE(() => {
+    function onOpenAsset(e) {
+      const wanted = String(e.detail?.ticker || "").toUpperCase().split("/")[0];
+      setView("positioning");
+      try {
+        const D = window.MA_DATA || {};
+        const pools = [
+          ...(D.signals || []),
+          ...(D.watchlist?.tickers || []),
+          ...(D.watchlist || []),
+        ];
+        const match = pools.find(p =>
+          (p.asset || p.ticker || p.symbol || "")
+            .toString().toUpperCase().split("/")[0] === wanted
+        );
+        if (match && (match.id || match.asset)) {
+          setOpenSig(match);
+        }
+      } catch (_) { /* best-effort */ }
+    }
+    window.addEventListener("macro:open-asset", onOpenAsset);
+    return () => window.removeEventListener("macro:open-asset", onOpenAsset);
+  }, []);
 
   // Tweaks
   const [tw, setTweak] = useTweaks(/*EDITMODE-BEGIN*/{
@@ -41,7 +100,7 @@ function App() {
             <span className="tab-num">/03</span>dev
           </button>
           <button className={`nav-tab ${view === "inbox" ? "on" : ""}`} onClick={() => setView("inbox")}>
-            <span className="tab-num">/04</span>inbox
+            <span className="tab-num">/04</span>manual input
           </button>
         </nav>
         <div className="topbar-spacer"></div>
@@ -52,8 +111,8 @@ function App() {
             {D.regime.framework.label.toUpperCase()} · {Math.round(D.regime.framework.confidence * 100)}%
           </span>
           <div className="tb-clock">
-            <span className="tb-clock-time">14:23 ET</span>
-            <span className="tb-clock-day">FRI · MAY 22</span>
+            <span className="tb-clock-time">{clock.timeStr}</span>
+            <span className="tb-clock-day">{clock.dayStr}</span>
           </div>
         </div>
       </header>

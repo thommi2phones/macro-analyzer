@@ -339,6 +339,23 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_narrative_snapshots_asof
         ON narrative_snapshots (asof DESC)
     """,
+    # ─── Vision result cache (hash-dedupe) ────────────────────────────────
+    # Same image bytes → same TradeRecord. Skips redundant Claude calls
+    # when a chart is dropped twice or the drainer reruns over an already-
+    # processed document. Keyed on sha256 of the original (pre-resize) bytes.
+    """
+    CREATE TABLE IF NOT EXISTS vision_cache (
+        image_sha256 TEXT PRIMARY KEY,
+        model TEXT NOT NULL,
+        result_json TEXT NOT NULL,
+        latency_ms REAL,
+        created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_vision_cache_created
+        ON vision_cache (created_at DESC)
+    """,
     # ─── Manual input layer ───────────────────────────────────────────────
     # Per-author/channel attribution for chart screenshots and text drops
     # the user pastes into the /inbox route. See plans/manual-input-layer.
@@ -377,6 +394,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # singular `attachment_path` column above stays populated with the
     # first image for back-compat with anything reading it directly.
     ("documents", "attachment_paths_json", "TEXT"),
+    # Hierarchy: a channel ("Market Traders") may be nested under a parent
+    # community ("Feather Hands"). Nullable; rendered as a breadcrumb in
+    # the SPA so attribution reads "Big_Nuts · Market Traders · Feather Hands".
+    ("input_authors", "parent_channel", "TEXT"),
 ]
 
 
@@ -450,3 +471,14 @@ def initialize_database(database_path: Path) -> None:
         # new columns were introduced.
         _apply_added_columns(connection)
         connection.commit()
+
+    # Seed the manual-input known-authors picklist (idempotent — only
+    # inserts on first boot, never overwrites user corrections). Imported
+    # late to avoid a circular import via macro_positioning.manual.models.
+    try:
+        from macro_positioning.manual.authors import seed_known_authors
+        seed_known_authors(db_path=database_path)
+    except Exception:
+        # Seeding is convenience, not correctness — never fail boot on it.
+        import logging
+        logging.getLogger(__name__).exception("seed_known_authors failed")

@@ -636,6 +636,76 @@ def signal_attribution(
     return out
 
 
+def echo_ties(conn: sqlite3.Connection) -> list[dict]:
+    """Co-citation strength between source pairs.
+
+    Two sources are co-cited when they both appear in source_credits of the
+    same agent_call_log entry, OR both credited in the same trade_review's
+    sources_credited_json.
+
+    Returns list of {source_a, source_b, strength} where strength is the
+    normalized co-occurrence count (0..1, divided by max pair count).
+    Filters out pairs with strength < 0.1.
+    Empty list if insufficient data.
+    """
+    pair_counts: Counter = Counter()
+
+    # Lens A: agent_call_log.source_credits (JSON list of source ids)
+    try:
+        cur = conn.execute(
+            "SELECT source_credits FROM agent_call_log WHERE source_credits IS NOT NULL"
+        )
+        for (raw,) in cur.fetchall():
+            try:
+                sources = json.loads(raw) if isinstance(raw, str) else raw
+                if not isinstance(sources, list):
+                    continue
+                ids = sorted(set(str(s) for s in sources if s))
+                for i in range(len(ids)):
+                    for j in range(i + 1, len(ids)):
+                        pair_counts[(ids[i], ids[j])] += 1
+            except (ValueError, TypeError):
+                continue
+    except Exception as e:
+        log.debug("echo_ties agent_call_log query failed: %s", e)
+
+    # Lens B: trade_reviews.sources_credited_json (JSON list of source ids)
+    try:
+        cur = conn.execute(
+            "SELECT sources_credited_json FROM trade_reviews WHERE sources_credited_json IS NOT NULL"
+        )
+        for (raw,) in cur.fetchall():
+            try:
+                sources = json.loads(raw) if isinstance(raw, str) else raw
+                if not isinstance(sources, list):
+                    continue
+                ids = sorted(set(str(s) for s in sources if s))
+                for i in range(len(ids)):
+                    for j in range(i + 1, len(ids)):
+                        pair_counts[(ids[i], ids[j])] += 1
+            except (ValueError, TypeError):
+                continue
+    except Exception as e:
+        log.debug("echo_ties trade_reviews query failed: %s", e)
+
+    if not pair_counts:
+        return []
+
+    max_count = max(pair_counts.values(), default=1)
+    if max_count <= 0:
+        return []
+
+    out: list[dict] = []
+    for (a, b), count in pair_counts.items():
+        strength = round(count / max_count, 4)
+        if strength < 0.1:
+            continue
+        out.append({"source_a": a, "source_b": b, "strength": strength})
+
+    out.sort(key=lambda r: r["strength"], reverse=True)
+    return out
+
+
 def signal_history(
     conn: sqlite3.Connection,
     source_id: str,

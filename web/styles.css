@@ -1414,3 +1414,94 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 .detail-title { font-family: var(--serif); font-size: 14px; margin-bottom: 4px; }
 .detail-snippet { font-size: 0.75rem; line-height: 1.5; margin: 0; }
 .tb-status-btn:hover { color: var(--accent, #e0c060); }
+
+/* ============== S1 — Theme map ============== */
+.theme-map {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.theme-map-empty {
+  padding: 48px; text-align: center; font-size: 13px;
+}
+.tm-controls {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 4px;
+}
+.tm-play {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+  padding: 4px 12px; border: 1px solid var(--line-2); background: transparent;
+  color: var(--text-mute); text-transform: uppercase;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tm-play:hover, .tm-play.active { color: var(--accent); border-color: var(--accent); }
+.tm-scrubber {
+  flex: 1; max-width: 200px; accent-color: var(--accent);
+  height: 3px; cursor: pointer;
+}
+.tm-week-label { min-width: 28px; }
+.tm-svg {
+  width: 100%; height: auto; display: block;
+}
+.tm-bubble-group { transition: opacity 0.25s; }
+
+/* ============== S2 — Concept cards ============== */
+.concept-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+.concept-card {
+  background: var(--bg-card-2);
+  border: 1px solid var(--line);
+  padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.concept-card:hover { border-color: var(--line-2); }
+.cc-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.cc-new-badge {
+  font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+  padding: 2px 6px; border: 1px solid var(--accent);
+  color: var(--accent); background: rgba(214,177,90,0.08);
+}
+.cc-age { margin-left: auto; }
+.cc-scores {
+  display: flex; gap: 16px;
+}
+.cc-score-block { display: flex; flex-direction: column; gap: 1px; }
+.cc-score-lbl { font-size: 8px; letter-spacing: 0.16em; color: var(--text-mute-3); }
+.cc-score-val { font-size: 20px; line-height: 1.1; }
+.cc-score-val.gold { color: var(--gold); }
+.cc-title { font-family: var(--serif); font-size: 16px; letter-spacing: 0.01em; line-height: 1.25; }
+.cc-synopsis { margin: 0; font-size: 12px; line-height: 1.5; }
+.cc-meta { display: flex; gap: 6px; }
+.cc-sources {
+  display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px;
+}
+.cc-src-chip {
+  font-size: 10px; font-family: var(--mono);
+  padding: 2px 7px; border: 1px solid var(--line-2);
+  color: var(--text-mute); background: var(--bg-inset);
+}
+
+/* ============== S3 — Source network graph ============== */
+.source-graph {
+  position: relative;
+}
+.sg-svg {
+  width: 100%; height: auto; display: block;
+}
+.sg-node { cursor: pointer; }
+.sg-link { transition: opacity 0.2s; }
+.sg-tooltip {
+  position: absolute;
+  background: var(--bg-card-3);
+  border: 1px solid var(--line-2);
+  padding: 8px 10px;
+  pointer-events: none;
+  z-index: 10;
+  min-width: 120px;
+}
+.sg-tt-name {
+  font-family: var(--serif); font-size: 14px; margin-bottom: 4px;
+}

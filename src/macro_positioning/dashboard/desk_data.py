@@ -1092,6 +1092,23 @@ def build_mgmt_section() -> dict:
     return {"todos": todos, "decisions": decisions, "commits": commits}
 
 
+def build_streams_section_wrapper() -> dict | None:
+    """SPA /streams payload — opens its own short-lived connection.
+
+    Returns None when no live data is available, so the snapshot omits
+    the `streams` key entirely and the data.mock.js fallback survives
+    the shallow Object.assign in web/data.mock.js.
+    """
+    from macro_positioning.dashboard.streams_builders import build_streams_section
+    if not settings.sqlite_path.exists():
+        return None
+    with sqlite3.connect(settings.sqlite_path) as conn:
+        payload = build_streams_section(conn)
+    if not payload["themeMap"] and not payload["concepts"] and not payload["sourceGraph"]["nodes"]:
+        return None
+    return payload
+
+
 def build_integration_section() -> dict:
     """Tactical-executor integration status.
 
@@ -1142,18 +1159,25 @@ def build_desk_snapshot() -> dict:
         ("costTracker", build_cost_tracker_section, _empty_cost_tracker),
         ("mgmt", build_mgmt_section, _empty_mgmt),
         ("integration", build_integration_section, _empty_integration),
+        ("streams", build_streams_section_wrapper, _empty_streams),
     ]
     out: dict[str, Any] = {}
     for key, builder, fallback in sections:
         try:
-            out[key] = builder()
+            value = builder()
         except Exception as exc:
             import sys
             print(f"[desk] section {key} failed: {exc}", file=sys.stderr)
             try:
-                out[key] = fallback()
+                value = fallback()
             except Exception:
-                out[key] = [] if "[]" in str(builder.__doc__ or "") else {}
+                value = [] if "[]" in str(builder.__doc__ or "") else {}
+        # `streams` (and any future opt-in section) returns None when it
+        # wants the mock fallback in data.mock.js to survive the shallow
+        # Object.assign merge — emit nothing rather than an empty stub.
+        if value is None:
+            continue
+        out[key] = value
     return out
 
 
@@ -1184,3 +1208,7 @@ def _empty_mgmt() -> dict:
 
 def _empty_integration() -> dict:
     return {"tactical": {"connected": False, "lastPoll": "—", "contractVersion": "—", "schemaDrift": False, "mode": "manual"}}
+
+
+def _empty_streams() -> dict:
+    return {"themeMap": [], "concepts": [], "sourceGraph": {"nodes": [], "links": []}}

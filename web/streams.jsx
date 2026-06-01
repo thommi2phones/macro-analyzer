@@ -16,6 +16,130 @@ function _seed(str) {
 }
 
 // ---------------------------------------------------------------------------
+// usePanZoom — wheel-to-zoom + drag-to-pan for SVG content. Returns a viewport
+// {transform, handlers, reset, scale} you spread onto an <svg> + apply the
+// transform string to a wrapping <g>. Wheel zoom anchors at the cursor so the
+// point under the mouse stays stationary.
+// ---------------------------------------------------------------------------
+function usePanZoom(svgRef, { minScale = 0.4, maxScale = 6 } = {}) {
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const dragRef = useRef(null);
+
+  const _toSvgPoint = (clientX, clientY) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const rect = svg.getBoundingClientRect();
+    // Map screen px → viewBox units. preserveAspectRatio=xMidYMid meet
+    // means we letterbox; recompute the effective scale from the actual
+    // box dimensions vs viewBox.
+    const vb = svg.viewBox.baseVal;
+    const sx = vb.width  / rect.width;
+    const sy = vb.height / rect.height;
+    const s  = Math.max(sx, sy);
+    const offsetX = (rect.width  * s - vb.width)  / 2;
+    const offsetY = (rect.height * s - vb.height) / 2;
+    return {
+      x: (clientX - rect.left) * s - offsetX,
+      y: (clientY - rect.top)  * s - offsetY,
+    };
+  };
+
+  const onWheel = useCallback((e) => {
+    e.preventDefault();
+    const p = _toSvgPoint(e.clientX, e.clientY);
+    setView(v => {
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      const k = Math.max(minScale, Math.min(maxScale, v.k * factor));
+      // Anchor zoom at cursor: keep the world point (p) under the same screen pixel.
+      // screen_world = (world - x) / k  →  fix p_screen by adjusting x,y after k change.
+      const x = p.x - (p.x - v.x) * (k / v.k);
+      const y = p.y - (p.y - v.y) * (k / v.k);
+      return { x, y, k };
+    });
+  }, [minScale, maxScale]);
+
+  const onMouseDown = useCallback((e) => {
+    // Only start a pan on background drags (not on bubbles/links etc).
+    // Bubbles call stopPropagation via their own click handlers, so the
+    // mousedown still reaches here for the background — but we whitelist
+    // by checking that the target is the svg itself or a non-interactive
+    // chrome element (rect/line/text). Cursor button must be primary.
+    if (e.button !== 0) return;
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "circle" || tag === "g" || e.target.closest("g.tm-bubble-group") || e.target.closest("g.sg-node")) {
+      // Allow drag from inside the chart background too — but if the user is
+      // about to click a bubble, the click event will still fire (we set a
+      // tiny threshold below).
+    }
+    dragRef.current = { startX: e.clientX, startY: e.clientY, baseX: view.x, baseY: view.y, moved: false };
+  }, [view.x, view.y]);
+
+  const onMouseMove = useCallback((e) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const vb = svg.viewBox.baseVal;
+    const s  = Math.max(vb.width / rect.width, vb.height / rect.height);
+    const dx = (e.clientX - d.startX) * s;
+    const dy = (e.clientY - d.startY) * s;
+    if (!d.moved && Math.hypot(dx, dy) > 3) d.moved = true;
+    setView(v => ({ ...v, x: d.baseX + dx, y: d.baseY + dy }));
+  }, []);
+
+  const onMouseUp = useCallback(() => {
+    dragRef.current = null;
+  }, []);
+
+  // Suppress click events that follow a real drag — so panning doesn't open
+  // a DrillSheet by accident.
+  const onClickCapture = useCallback((e) => {
+    if (dragRef.current && dragRef.current.moved) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  }, []);
+
+  const reset = useCallback(() => setView({ x: 0, y: 0, k: 1 }), []);
+
+  // Attach wheel as non-passive so preventDefault works (React's onWheel is passive).
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handler = (e) => onWheel(e);
+    svg.addEventListener("wheel", handler, { passive: false });
+    return () => svg.removeEventListener("wheel", handler);
+  }, [onWheel]);
+
+  // Document-level mouse-up so releases outside the svg still end the drag.
+  useEffect(() => {
+    const up = () => { dragRef.current = null; };
+    document.addEventListener("mouseup", up);
+    return () => document.removeEventListener("mouseup", up);
+  }, []);
+
+  return {
+    transform: `translate(${view.x} ${view.y}) scale(${view.k})`,
+    scale: view.k,
+    handlers: { onMouseDown, onMouseMove, onMouseUp, onClickCapture },
+    reset,
+  };
+}
+
+// Reusable zoom controls overlay — sits in the chart's top-right.
+function ZoomControls({ scale, onZoomIn, onZoomOut, onReset, style }) {
+  return (
+    <div className="zoom-controls mono small" style={style}>
+      <button className="btn-mini" onClick={onZoomOut} title="zoom out">−</button>
+      <span className="zoom-scale muted" title="current zoom">{(scale || 1).toFixed(2)}×</span>
+      <button className="btn-mini" onClick={onZoomIn} title="zoom in">+</button>
+      <button className="btn-mini" onClick={onReset} title="reset view">⤧</button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // S1 — Theme map
 // ---------------------------------------------------------------------------
 
@@ -31,6 +155,8 @@ function ThemeMap({ themeMap, onThemeClick }) {
   const [playing, setPlaying]     = useState(false);
   const [dirFilter, setDirFilter] = useState("all");
   const timerRef = useRef(null);
+  const svgRef = useRef(null);
+  const pz = usePanZoom(svgRef);
 
   const W = 1080, H = 520;
   const PAD = { top: 56, right: 56, bottom: 64, left: 132 };
@@ -207,14 +333,25 @@ function ThemeMap({ themeMap, onThemeClick }) {
       </div>
 
       {/* Chart + sidebar */}
-      <div className="tm-chart-wrap">
+      <div className="tm-chart-wrap" style={{ position: "relative" }}>
+        <ZoomControls
+          scale={pz.scale}
+          onZoomIn={() => { svgRef.current?.dispatchEvent(new WheelEvent("wheel", { deltaY: -200, clientX: svgRef.current.getBoundingClientRect().left + svgRef.current.getBoundingClientRect().width/2, clientY: svgRef.current.getBoundingClientRect().top + svgRef.current.getBoundingClientRect().height/2, bubbles: true })); }}
+          onZoomOut={() => { svgRef.current?.dispatchEvent(new WheelEvent("wheel", { deltaY: 200, clientX: svgRef.current.getBoundingClientRect().left + svgRef.current.getBoundingClientRect().width/2, clientY: svgRef.current.getBoundingClientRect().top + svgRef.current.getBoundingClientRect().height/2, bubbles: true })); }}
+          onReset={pz.reset}
+          style={{ position: "absolute", top: 8, left: 8, zIndex: 5 }}
+        />
         <svg
+          ref={svgRef}
           className="tm-svg"
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Theme lifecycle scatter map"
+          style={{ cursor: "grab", touchAction: "none" }}
+          {...pz.handlers}
         >
+        <g transform={pz.transform}>
           {/* Outer chart frame */}
           <rect x={PAD.left} y={PAD.top} width={innerW} height={innerH}
                 fill="none" stroke="var(--line)" strokeWidth="1" opacity="0.5" />
@@ -333,6 +470,7 @@ function ThemeMap({ themeMap, onThemeClick }) {
               </g>
             );
           })}
+        </g>
         </svg>
 
         {/* Right sidebar */}
@@ -540,6 +678,8 @@ function SourceGraph({ sourceGraph, onNodeClick }) {
   const [hovered, setHovered] = useState(null);
   const [tooltip, setTooltip] = useState(null);
   const [tierOn, setTierOn] = useState({ 0: true, 1: true, 2: true, 3: true, 4: true });
+  const svgRef = useRef(null);
+  const pz = usePanZoom(svgRef);
 
   const allNodes = (sourceGraph && sourceGraph.nodes) || [];
   const allLinks = (sourceGraph && sourceGraph.links) || [];
@@ -613,14 +753,25 @@ function SourceGraph({ sourceGraph, onNodeClick }) {
         </div>
       </div>
 
-      <div className="sg-chart-wrap">
+      <div className="sg-chart-wrap" style={{ position: "relative" }}>
+        <ZoomControls
+          scale={pz.scale}
+          onZoomIn={() => { svgRef.current?.dispatchEvent(new WheelEvent("wheel", { deltaY: -200, clientX: svgRef.current.getBoundingClientRect().left + svgRef.current.getBoundingClientRect().width/2, clientY: svgRef.current.getBoundingClientRect().top + svgRef.current.getBoundingClientRect().height/2, bubbles: true })); }}
+          onZoomOut={() => { svgRef.current?.dispatchEvent(new WheelEvent("wheel", { deltaY: 200, clientX: svgRef.current.getBoundingClientRect().left + svgRef.current.getBoundingClientRect().width/2, clientY: svgRef.current.getBoundingClientRect().top + svgRef.current.getBoundingClientRect().height/2, bubbles: true })); }}
+          onReset={pz.reset}
+          style={{ position: "absolute", top: 8, left: 8, zIndex: 5 }}
+        />
         <svg
+          ref={svgRef}
           className="sg-svg"
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Source network graph"
+          style={{ cursor: "grab", touchAction: "none" }}
+          {...pz.handlers}
         >
+        <g transform={pz.transform}>
           {/* Cluster category labels — sit above the top of the cluster's
               spread radius + max node ring + breathing room. Empty clusters
               render as ghosts so the user can see *which* themes have no
@@ -726,6 +877,7 @@ function SourceGraph({ sourceGraph, onNodeClick }) {
               </g>
             );
           })}
+        </g>
         </svg>
 
         {/* Right sidebar */}

@@ -150,10 +150,21 @@ const _DIR_COLOR = {
   mixed:   "var(--amber)",
 };
 
+// Lifecycle thresholds for the fading-tail treatment.
+// Themes with lifecycle in (FADE_START, FADE_ROLLUP] render at reduced
+// opacity so they recede visually. Themes with lifecycle > FADE_ROLLUP get
+// collapsed into a single "fading cluster" pseudo-bubble per direction band
+// (click to expand into the underlying themes).
+const _FADE_START   = 0.85;
+const _FADE_ROLLUP  = 0.90;
+const _FADED_OPACITY = 0.40;
+
 function ThemeMap({ themeMap, onThemeClick }) {
   const [weekIndex, setWeekIndex] = useState(3);
   const [playing, setPlaying]     = useState(false);
   const [dirFilter, setDirFilter] = useState("all");
+  // Per-direction expansion state for the fading-cluster roll-up bubbles.
+  const [expanded, setExpanded]   = useState({ bullish: false, mixed: false, bearish: false });
   const timerRef = useRef(null);
   const svgRef = useRef(null);
   const pz = usePanZoom(svgRef);
@@ -163,10 +174,56 @@ function ThemeMap({ themeMap, onThemeClick }) {
   const innerW = W - PAD.left - PAD.right;
   const innerH = H - PAD.top  - PAD.bottom;
 
-  const visibleThemes = useMemo(() => {
-    if (dirFilter === "all") return themeMap;
-    return themeMap.filter(t => t.direction === dirFilter);
-  }, [themeMap, dirFilter]);
+  // Apply the direction filter, then split each direction into "live" (real
+  // bubbles always shown) and "fading" (folded into a cluster unless that
+  // cluster is expanded). renderThemes is the flat list passed to the
+  // layout engine — clusters are pseudo-themes with id `__fading_<dir>`.
+  const { renderThemes, fadingByDir } = useMemo(() => {
+    const filtered = dirFilter === "all"
+      ? themeMap
+      : themeMap.filter(t => t.direction === dirFilter);
+    const byDir = { bullish: [], mixed: [], bearish: [] };
+    filtered.forEach(t => (byDir[t.direction] || byDir.mixed).push(t));
+    const fading = { bullish: [], mixed: [], bearish: [] };
+    const live = [];
+    Object.entries(byDir).forEach(([dir, arr]) => {
+      arr.forEach(t => {
+        if ((t.lifecycle || 0) > _FADE_ROLLUP) fading[dir].push(t);
+        else live.push(t);
+      });
+    });
+    const out = [...live];
+    Object.entries(fading).forEach(([dir, members]) => {
+      if (members.length === 0) return;
+      if (expanded[dir]) { out.push(...members); return; }
+      // Build a single cluster pseudo-theme per direction band. mentions =
+      // sum of members so radius reflects the collective tail.
+      const sumWeeks = [0, 0, 0, 0];
+      const allSources = new Set();
+      let maxAge = 0;
+      members.forEach(m => {
+        (m.mentions_by_week || []).forEach((v, i) => { sumWeeks[i] += v; });
+        (m.sources || []).forEach(s => allSources.add(s));
+        maxAge = Math.max(maxAge, m.age_days || 0);
+      });
+      out.push({
+        id: `__fading_${dir}`,
+        label: `${members.length} fading themes`,
+        direction: dir,
+        lifecycle: 0.95,
+        novelty: 0,
+        velocity: 0,
+        age_days: maxAge,
+        mentions_by_week: sumWeeks,
+        sources: [...allSources],
+        _cluster: true,
+        _members: members,
+      });
+    });
+    return { renderThemes: out, fadingByDir: fading };
+  }, [themeMap, dirFilter, expanded]);
+
+  const visibleThemes = renderThemes;
 
   // Bubble radius first, so layout can use it for collision avoidance.
   const maxMentions = Math.max(1, ...themeMap.flatMap(t => t.mentions_by_week || [0]));
@@ -415,8 +472,21 @@ function ThemeMap({ themeMap, onThemeClick }) {
             if (!p) return null;
             const cx = p.x, cy = p.y;
             const r = bubbleR(theme);
-            const isEmerging = theme.age_days < 14;
-            const color = _DIR_COLOR[theme.direction] || "var(--amber)";
+            const isEmerging = theme.age_days < 14 && !theme._cluster;
+            const isCluster = !!theme._cluster;
+            // Fade individual bubbles whose lifecycle is in the dying band
+            // (between FADE_START and FADE_ROLLUP). Cluster bubbles render at
+            // their own muted opacity below.
+            const isFading = !isCluster && (theme.lifecycle || 0) > _FADE_START;
+            const color = isCluster
+              ? "var(--text-mute-3)"
+              : (_DIR_COLOR[theme.direction] || "var(--amber)");
+            const bubbleOpacity = isCluster
+              ? 0.55
+              : (isFading ? _FADED_OPACITY : 0.95);
+            const fillOpacity = isCluster
+              ? 0.06
+              : (isFading ? 0.06 : 0.14);
             const m = theme.mentions_by_week?.[weekIndex] || 0;
             const pct = sharePct(theme);
 
@@ -436,10 +506,18 @@ function ThemeMap({ themeMap, onThemeClick }) {
             const labelY = labelAbove ? cy - r - 20 : cy + r + 20;
             const metaY  = labelAbove ? cy - r - 6  : cy + r + 34;
 
+            const onClick = () => {
+              if (isCluster) {
+                setExpanded(e => ({ ...e, [theme.direction]: !e[theme.direction] }));
+                return;
+              }
+              if (onThemeClick) onThemeClick(theme);
+            };
+
             return (
               <g key={theme.id} className="tm-bubble-group"
-                style={{ cursor: "pointer" }}
-                onClick={() => onThemeClick && onThemeClick(theme)}>
+                style={{ cursor: "pointer", opacity: isFading && !isCluster ? 0.75 : 1 }}
+                onClick={onClick}>
                 {isEmerging && (
                   <circle cx={cx} cy={cy} r={r + 6}
                     fill="none" stroke="var(--accent)" strokeWidth="1.5"
@@ -449,24 +527,50 @@ function ThemeMap({ themeMap, onThemeClick }) {
                 <circle cx={cx} cy={cy} r={r + 18}
                   fill="transparent" pointerEvents="all" />
                 <circle cx={cx} cy={cy} r={r}
-                  fill={color} opacity="0.14" pointerEvents="all" />
+                  fill={color} opacity={fillOpacity} pointerEvents="all" />
                 <circle cx={cx} cy={cy} r={r}
-                  fill="none" stroke={color} strokeWidth="1.5" opacity="0.95"
+                  fill="none" stroke={color}
+                  strokeWidth={isCluster ? 1.25 : 1.5}
+                  strokeDasharray={isCluster ? "4,3" : undefined}
+                  opacity={bubbleOpacity}
                   pointerEvents="all" />
                 {/* Theme label */}
-                <text x={cx} y={labelY} fontSize="13" textAnchor="middle"
-                  fill="var(--text)" fontFamily="var(--serif)" fontStyle="italic"
+                <text x={cx} y={labelY} fontSize={isCluster ? 12 : 13} textAnchor="middle"
+                  fill={isCluster ? "var(--text-mute-2)" : "var(--text)"}
+                  fontFamily="var(--mono)"
+                  fontStyle={isCluster ? "normal" : "italic"}
                   paintOrder="stroke" stroke="var(--bg-card-2, #1a1a1a)" strokeWidth="4"
-                  strokeLinejoin="round">
-                  {theme.label}
+                  strokeLinejoin="round"
+                  opacity={isFading && !isCluster ? 0.75 : 1}>
+                  {isCluster ? theme.label : theme.label}
                 </text>
-                {/* Items + share of attention */}
+                {/* Items + share of attention (or "click to expand" hint on cluster) */}
                 <text x={cx} y={metaY} fontSize="10" textAnchor="middle"
                   fill={color} fontFamily="var(--mono)"
                   paintOrder="stroke" stroke="var(--bg-card-2, #1a1a1a)" strokeWidth="3.5"
-                  strokeLinejoin="round">
-                  {m} items · {pct}%
+                  strokeLinejoin="round"
+                  opacity={isFading && !isCluster ? 0.75 : 1}>
+                  {isCluster ? "click to expand" : `${m} items · ${pct}%`}
                 </text>
+              </g>
+            );
+          })}
+          {/* Per-direction "collapse" affordance when a cluster is expanded */}
+          {["bullish", "mixed", "bearish"].map(dir => {
+            if (!expanded[dir] || (fadingByDir[dir] || []).length === 0) return null;
+            // Place at the right edge of the chart at the band's vertical center.
+            const yFrac = dir === "bullish" ? 0.21 : dir === "mixed" ? 0.50 : 0.79;
+            const x = PAD.left + innerW - 60;
+            const y = PAD.top + yFrac * innerH;
+            return (
+              <g key={`collapse_${dir}`} style={{ cursor: "pointer" }}
+                onClick={() => setExpanded(e => ({ ...e, [dir]: false }))}>
+                <rect x={x - 38} y={y - 9} width={76} height={18} rx={3}
+                  fill="var(--bg-card-2, #1a1a1a)" stroke="var(--text-mute-3)"
+                  strokeWidth="0.8" opacity="0.85" />
+                <text x={x} y={y + 4} fontSize="9" textAnchor="middle"
+                  fill="var(--text-mute-2)" fontFamily="var(--mono)"
+                  letterSpacing="0.14em">⤺ COLLAPSE</text>
               </g>
             );
           })}

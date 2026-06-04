@@ -301,7 +301,104 @@ def _load_signals(conn: sqlite3.Connection, window_days: int, now: datetime) -> 
             "regime_tags":  _load_json_list(r[9]),
             "thesis_summary": r[10] or "",
             "asset_ticker": r[11] or "",
+            "mention_only": False,
         })
+    return out
+
+
+# Common non-curated tickers → bucket, so document-mention tickers that
+# aren't in any asset_themes entry still land in a theme.
+_COMMON_TICKER_THEME: dict[str, str] = {
+    "SPY": "equities_broad", "QQQ": "equities_broad", "DIA": "equities_broad",
+    "IWM": "equities_broad", "VIX": "equities_broad",
+    "XLF": "equities_broad", "XLK": "equities_broad", "XLY": "equities_broad",
+    "XLP": "equities_broad", "XLI": "equities_broad", "XLB": "equities_broad",
+    "XLV": "equities_broad", "XLU": "equities_broad",
+    "JPM": "equities_broad", "BAC": "equities_broad", "GS": "equities_broad",
+    "WFC": "equities_broad",
+    "TLT": "rates_broad", "TBT": "rates_broad",
+    "DXY": "fx_broad",
+}
+
+
+def _theme_for_ticker(ticker: str, ticker_idx: dict[str, str]) -> str | None:
+    """Map a bare ticker (from a document mention) to a theme id:
+    curated sector → common-ticker bucket → equities_broad default."""
+    tk = (ticker or "").strip().upper()
+    if not tk:
+        return None
+    return ticker_idx.get(tk) or _COMMON_TICKER_THEME.get(tk) or "equities_broad"
+
+
+def _doc_source_key(source_id: str) -> str:
+    """Readable source family for a document, consistent-ish with signal
+    source_slugs. `forward_guidance` → forward_guidance;
+    `manual:gov-insider:perdue` → gov-insider; `manual:telegram-channel:x`
+    → telegram-channel."""
+    sid = source_id or ""
+    if ":" not in sid:
+        return sid
+    parts = sid.split(":")
+    if parts[0] == "manual" and len(parts) >= 2:
+        return parts[1]
+    return parts[0]
+
+
+def _load_document_mentions(
+    conn: sqlite3.Connection, window_days: int, now: datetime
+) -> list[dict]:
+    """Scan the documents corpus for allow-listed ticker mentions and emit
+    one mention-only pseudo-signal per (document, ticker).
+
+    This is what makes the theme/asset maps span ALL input sources — not
+    just the handful that have been through LLM signal extraction. Mentions
+    carry no direction (side=""), so they add to volume/coverage but never
+    to the direction vote. Pure regex; ~0.1s over the 28d corpus.
+    """
+    from macro_positioning.scoring.mention_extractor import extract_tickers_from_text
+
+    if not _safe_table_exists(conn, "documents"):
+        return []
+    cutoff = (now - timedelta(days=window_days)).isoformat()
+    try:
+        cur = conn.execute(
+            """
+            SELECT source_id, author_id, COALESCE(published_at, ingested_at) AS ts,
+                   cleaned_text
+              FROM documents
+             WHERE COALESCE(published_at, ingested_at) >= ?
+               AND cleaned_text IS NOT NULL AND cleaned_text != ''
+            """,
+            (cutoff,),
+        )
+    except sqlite3.Error:
+        return []
+
+    out: list[dict] = []
+    for source_id, author_id, ts, text in cur.fetchall():
+        tickers = extract_tickers_from_text(text or "")
+        if not tickers:
+            continue
+        dt = _parse_iso(ts)
+        if dt is None:
+            continue
+        src = _doc_source_key(source_id or "")
+        for tk in tickers:
+            out.append({
+                "signal_id":    None,
+                "extracted_at": dt,
+                "side":         "",
+                "conviction":   0.0,
+                "trust":        1.0,
+                "source_slug":  src,
+                "author_id":    author_id or "",
+                "asset_class":  "",
+                "thesis_tags":  [],
+                "regime_tags":  [],
+                "thesis_summary": "",
+                "asset_ticker": tk,
+                "mention_only": True,
+            })
     return out
 
 
@@ -314,6 +411,11 @@ def _signal_themes(s: dict, ticker_idx: dict[str, str] | None = None) -> set[str
     """
     if ticker_idx is None:
         ticker_idx = _ticker_theme_index()
+    # Document mentions carry only a ticker — map it straight to a theme
+    # (curated → common bucket → equities_broad default).
+    if s.get("mention_only"):
+        t = _theme_for_ticker(s.get("asset_ticker", ""), ticker_idx)
+        return {t} if t else set()
     out: set[str] = set()
     # 1. real macro/regime tags (noise-filtered)
     for t in (set(s["thesis_tags"]) | set(s["regime_tags"])):
@@ -336,15 +438,22 @@ def _signal_themes(s: dict, ticker_idx: dict[str, str] | None = None) -> set[str
 # ---------------------------------------------------------------------------
 
 def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) -> list[dict]:
-    """Per-theme card for the S1 scatter map. See web/streams.jsx ThemeMap."""
+    """Per-theme card for the S1 scatter map. See web/streams.jsx ThemeMap.
+
+    Corpus = signals (carry direction) + document ticker-mentions (carry
+    coverage across ALL input sources). Direction is voted from signals
+    only; mentions add volume/sources but stay direction-neutral.
+    """
     now = _now(now)
     signals = _load_signals(conn, _WINDOW_THEME_DAYS, now)
-    if not signals:
+    mentions = _load_document_mentions(conn, _WINDOW_THEME_DAYS, now)
+    corpus = signals + mentions
+    if not corpus:
         return []
 
     ticker_idx = _ticker_theme_index()
     by_theme: dict[str, list[dict]] = defaultdict(list)
-    for s in signals:
+    for s in corpus:
         if s["extracted_at"] is None:
             continue
         for theme in _signal_themes(s, ticker_idx):
@@ -378,10 +487,14 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         max_window = max(buckets) or 1
         age_days = int((now - first_seen).total_seconds() / 86400.0) if first_seen else 0
 
-        # Direction: trust*conviction-weighted vote of sides
+        # Direction: trust*conviction-weighted vote of sides. Document
+        # mentions have no side — they're skipped so they don't wash a
+        # real directional signal toward "mixed".
         score = 0.0
         total_w = 0.0
         for s in sigs:
+            if s.get("mention_only"):
+                continue
             w = max(0.01, s["trust"]) * max(0.0, s["conviction"])
             if w <= 0:
                 w = max(0.01, s["trust"])  # conviction may be 0 — keep a floor
@@ -430,14 +543,16 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
     'what tickers are being talked about' alongside 'what narratives'."""
     now = _now(now)
     signals = _load_signals(conn, _WINDOW_THEME_DAYS, now)
-    if not signals:
+    mentions = _load_document_mentions(conn, _WINDOW_THEME_DAYS, now)
+    corpus = signals + mentions
+    if not corpus:
         return []
 
     # Junk sentinel values some extractors emit when they can't resolve a
     # ticker — drop them rather than render an "N/A" bubble.
     _JUNK_TICKERS = {"", "N/A", "NA", "NONE", "NULL", "?", "TBD", "UNKNOWN"}
     by_ticker: dict[str, list[dict]] = defaultdict(list)
-    for s in signals:
+    for s in corpus:
         ticker = (s.get("asset_ticker") or "").strip().upper()
         if ticker in _JUNK_TICKERS:
             continue
@@ -475,6 +590,8 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         score = 0.0
         total_w = 0.0
         for s in sigs:
+            if s.get("mention_only"):
+                continue  # mentions carry no direction
             w = max(0.01, s["trust"]) * max(0.0, s["conviction"])
             if w <= 0:
                 w = max(0.01, s["trust"])

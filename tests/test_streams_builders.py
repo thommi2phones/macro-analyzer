@@ -392,3 +392,54 @@ def test_asset_map_aggregates_per_ticker(tmp_path: Path):
 def test_asset_map_empty_when_no_signals(tmp_path: Path):
     conn = _conn(tmp_path)
     assert build_asset_map(conn, now=NOW) == []
+
+
+# ---------------------------------------------------------------------------
+# Document-mention fold-in (coverage across all sources, not just signals)
+# ---------------------------------------------------------------------------
+
+def test_theme_map_includes_document_mentions(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # A podcast/newsletter source with NO signals, only a document whose
+    # prose mentions ag tickers. It must still surface in the agriculture
+    # theme with its source cited.
+    for i in range(3):
+        _insert_document(
+            conn, f"fgdoc{i}", source_id="forward_guidance",
+            body="We remain constructive on agriculture — DBA and CORN look strong.",
+        )
+    conn.commit()
+    themes = build_theme_map(conn, now=NOW)
+    ag = {t["id"]: t for t in themes}.get("agriculture")
+    assert ag is not None
+    assert "forward_guidance" in ag["sources"]
+    # No signals → no directional vote → mixed
+    assert ag["direction"] == "mixed"
+
+
+def test_asset_map_includes_document_mentions(tmp_path: Path):
+    conn = _conn(tmp_path)
+    for i in range(3):
+        _insert_document(
+            conn, f"d{i}", source_id="manual:telegram-channel:whales",
+            body="SOL pumping hard, still bullish SOL here.",
+        )
+    conn.commit()
+    assets = {a["id"]: a for a in build_asset_map(conn, now=NOW)}
+    assert "SOL" in assets
+    assert "telegram-channel" in assets["SOL"]["sources"]
+
+
+def test_document_mentions_do_not_override_signal_direction(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # 3 bullish NVDA signals + a doc mention of NVDA. Direction must stay
+    # bullish (mention is direction-neutral, doesn't dilute to mixed).
+    for _ in range(3):
+        _insert_signal(conn, ticker="NVDA", side="LONG",
+                       extracted_at=NOW - timedelta(days=1),
+                       trust=1.2, conviction=4.0)
+    _insert_document(conn, "d1", source_id="forward_guidance",
+                     body="Quick note on NVDA momentum.")
+    conn.commit()
+    themes = {t["id"]: t for t in build_theme_map(conn, now=NOW)}
+    assert themes["technology_ai"]["direction"] == "bullish"

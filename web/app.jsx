@@ -96,19 +96,22 @@ function App() {
         </div>
         <nav className="nav nav-utility">
           <button className={`nav-tab ${view === "streams" ? "on" : ""}`} onClick={() => nav("streams")}>
-            <span className="tab-num">/U1</span>streams
+            <span className="tab-num">/U1</span>theme trends
+          </button>
+          <button className={`nav-tab ${(view === "sources" || view === "influence") ? "on" : ""}`} onClick={() => nav("sources")}>
+            <span className="tab-num">/U2</span>sources
           </button>
           <button className={`nav-tab ${view === "inbox" ? "on" : ""}`} onClick={() => nav("inbox")}>
-            <span className="tab-num">/U2</span>manual input
+            <span className="tab-num">/U3</span>manual input
           </button>
           <button className={`nav-tab ${view === "dev" ? "on" : ""}`} onClick={() => nav("dev")}>
-            <span className="tab-num">/U3</span>dev
+            <span className="tab-num">/U4</span>dev
           </button>
         </nav>
         <div className="topbar-spacer"></div>
         <div className="topbar-right">
-          <button className="tb-status tb-status-btn" onClick={() => nav("streams")} title="View source streams">
-            <span className="dot-live"></span> LIVE · 26 sources →
+          <button className="tb-status tb-status-btn" onClick={() => nav("sources")} title="View all sources by tier">
+            <span className="dot-live"></span> LIVE · {(D.sourceHealth || []).length || 26} sources →
           </button>
           <span className="tb-status">
             <span className="rb-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold)", display: "inline-block" }}></span>
@@ -144,9 +147,11 @@ function App() {
       )}
       {view === "live" && <Live focusTradeId={focusTradeId} />}
       {view === "journal" && <Journal />}
+      {view === "sources" && <Sources />}
       {view === "streams" && <Streams />}
       {view === "dev" && <Dev />}
       {view === "inbox" && <Inbox />}
+      {view === "influence" && <Influence />}
 
       <DrillSheet
         open={!!openSig}

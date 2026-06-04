@@ -1264,10 +1264,25 @@ function Streams() {
           <div className="block-title">
             <span className="block-num mono">S1</span>
             <span>Theme map</span>
+            <span className="block-sub">sectors · macro narratives · regimes</span>
           </div>
         </header>
         <div className="block-body" style={{ paddingTop: 6, paddingBottom: 14 }}>
           <ThemeMap themeMap={s.themeMap || []} onThemeClick={t => setOpenTheme(t)} />
+        </div>
+      </section>
+
+      {/* ── S1b Asset map (same shape, per-ticker) ──────────────────── */}
+      <section className="block block-quiet">
+        <header className="block-head">
+          <div className="block-title">
+            <span className="block-num mono">S1b</span>
+            <span>Asset map</span>
+            <span className="block-sub">per-ticker chatter · same lifecycle × direction frame</span>
+          </div>
+        </header>
+        <div className="block-body" style={{ paddingTop: 6, paddingBottom: 14 }}>
+          <ThemeMap themeMap={s.assetMap || []} onThemeClick={t => setOpenTheme(t)} />
         </div>
       </section>
 

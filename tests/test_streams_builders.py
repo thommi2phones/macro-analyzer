@@ -12,11 +12,13 @@ import pytest
 
 from macro_positioning.db.schema import initialize_database
 from macro_positioning.dashboard.streams_builders import (
+    build_asset_map,
     build_concepts,
     build_source_graph,
     build_streams_section,
     build_theme_map,
     _derive_market_focus,
+    _is_real_theme,
     _trust_to_tier,
     _title_label,
 )
@@ -125,6 +127,40 @@ def test_title_label():
     assert _title_label("uranium_energy") == "Uranium / energy"
 
 
+def test_is_real_theme_filters_technical_patterns_and_sentiment():
+    # Composite tokens whose components are ALL noise → dropped
+    assert _is_real_theme("technical_breakout") is False
+    assert _is_real_theme("wedge_pattern") is False
+    assert _is_real_theme("social_media_sentiment") is False
+    assert _is_real_theme("trending") is False
+    assert _is_real_theme("bearish_pattern") is False
+    assert _is_real_theme("retail_flow") is False
+    # Real macro/sector themes survive
+    assert _is_real_theme("uranium_energy") is True
+    assert _is_real_theme("ai_capex") is True
+    assert _is_real_theme("gold") is True
+    # Single-token noise dropped
+    assert _is_real_theme("momentum") is False
+    # Empty / None
+    assert _is_real_theme("") is False
+    assert _is_real_theme(None) is False  # type: ignore[arg-type]
+
+
+def test_theme_map_excludes_technical_pattern_tags(tmp_path: Path):
+    conn = _conn(tmp_path)
+    for _ in range(4):
+        _insert_signal(conn, thesis_tags=["technical_breakout"],
+                       extracted_at=NOW - timedelta(days=1))
+    for _ in range(4):
+        _insert_signal(conn, thesis_tags=["uranium"],
+                       extracted_at=NOW - timedelta(days=1))
+    conn.commit()
+    themes = build_theme_map(conn, now=NOW)
+    ids = {t["id"] for t in themes}
+    assert "uranium" in ids
+    assert "technical_breakout" not in ids
+
+
 # ---------------------------------------------------------------------------
 # Empty DB
 # ---------------------------------------------------------------------------
@@ -137,7 +173,7 @@ def test_empty_db_returns_empty_payload(tmp_path: Path):
     conn.execute("DELETE FROM input_authors")
     conn.commit()
     out = build_streams_section(conn, now=NOW)
-    assert out == {"themeMap": [], "concepts": [], "sourceGraph": {"nodes": [], "links": []}}
+    assert out == {"themeMap": [], "assetMap": [], "concepts": [], "sourceGraph": {"nodes": [], "links": []}}
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +321,41 @@ def test_source_graph_links_only_between_known_nodes(tmp_path: Path):
 # Top-level
 # ---------------------------------------------------------------------------
 
-def test_build_streams_section_returns_all_three_keys(tmp_path: Path):
+def test_build_streams_section_returns_all_keys(tmp_path: Path):
     conn = _conn(tmp_path)
     out = build_streams_section(conn, now=NOW)
-    assert set(out.keys()) == {"themeMap", "concepts", "sourceGraph"}
+    assert set(out.keys()) == {"themeMap", "assetMap", "concepts", "sourceGraph"}
+
+
+# ---------------------------------------------------------------------------
+# Asset map
+# ---------------------------------------------------------------------------
+
+def test_asset_map_aggregates_per_ticker(tmp_path: Path):
+    conn = _conn(tmp_path)
+    for _ in range(4):
+        _insert_signal(conn, ticker="URA", side="LONG",
+                       extracted_at=NOW - timedelta(days=1),
+                       trust=1.2, conviction=3.0)
+    for _ in range(3):
+        _insert_signal(conn, ticker="GLD", side="SHORT",
+                       extracted_at=NOW - timedelta(days=1),
+                       trust=1.0, conviction=3.0)
+    # Below 3-mention floor — should be dropped
+    _insert_signal(conn, ticker="TSLA", extracted_at=NOW - timedelta(days=1))
+    conn.commit()
+
+    assets = build_asset_map(conn, now=NOW)
+    ids = {a["id"] for a in assets}
+    assert "URA" in ids
+    assert "GLD" in ids
+    assert "TSLA" not in ids
+    by_id = {a["id"]: a for a in assets}
+    assert by_id["URA"]["direction"] == "bullish"
+    assert by_id["URA"]["label"] == "URA"
+    assert by_id["GLD"]["direction"] == "bearish"
+
+
+def test_asset_map_empty_when_no_signals(tmp_path: Path):
+    conn = _conn(tmp_path)
+    assert build_asset_map(conn, now=NOW) == []

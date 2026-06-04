@@ -267,18 +267,166 @@ def build_regime_section() -> dict:
 
 
 def build_kpis_section() -> dict:
-    """KPI strip aggregates. Zero-state until trades log; signalsHigh
-    pulls from latest scoring pass."""
+    """KPI strip aggregates — all sourced from real tables with graceful
+    fallbacks. Each block runs in its own try so one missing table
+    doesn't blank the whole strip.
+    """
     rows = _load_latest_scores()
     high = sum(1 for r in rows if r["score"] >= 75)
+    # delta-vs-yesterday: count of yesterday's >=75 rows, looked up from the
+    # *prior* pass for each asset.
+    high_yesterday = sum(
+        1 for r in rows
+        if r.get("prior_score") is not None and r["prior_score"] >= 75
+    )
+
+    active = _build_active_trades_kpi()
+    pnl_today = _build_pnl_today_kpi()
+    cash = _build_cash_posture_kpi()
+    spend = _build_spend_today_kpi()
+
     return {
-        "cashPosture": {"label": "Neutral", "pct": 50, "delta": 0},
-        "activeTrades": {"count": 0, "exposureUsd": 0},
-        "pnlToday": {"usd": 0.0, "pct": 0.0},
-        "pnlWeek": {"usd": 0.0, "pct": 0.0},
-        "signalsHigh": {"count": high, "deltaVsYesterday": 0},
-        "spendToday": {"usd": 0.0, "capUsd": 25.0},
+        "cashPosture": cash,
+        "activeTrades": active,
+        "pnlToday": pnl_today,
+        "pnlWeek": {"usd": 0.0, "pct": 0.0},   # weekly P&L deferred — needs daily series
+        "signalsHigh": {"count": high, "deltaVsYesterday": high - high_yesterday},
+        "spendToday": spend,
     }
+
+
+def _build_active_trades_kpi() -> dict:
+    """Open trades count + total USD exposure (position_size × entry_price)."""
+    if not settings.sqlite_path.exists():
+        return {"count": 0, "exposureUsd": 0}
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS n,
+                       COALESCE(SUM(position_size * entry_price), 0) AS exposure
+                FROM trades
+                WHERE status = 'open'
+                """
+            ).fetchone()
+        return {
+            "count": int(row[0] or 0),
+            "exposureUsd": float(row[1] or 0.0),
+        }
+    except Exception:
+        return {"count": 0, "exposureUsd": 0}
+
+
+def _build_pnl_today_kpi() -> dict:
+    """Realized PnL from trades closed today + unrealized from open trades.
+
+    Unrealized = sum over open trades of (latest_close - entry_price) *
+    position_size. Latest_close pulled from `prices` table; missing
+    price → that trade contributes zero.
+    """
+    if not settings.sqlite_path.exists():
+        return {"usd": 0.0, "pct": 0.0}
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            realized_row = conn.execute(
+                """
+                SELECT COALESCE(SUM(pnl), 0) AS realized,
+                       COALESCE(SUM(position_size * entry_price), 0) AS basis
+                FROM trades
+                WHERE status = 'closed'
+                  AND DATE(exit_date) = DATE('now')
+                """
+            ).fetchone()
+            realized = float(realized_row[0] or 0.0)
+            basis_closed = float(realized_row[1] or 0.0)
+
+            # Unrealized over open trades. Join to latest price per ticker.
+            unrealized_row = conn.execute(
+                """
+                SELECT COALESCE(SUM(
+                    (latest.close - t.entry_price) * t.position_size
+                ), 0) AS unrealized,
+                COALESCE(SUM(t.position_size * t.entry_price), 0) AS basis
+                FROM trades t
+                JOIN assets a ON a.asset_id = t.asset_id
+                JOIN (
+                    SELECT ticker, close,
+                           ROW_NUMBER() OVER (PARTITION BY ticker
+                                              ORDER BY observed_at DESC) AS rn
+                    FROM prices
+                ) latest ON latest.ticker = a.ticker AND latest.rn = 1
+                WHERE t.status = 'open'
+                """
+            ).fetchone()
+            unrealized = float(unrealized_row[0] or 0.0)
+            basis_open = float(unrealized_row[1] or 0.0)
+        total_usd = realized + unrealized
+        basis = basis_closed + basis_open
+        pct = (total_usd / basis * 100.0) if basis > 0 else 0.0
+        return {"usd": round(total_usd, 2), "pct": round(pct, 2)}
+    except Exception:
+        return {"usd": 0.0, "pct": 0.0}
+
+
+def _build_cash_posture_kpi() -> dict:
+    """Latest portfolio_exposure_snapshots row → posture label + pct."""
+    if not settings.sqlite_path.exists():
+        return {"label": "Neutral", "pct": 50, "delta": 0}
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            row = conn.execute(
+                """
+                SELECT pct_deployed
+                FROM portfolio_exposure_snapshots
+                ORDER BY taken_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            prev = conn.execute(
+                """
+                SELECT pct_deployed
+                FROM portfolio_exposure_snapshots
+                WHERE taken_at < (
+                    SELECT MAX(taken_at) FROM portfolio_exposure_snapshots
+                )
+                ORDER BY taken_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+    except Exception:
+        return {"label": "Neutral", "pct": 50, "delta": 0}
+    if not row:
+        return {"label": "Neutral", "pct": 50, "delta": 0}
+    pct = float(row[0] or 0.0)
+    cash_pct = 100.0 - pct
+    if pct < 30:
+        label = "Defensive"
+    elif pct < 70:
+        label = "Neutral"
+    else:
+        label = "Aggressive"
+    delta = 0
+    if prev:
+        delta = round(pct - float(prev[0] or 0.0), 1)
+    return {"label": label, "pct": round(cash_pct, 1), "delta": delta}
+
+
+def _build_spend_today_kpi() -> dict:
+    """Sum estimated_cost_usd from agent_call_log since midnight."""
+    if not settings.sqlite_path.exists():
+        return {"usd": 0.0, "capUsd": 25.0}
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(SUM(estimated_cost_usd), 0)
+                FROM agent_call_log
+                WHERE called_at >= DATE('now')
+                """
+            ).fetchone()
+        return {"usd": round(float(row[0] or 0.0), 4), "capUsd": 25.0}
+    except Exception:
+        return {"usd": 0.0, "capUsd": 25.0}
 
 
 # ---------------------------------------------------------------------------
@@ -1104,7 +1252,8 @@ def build_streams_section_wrapper() -> dict | None:
         return None
     with sqlite3.connect(settings.sqlite_path) as conn:
         payload = build_streams_section(conn)
-    if not payload["themeMap"] and not payload["concepts"] and not payload["sourceGraph"]["nodes"]:
+    if (not payload["themeMap"] and not payload.get("assetMap")
+            and not payload["concepts"] and not payload["sourceGraph"]["nodes"]):
         return None
     return payload
 
@@ -1211,4 +1360,4 @@ def _empty_integration() -> dict:
 
 
 def _empty_streams() -> dict:
-    return {"themeMap": [], "concepts": [], "sourceGraph": {"nodes": [], "links": []}}
+    return {"themeMap": [], "assetMap": [], "concepts": [], "sourceGraph": {"nodes": [], "links": []}}

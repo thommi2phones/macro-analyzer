@@ -65,6 +65,55 @@ _ASSET_CLASS_TO_CLUSTER: dict[str, str] = {
 
 _TOKEN_SPLIT = re.compile(r"[\s,/_\-]+")
 
+# Tag tokens that are NOT themes. The insider/social extractors leak chart
+# patterns, sentiment/microstructure terms, and direction labels into the
+# tag stream — a theme map should surface SECTORS / MACRO NARRATIVES, not
+# "wedge_pattern" or "social_media_sentiment". We filter at consumption so
+# the raw tags stay available for other surfaces (per-signal drill-downs,
+# tag co-occurrence, etc.).
+#
+# Logic: split a candidate theme id on `_`; if EVERY part is in this set,
+# drop the theme. So "social_media_sentiment" → ["social","media","sentiment"]
+# (all denied → drop). "ai_capex" → ["ai","capex"] (ai keeps it → keep).
+_NON_THEME_TOKENS: set[str] = {
+    # chart patterns / technical structures / analysis verbs
+    "technical", "analysis", "analyses", "analytic", "analytics",
+    "resistance", "support", "breakout", "breakdown", "break",
+    "wedge", "pattern", "patterns", "channel", "triangle", "pennant",
+    "flag", "head", "shoulders", "cup", "handle", "setup", "setups",
+    "play", "plays", "idea", "ideas", "potential", "theme",
+    "fib", "fibonacci", "level", "levels", "zone", "zones",
+    "ema", "sma", "macd", "rsi", "stoch", "stochastic",
+    "bollinger", "ttm", "vwap", "atr", "adx",
+    # market microstructure / order flow / strategy
+    "momentum", "flow", "flows", "retail", "options", "option",
+    "spike", "average", "moving", "ranking", "rank", "strategy",
+    "meme", "signal", "signals", "spread", "premium", "skew",
+    "positive", "negative",
+    # sentiment / social platforms
+    "social", "media", "sentiment", "trending", "trend", "buzz",
+    "interest", "wallstreetbets", "wsb", "stocktwits", "twitter",
+    "reddit", "ape", "apewisdom", "rss", "news", "headline",
+    # generic direction / lifecycle words
+    "stock", "stocks", "trade", "trading", "trades",
+    "long", "short", "bullish", "bearish", "mixed", "neutral",
+    "bull", "bear", "buy", "sell", "hold", "watch", "exit",
+    "trim", "add", "event",
+    # generic OHLC / numeric noise
+    "high", "low", "open", "close", "volume",
+}
+
+
+def _is_real_theme(theme_id: str) -> bool:
+    """True iff theme_id has at least one component that isn't generic
+    noise. See _NON_THEME_TOKENS docstring."""
+    if not theme_id:
+        return False
+    parts = [p for p in theme_id.split("_") if p]
+    if not parts:
+        return False
+    return any(p not in _NON_THEME_TOKENS for p in parts)
+
 
 def _now(now: datetime | None = None) -> datetime:
     return now or datetime.now(UTC)
@@ -143,7 +192,7 @@ def _load_signals(conn: sqlite3.Connection, window_days: int, now: datetime) -> 
             SELECT signal_id, extracted_at, side, conviction,
                    author_trust_weight, source_slug, author_id,
                    asset_class, thesis_tags_json, macro_regime_tags_json,
-                   thesis_summary
+                   thesis_summary, asset_ticker
               FROM signals
              WHERE COALESCE(status, 'active') = 'active'
                AND extracted_at >= ?
@@ -166,13 +215,16 @@ def _load_signals(conn: sqlite3.Connection, window_days: int, now: datetime) -> 
             "thesis_tags":  _load_json_list(r[8]),
             "regime_tags":  _load_json_list(r[9]),
             "thesis_summary": r[10] or "",
+            "asset_ticker": r[11] or "",
         })
     return out
 
 
 def _signal_themes(s: dict) -> set[str]:
-    """All theme tokens this signal touches."""
-    return set(s["thesis_tags"]) | set(s["regime_tags"])
+    """All theme tokens this signal touches, filtered to remove chart-
+    pattern / sentiment / generic-direction noise (see _NON_THEME_TOKENS)."""
+    raw = set(s["thesis_tags"]) | set(s["regime_tags"])
+    return {t for t in raw if _is_real_theme(t)}
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +301,96 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         out.append({
             "id":               theme_id,
             "label":            _title_label(theme_id),
+            "direction":        direction,
+            "lifecycle":        round(lifecycle, 3),
+            "novelty":          round(novelty, 3),
+            "velocity":         round(velocity, 3),
+            "age_days":         age_days,
+            "mentions_by_week": buckets,
+            "sources":          sorted(sources),
+        })
+
+    out.sort(key=lambda t: sum(t["mentions_by_week"]), reverse=True)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Asset map — parallel to S1 themeMap but keyed on signals.asset_ticker.
+# Same dict shape so the SPA can reuse the ThemeMap component.
+# ---------------------------------------------------------------------------
+
+def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) -> list[dict]:
+    """Per-asset card mirroring build_theme_map's shape but grouped by
+    `signals.asset_ticker` instead of theme tag. Lets the UI surface
+    'what tickers are being talked about' alongside 'what narratives'."""
+    now = _now(now)
+    signals = _load_signals(conn, _WINDOW_THEME_DAYS, now)
+    if not signals:
+        return []
+
+    # Junk sentinel values some extractors emit when they can't resolve a
+    # ticker — drop them rather than render an "N/A" bubble.
+    _JUNK_TICKERS = {"", "N/A", "NA", "NONE", "NULL", "?", "TBD", "UNKNOWN"}
+    by_ticker: dict[str, list[dict]] = defaultdict(list)
+    for s in signals:
+        ticker = (s.get("asset_ticker") or "").strip().upper()
+        if ticker in _JUNK_TICKERS:
+            continue
+        if s["extracted_at"] is None:
+            continue
+        by_ticker[ticker].append(s)
+
+    out: list[dict] = []
+    for ticker, sigs in by_ticker.items():
+        if len(sigs) < 3:
+            continue
+
+        buckets = [0, 0, 0, 0]
+        first_seen: datetime | None = None
+        sources: set[str] = set()
+        for s in sigs:
+            dt = s["extracted_at"]
+            if dt is None:
+                continue
+            age_days_f = (now - dt).total_seconds() / 86400.0
+            wk = int(age_days_f // 7)
+            if 0 <= wk <= 3:
+                buckets[3 - wk] += 1
+            if first_seen is None or dt < first_seen:
+                first_seen = dt
+            slug = s["source_slug"] or s["author_id"]
+            if slug:
+                sources.add(slug)
+
+        mentions_last_7d = buckets[3]
+        mentions_prev_7d = buckets[2]
+        max_window = max(buckets) or 1
+        age_days = int((now - first_seen).total_seconds() / 86400.0) if first_seen else 0
+
+        score = 0.0
+        total_w = 0.0
+        for s in sigs:
+            w = max(0.01, s["trust"]) * max(0.0, s["conviction"])
+            if w <= 0:
+                w = max(0.01, s["trust"])
+            total_w += w
+            if s["side"] in _BULL_SIDES:
+                score += w
+            elif s["side"] in _BEAR_SIDES:
+                score -= w
+        if total_w > 0 and abs(score) / total_w > 0.4:
+            direction = "bullish" if score > 0 else "bearish"
+        else:
+            direction = "mixed"
+
+        lifecycle = max(0.0, min(1.0, 1.0 - (mentions_last_7d / max_window)))
+        novelty = max(0.0, min(1.0, 1.0 - (age_days / _WINDOW_THEME_DAYS)))
+        raw_velocity = (mentions_last_7d - mentions_prev_7d) / max(mentions_prev_7d, 1)
+        velocity = max(0.0, min(1.0, (math.tanh(raw_velocity) + 1.0) / 2.0))
+
+        out.append({
+            "id":               ticker,
+            "label":            ticker,
             "direction":        direction,
             "lifecycle":        round(lifecycle, 3),
             "novelty":          round(novelty, 3),
@@ -503,12 +645,16 @@ def build_source_graph(conn: sqlite3.Connection, *, now: datetime | None = None)
 # ---------------------------------------------------------------------------
 
 def build_streams_section(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict:
-    """Returns {themeMap, concepts, sourceGraph}. Each child is empty-safe."""
+    """Returns {themeMap, assetMap, concepts, sourceGraph}. Each child is empty-safe."""
     now = _now(now)
     try:
         theme_map = build_theme_map(conn, now=now)
     except Exception:
         theme_map = []
+    try:
+        asset_map = build_asset_map(conn, now=now)
+    except Exception:
+        asset_map = []
     try:
         concepts = build_concepts(conn, now=now)
     except Exception:
@@ -519,6 +665,7 @@ def build_streams_section(conn: sqlite3.Connection, *, now: datetime | None = No
         source_graph = {"nodes": [], "links": []}
     return {
         "themeMap":    theme_map,
+        "assetMap":    asset_map,
         "concepts":    concepts,
         "sourceGraph": source_graph,
     }

@@ -283,9 +283,12 @@ def test_concepts_filtered_by_novelty_and_velocity(tmp_path: Path):
         )
     conn.commit()
     cs = build_concepts(conn, now=NOW)
-    assert len(cs) == 1
-    c = cs[0]
-    assert c["id"] == "power_grid"
+    # The tag yields a `power_grid` concept; the summary prose ("Power grid")
+    # also keyword-matches the energy theme, so both can appear. Assert the
+    # tag-driven one is present with the right fields.
+    by = {c["id"]: c for c in cs}
+    assert "power_grid" in by
+    c = by["power_grid"]
     assert c["novelty"] > 0.7
     assert c["velocity"] > 0.4
     assert c["items_count"] == 8
@@ -314,7 +317,9 @@ def test_source_graph_nodes_match_recent_authors(tmp_path: Path):
                    extracted_at=NOW - timedelta(days=2))
     conn.commit()
 
-    graph = build_source_graph(conn, now=NOW)
+    # explicit_tiers={} forces the trust-weight fallback so this test stays
+    # decoupled from production config/sources.json tier assignments.
+    graph = build_source_graph(conn, now=NOW, explicit_tiers={})
     ids = {n["id"] for n in graph["nodes"]}
     assert "doomberg" in ids
     assert "newbie" in ids
@@ -326,6 +331,18 @@ def test_source_graph_nodes_match_recent_authors(tmp_path: Path):
     assert by_id["newbie"]["tier"] == 2  # NULL trust → tier 2 baseline
     # weight is normalized into [0, 1]
     assert 0.0 <= by_id["doomberg"]["weight"] <= 1.0
+
+
+def test_source_graph_explicit_tier_overrides_trust(tmp_path: Path):
+    """Operator-assigned tiers from config win over the trust heuristic."""
+    conn = _conn(tmp_path)
+    # trust=1.5 would derive tier 0, but explicit map pins it to T2.
+    _insert_author(conn, "kol_a", "KOL A", trust=1.5, last_seen=NOW - timedelta(days=1))
+    conn.commit()
+
+    graph = build_source_graph(conn, now=NOW, explicit_tiers={"kol_a": 2})
+    by_id = {n["id"]: n for n in graph["nodes"]}
+    assert by_id["kol_a"]["tier"] == 2  # explicit T2 beats trust-derived 0
 
 
 def test_source_graph_links_only_between_known_nodes(tmp_path: Path):
@@ -413,7 +430,21 @@ def test_theme_map_includes_document_mentions(tmp_path: Path):
     ag = {t["id"]: t for t in themes}.get("agriculture")
     assert ag is not None
     assert "forward_guidance" in ag["sources"]
-    # No signals → no directional vote → mixed
+    # "constructive" is a bull cue → conservative lexical lean → bullish
+    assert ag["direction"] == "bullish"
+
+
+def test_theme_map_keyword_theme_neutral_when_no_cue(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # Prose names the theme but carries no directional cue words → mixed.
+    for i in range(3):
+        _insert_document(
+            conn, f"d{i}", source_id="forward_guidance",
+            body="The agriculture sector was discussed at length today.",
+        )
+    conn.commit()
+    ag = {t["id"]: t for t in build_theme_map(conn, now=NOW)}.get("agriculture")
+    assert ag is not None
     assert ag["direction"] == "mixed"
 
 

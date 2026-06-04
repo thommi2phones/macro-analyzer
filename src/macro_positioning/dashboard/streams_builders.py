@@ -330,6 +330,114 @@ def _theme_for_ticker(ticker: str, ticker_idx: dict[str, str]) -> str | None:
     return ticker_idx.get(tk) or _COMMON_TICKER_THEME.get(tk) or "equities_broad"
 
 
+# ---------------------------------------------------------------------------
+# Keyword-based theme extraction from prose.
+#
+# The ticker scan can't see thematic, ticker-less views ("we're constructive
+# on agriculture", "the uranium thesis is intact"). This vocabulary maps
+# theme keywords → theme id so prose coverage flows into the map even before
+# the LLM signal extractor runs on a document. Matched case-insensitively
+# with word boundaries; multi-word phrases used wherever the single word
+# would be too ambiguous.
+# ---------------------------------------------------------------------------
+_THEME_KEYWORDS: dict[str, list[str]] = {
+    "uranium":         [r"uranium", r"yellowcake", r"nuclear", r"enrichment",
+                        r"reactor", r"small modular", r"\bSMR\b"],
+    "precious_metals": [r"\bgold\b", r"\bsilver\b", r"bullion",
+                        r"precious metal", r"debasement"],
+    "crypto":          [r"\bcrypto", r"bitcoin", r"ethereum", r"altcoin",
+                        r"digital asset", r"stablecoin", r"\bdefi\b",
+                        r"on[- ]?chain"],
+    "technology_ai":   [r"artificial intelligence", r"semiconductor",
+                        r"data ?cent(?:er|re)", r"AI capex",
+                        r"AI infrastructure", r"machine learning",
+                        r"hyperscaler", r"\bGPU\b"],
+    "energy":          [r"energy security", r"\bcrude\b", r"\boil\b",
+                        r"natural gas", r"nat gas", r"\bOPEC\b",
+                        r"power grid", r"electricity", r"power demand",
+                        r"\bLNG\b"],
+    "defense":         [r"\bdefen[cs]e\b", r"military", r"\bNATO\b",
+                        r"weapons", r"missile"],
+    "agriculture":     [r"agriculture", r"farmland", r"\bfarming\b",
+                        r"\bcrop", r"\bgrain", r"\bwheat\b", r"\bcorn\b",
+                        r"soybean", r"fertili[sz]er", r"food security"],
+    "inflation":       [r"inflation", r"\bCPI\b", r"rising prices",
+                        r"cost of living", r"disinflation", r"stagflation"],
+    "fed_policy":      [r"\bthe fed\b", r"\bFOMC\b", r"rate cut", r"rate hike",
+                        r"interest rate", r"yield curve", r"treasury yield",
+                        r"monetary policy", r"\bpowell\b", r"quantitative"],
+    "recession_risk":  [r"recession", r"economic slowdown", r"hard landing",
+                        r"soft landing", r"labou?r market", r"unemployment",
+                        r"layoffs?"],
+    "geopolitics":     [r"geopolitic", r"\bwar\b", r"sanction", r"tariff",
+                        r"trade war", r"\btaiwan\b", r"\bukraine\b",
+                        r"middle east"],
+}
+
+# Bull/bear cue words for a conservative document-level lexical lean. Used
+# ONLY to give keyword-derived theme contributions a low-conviction
+# direction; real extracted signals always outweigh them.
+_BULL_CUES = re.compile(
+    r"\b(?:bullish|long|buy(?:ing)?|accumulat\w*|breakout|upside|rally\w*|"
+    r"constructive|overweight|outperform\w*|tailwind|surg\w*)\b",
+    re.IGNORECASE,
+)
+_BEAR_CUES = re.compile(
+    r"\b(?:bearish|short(?:ing)?|sell(?:ing)?|dump\w*|breakdown|downside|"
+    r"underweight|underperform\w*|headwind|crash\w*|weakness|avoid)\b",
+    re.IGNORECASE,
+)
+
+_THEME_COMBINED_RE: "re.Pattern[str] | None" = None
+
+
+def _theme_combined_pattern() -> "re.Pattern[str]":
+    """One combined named-group regex over the whole theme vocabulary, so a
+    document is scanned in a single pass instead of once per theme.
+
+    Keywords are lower-cased and matched against lower-cased text WITHOUT the
+    IGNORECASE flag — case-folding a large alternation per char is the slow
+    path; pre-lowering both sides is ~3× faster over the 12k-doc corpus.
+    """
+    global _THEME_COMBINED_RE
+    if _THEME_COMBINED_RE is not None:
+        return _THEME_COMBINED_RE
+    parts = [
+        f"(?P<{theme}>" + "|".join(f"(?:{k.lower()})" for k in kws) + ")"
+        for theme, kws in _THEME_KEYWORDS.items()
+    ]
+    _THEME_COMBINED_RE = re.compile("|".join(parts))
+    return _THEME_COMBINED_RE
+
+
+def _themes_in_text(text: str) -> set[str]:
+    """Theme ids whose keyword vocabulary appears in the prose (single pass)."""
+    if not text:
+        return set()
+    found: set[str] = set()
+    for m in _theme_combined_pattern().finditer(text.lower()):
+        if m.lastgroup:
+            found.add(m.lastgroup)
+    return found
+
+
+def _doc_lean(text: str) -> str:
+    """Conservative document-level direction from bull/bear cue counts.
+    Returns 'LONG' / 'SHORT' / '' (neutral). Deliberately blunt — a
+    low-conviction nudge, never authoritative."""
+    if not text:
+        return ""
+    bull = len(_BULL_CUES.findall(text))
+    bear = len(_BEAR_CUES.findall(text))
+    if bull == 0 and bear == 0:
+        return ""
+    if bull >= bear * 2 and bull >= 1:
+        return "LONG"
+    if bear >= bull * 2 and bear >= 1:
+        return "SHORT"
+    return ""
+
+
 def _doc_source_key(source_id: str) -> str:
     """Readable source family for a document, consistent-ish with signal
     source_slugs. `forward_guidance` → forward_guidance;
@@ -344,22 +452,67 @@ def _doc_source_key(source_id: str) -> str:
     return parts[0]
 
 
+# Short-lived cache so the 3 calls within one build_streams_section (theme
+# map, asset map, concepts→theme map) scan the corpus once. Keyed by a cheap
+# fingerprint (window + doc count + latest timestamp) so it's safe across
+# tests with different DBs and self-invalidates when documents change.
+_DOC_MENTION_CACHE: dict[tuple, list[dict]] = {}
+_DOC_MENTION_CACHE_ORDER: list[tuple] = []
+_DOC_MENTION_CACHE_MAX = 4
+
+
+def _db_path_of(conn: sqlite3.Connection) -> str:
+    """Best-effort path of the main attached database (for cache keying).
+    Empty string for in-memory DBs."""
+    try:
+        for _seq, name, file in conn.execute("PRAGMA database_list").fetchall():
+            if name == "main":
+                return file or ""
+    except sqlite3.Error:
+        pass
+    return ""
+
+
+def _doc_corpus_fingerprint(conn: sqlite3.Connection, cutoff: str) -> tuple | None:
+    try:
+        row = conn.execute(
+            """
+            SELECT COUNT(*), COALESCE(MAX(COALESCE(published_at, ingested_at)), '')
+              FROM documents
+             WHERE COALESCE(published_at, ingested_at) >= ?
+               AND cleaned_text IS NOT NULL AND cleaned_text != ''
+            """,
+            (cutoff,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    # Include the DB path so distinct databases (e.g. per-test tmp dirs that
+    # share a doc count + timestamp) never collide on the process-global cache.
+    return (_db_path_of(conn), cutoff, row[0], row[1]) if row else None
+
+
 def _load_document_mentions(
     conn: sqlite3.Connection, window_days: int, now: datetime
 ) -> list[dict]:
-    """Scan the documents corpus for allow-listed ticker mentions and emit
-    one mention-only pseudo-signal per (document, ticker).
+    """Scan the documents corpus and emit pseudo-signals for both ticker
+    mentions and keyword-detected themes — what makes the theme/asset maps
+    span ALL input sources, not just the handful that have been through LLM
+    signal extraction.
 
-    This is what makes the theme/asset maps span ALL input sources — not
-    just the handful that have been through LLM signal extraction. Mentions
-    carry no direction (side=""), so they add to volume/coverage but never
-    to the direction vote. Pure regex; ~0.1s over the 28d corpus.
+    Ticker mentions are direction-neutral. Keyword themes carry a
+    conservative low-conviction lexical lean. Pure regex; result cached per
+    corpus fingerprint so repeated calls in one build don't re-scan.
     """
     from macro_positioning.scoring.mention_extractor import extract_tickers_from_text
 
     if not _safe_table_exists(conn, "documents"):
         return []
     cutoff = (now - timedelta(days=window_days)).isoformat()
+
+    fp = _doc_corpus_fingerprint(conn, cutoff)
+    if fp is not None and fp in _DOC_MENTION_CACHE:
+        return _DOC_MENTION_CACHE[fp]
+
     try:
         cur = conn.execute(
             """
@@ -376,13 +529,17 @@ def _load_document_mentions(
 
     out: list[dict] = []
     for source_id, author_id, ts, text in cur.fetchall():
-        tickers = extract_tickers_from_text(text or "")
-        if not tickers:
+        text = text or ""
+        tickers = extract_tickers_from_text(text)
+        kw_themes = _themes_in_text(text)
+        if not tickers and not kw_themes:
             continue
         dt = _parse_iso(ts)
         if dt is None:
             continue
         src = _doc_source_key(source_id or "")
+
+        # (a) ticker mentions → per-ticker pseudo-signals (direction-neutral)
         for tk in tickers:
             out.append({
                 "signal_id":    None,
@@ -399,6 +556,40 @@ def _load_document_mentions(
                 "asset_ticker": tk,
                 "mention_only": True,
             })
+
+        # (b) keyword themes → per-theme pseudo-signals. These carry a
+        # CONSERVATIVE lexical direction (low conviction) so "constructive
+        # on agriculture" reads bullish, but real extracted signals always
+        # outweigh them. forced_theme routes them straight to the theme in
+        # aggregation (no ticker needed).
+        if kw_themes:
+            lean = _doc_lean(text)
+            for theme in kw_themes:
+                out.append({
+                    "signal_id":      None,
+                    "extracted_at":   dt,
+                    "side":           lean,          # "" | LONG | SHORT
+                    "conviction":     0.5 if lean else 0.0,
+                    "trust":          1.0,
+                    "source_slug":    src,
+                    "author_id":      author_id or "",
+                    "asset_class":    "",
+                    "thesis_tags":    [],
+                    "regime_tags":    [],
+                    "thesis_summary": "",
+                    "asset_ticker":   "",
+                    "forced_theme":   theme,
+                    # Counts toward volume + (if lean) the direction vote,
+                    # but at low weight. Not mention_only so the vote sees it.
+                    "mention_only":   lean == "",
+                })
+
+    if fp is not None:
+        _DOC_MENTION_CACHE[fp] = out
+        _DOC_MENTION_CACHE_ORDER.append(fp)
+        if len(_DOC_MENTION_CACHE_ORDER) > _DOC_MENTION_CACHE_MAX:
+            old = _DOC_MENTION_CACHE_ORDER.pop(0)
+            _DOC_MENTION_CACHE.pop(old, None)
     return out
 
 
@@ -411,8 +602,12 @@ def _signal_themes(s: dict, ticker_idx: dict[str, str] | None = None) -> set[str
     """
     if ticker_idx is None:
         ticker_idx = _ticker_theme_index()
-    # Document mentions carry only a ticker — map it straight to a theme
-    # (curated → common bucket → equities_broad default).
+    # Keyword-derived prose contributions name their theme directly.
+    forced = s.get("forced_theme")
+    if forced:
+        return {forced}
+    # Document ticker-mentions carry only a ticker — map it straight to a
+    # theme (curated → common bucket → equities_broad default).
     if s.get("mention_only"):
         t = _theme_for_ticker(s.get("asset_ticker", ""), ticker_idx)
         return {t} if t else set()
@@ -787,11 +982,27 @@ def _derive_market_focus(
     return "macro"
 
 
-def build_source_graph(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict:
+def build_source_graph(
+    conn: sqlite3.Connection,
+    *,
+    now: datetime | None = None,
+    explicit_tiers: dict[str, int] | None = None,
+) -> dict:
     now = _now(now)
 
     if not _safe_table_exists(conn, "input_authors"):
         return {"nodes": [], "links": []}
+
+    # Operator-assigned tiers from config/sources.json win over the
+    # trust-weight heuristic. Keyed by source_id AND slugified display name.
+    # Pass `explicit_tiers={}` to force the trust-weight fallback (tests).
+    try:
+        from macro_positioning.ingestion.source_lifecycle import _normalize_name
+        if explicit_tiers is None:
+            from macro_positioning.ingestion.source_lifecycle import explicit_tier_map
+            explicit_tiers = explicit_tier_map()
+    except Exception:
+        explicit_tiers, _normalize_name = (explicit_tiers or {}), None
 
     cutoff = (now - timedelta(days=_WINDOW_NODE_DAYS)).isoformat()
     try:
@@ -823,7 +1034,14 @@ def build_source_graph(conn: sqlite3.Connection, *, now: datetime | None = None)
         if not aid:
             continue
         trust = float(trust_raw) if trust_raw is not None else None
-        tier = _trust_to_tier(trust)
+        # Explicit operator tier wins; fall back to trust-weight heuristic.
+        tier = None
+        if explicit_tiers and _normalize_name is not None:
+            tier = explicit_tiers.get(aid)
+            if tier is None:
+                tier = explicit_tiers.get(_normalize_name(name or ""))
+        if tier is None:
+            tier = _trust_to_tier(trust)
         weight = max(0.0, min(1.5, trust if trust is not None else 1.0)) / 1.5
 
         sigs = by_author.get(aid, [])

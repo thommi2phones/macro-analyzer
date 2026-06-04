@@ -108,6 +108,45 @@ def get_source(source_id: str) -> SourceRecord | None:
     return None
 
 
+# Tier label → conviction rank. T0 is highest conviction. ``infra`` (data
+# feeds like FRED/Finnhub/news) and ``self`` (the operator's own notes /
+# chart drops) are not conviction-ranked author streams and map to None so
+# callers can group them separately from the T0–T4 ladder.
+_TIER_LABEL_TO_RANK: dict[str, int | None] = {
+    "T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4,
+    "infra": None, "self": None,
+}
+
+
+def _normalize_name(text: str) -> str:
+    """Lowercase, strip, collapse non-alnum to '-'. Mirrors authors.slugify
+    so a source.name and an input_authors.display_name for the same person
+    land on the same key without importing the manual layer here."""
+    import re
+    return re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
+
+
+def explicit_tier_map() -> dict[str, int]:
+    """Map normalized-name / source_id → explicit conviction rank (0–4).
+
+    Reads the operator-assigned ``tier`` field from config/sources.json.
+    Only T0–T4 entries are returned (infra/self are dropped). Both the
+    source_id and the slugified display name are emitted as keys so callers
+    can match either a registry id or an ``input_authors.display_name``.
+    """
+    out: dict[str, int] = {}
+    for rec in load_sources(include_archived=True):
+        tier_label = getattr(rec, "tier", None)
+        if not tier_label:
+            continue
+        rank = _TIER_LABEL_TO_RANK.get(str(tier_label))
+        if rank is None:
+            continue
+        out[rec.source_id] = rank
+        out[_normalize_name(rec.name)] = rank
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Mutations
 # ---------------------------------------------------------------------------

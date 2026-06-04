@@ -2,7 +2,10 @@
   "$schema_version": "1.0",
   "description": "Canonical source registry. Supersedes newsletter_sources.json and sources.example.json. Schema is backward-compatible (adds fields, doesn't remove). Existing code may continue reading the old files until Application Agent migrates call sites in Phase 3.",
   "$migration_status": {
-    "old_files": ["config/newsletter_sources.json", "config/sources.example.json"],
+    "old_files": [
+      "config/newsletter_sources.json",
+      "config/sources.example.json"
+    ],
     "callers_to_update": [
       "src/macro_positioning/pipelines/run_pipeline.py",
       "src/macro_positioning/api/main.py",
@@ -13,7 +16,6 @@
       "src/macro_positioning/ingestion/gmail_connector.py:Blockworks/Weekly Wizdom (move to this file)"
     ]
   },
-
   "field_definitions": {
     "source_id": "Unique identifier; snake_case",
     "name": "Display name",
@@ -32,7 +34,6 @@
     "onboarded_at": "ISO date the source was added",
     "archived_at": "ISO date if archived; null if active"
   },
-
   "sources": [
     {
       "source_id": "macromicro",
@@ -41,18 +42,42 @@
       "author": "MacroMicro",
       "priority": "core",
       "trust_weight": 0.9,
-      "market_focus": ["macro", "rates", "inflation", "geopolitics", "commodities"],
-      "routing_tags": ["macro", "inflation", "rates", "geopolitics", "commodities"],
+      "market_focus": [
+        "macro",
+        "rates",
+        "inflation",
+        "geopolitics",
+        "commodities"
+      ],
+      "routing_tags": [
+        "macro",
+        "inflation",
+        "rates",
+        "geopolitics",
+        "commodities"
+      ],
       "fetch_cadence": "P1D",
       "freshness_sla_hours": 72,
       "research_style": "Data-driven macro analysis with focus on leading indicators, inflation dynamics, and geopolitical impacts on markets.",
-      "validation_focus": ["inflation_shock", "commodity_expansion"],
+      "validation_focus": [
+        "inflation_shock",
+        "commodity_expansion"
+      ],
       "channels": [
-        { "channel_type": "website", "label": "Main site", "url": "https://en.macromicro.me" },
-        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:web@mg.macromicro.me" }
+        {
+          "channel_type": "website",
+          "label": "Main site",
+          "url": "https://en.macromicro.me"
+        },
+        {
+          "channel_type": "gmail",
+          "label": "Gmail newsletter",
+          "url": "gmail://search/from:web@mg.macromicro.me"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T1"
     },
     {
       "source_id": "stockunlocked",
@@ -61,18 +86,38 @@
       "author": "Stock Unlocked",
       "priority": "core",
       "trust_weight": 0.75,
-      "market_focus": ["equities", "crypto", "geopolitics"],
-      "routing_tags": ["equities", "crypto", "geopolitics"],
+      "market_focus": [
+        "equities",
+        "crypto",
+        "geopolitics"
+      ],
+      "routing_tags": [
+        "equities",
+        "crypto",
+        "geopolitics"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 168,
       "research_style": "Trade-oriented weekly briefing covering crypto trades, stock picks, and macro/geopolitical context.",
-      "validation_focus": ["dovish_liquidity_wave", "war_escalation"],
+      "validation_focus": [
+        "dovish_liquidity_wave",
+        "war_escalation"
+      ],
       "channels": [
-        { "channel_type": "website", "label": "Main site", "url": "https://stockunlocked.com" },
-        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:noreply@stockunlocked.com" }
+        {
+          "channel_type": "website",
+          "label": "Main site",
+          "url": "https://stockunlocked.com"
+        },
+        {
+          "channel_type": "gmail",
+          "label": "Gmail newsletter",
+          "url": "gmail://search/from:noreply@stockunlocked.com"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T0"
     },
     {
       "source_id": "realvision",
@@ -81,19 +126,48 @@
       "author": "Real Vision",
       "priority": "core",
       "trust_weight": 0.9,
-      "market_focus": ["macro", "rates", "equities", "commodities", "crypto"],
-      "routing_tags": ["macro", "rates", "equities", "commodities", "crypto"],
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "crypto"
+      ],
+      "routing_tags": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "crypto"
+      ],
       "fetch_cadence": "P1D",
       "freshness_sla_hours": 72,
       "research_style": "Interview-driven macro research with expert guests covering rates, equities, commodities, and crypto.",
-      "validation_focus": ["dovish_liquidity_wave", "inflation_shock", "commodity_expansion"],
+      "validation_focus": [
+        "dovish_liquidity_wave",
+        "inflation_shock",
+        "commodity_expansion"
+      ],
       "channels": [
-        { "channel_type": "website", "label": "Main site", "url": "https://realvision.com" },
-        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:info@realvision.com" },
-        { "channel_type": "youtube", "label": "YouTube", "url": "https://youtube.com/@RealVisionFinance" }
+        {
+          "channel_type": "website",
+          "label": "Main site",
+          "url": "https://realvision.com"
+        },
+        {
+          "channel_type": "gmail",
+          "label": "Gmail newsletter",
+          "url": "gmail://search/from:info@realvision.com"
+        },
+        {
+          "channel_type": "youtube",
+          "label": "YouTube",
+          "url": "https://youtube.com/@RealVisionFinance"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T0"
     },
     {
       "source_id": "kaoboy_musings",
@@ -102,18 +176,42 @@
       "author": "Michael Kao",
       "priority": "core",
       "trust_weight": 0.85,
-      "market_focus": ["macro", "commodities", "rates", "geopolitics"],
-      "routing_tags": ["macro", "commodities", "rates", "geopolitics", "energy"],
+      "market_focus": [
+        "macro",
+        "commodities",
+        "rates",
+        "geopolitics"
+      ],
+      "routing_tags": [
+        "macro",
+        "commodities",
+        "rates",
+        "geopolitics",
+        "energy"
+      ],
       "fetch_cadence": "P3D",
       "freshness_sla_hours": 168,
       "research_style": "Macro-commodity cross-asset analysis with emphasis on energy, rates, and geopolitical risk.",
-      "validation_focus": ["commodity_expansion", "war_escalation", "inflation_shock"],
+      "validation_focus": [
+        "commodity_expansion",
+        "war_escalation",
+        "inflation_shock"
+      ],
       "channels": [
-        { "channel_type": "substack", "label": "Substack", "url": "https://urbankaoboy.substack.com" },
-        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:urbankaoboy@substack.com" }
+        {
+          "channel_type": "substack",
+          "label": "Substack",
+          "url": "https://urbankaoboy.substack.com"
+        },
+        {
+          "channel_type": "gmail",
+          "label": "Gmail newsletter",
+          "url": "gmail://search/from:urbankaoboy@substack.com"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T1"
     },
     {
       "source_id": "doomberg",
@@ -122,18 +220,39 @@
       "author": "Doomberg",
       "priority": "core",
       "trust_weight": 0.85,
-      "market_focus": ["commodities", "energy", "macro"],
-      "routing_tags": ["commodities", "energy", "macro"],
+      "market_focus": [
+        "commodities",
+        "energy",
+        "macro"
+      ],
+      "routing_tags": [
+        "commodities",
+        "energy",
+        "macro"
+      ],
       "fetch_cadence": "P3D",
       "freshness_sla_hours": 168,
       "research_style": "Commodity-focused macro analysis, especially energy, with contrarian and evidence-based framing.",
-      "validation_focus": ["commodity_expansion", "war_escalation", "inflation_shock"],
+      "validation_focus": [
+        "commodity_expansion",
+        "war_escalation",
+        "inflation_shock"
+      ],
       "channels": [
-        { "channel_type": "substack", "label": "Substack", "url": "https://doomberg.substack.com" },
-        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:doomberg@substack.com" }
+        {
+          "channel_type": "substack",
+          "label": "Substack",
+          "url": "https://doomberg.substack.com"
+        },
+        {
+          "channel_type": "gmail",
+          "label": "Gmail newsletter",
+          "url": "gmail://search/from:doomberg@substack.com"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T1"
     },
     {
       "source_id": "qtr_fringe",
@@ -142,17 +261,32 @@
       "author": "Quoth the Raven",
       "priority": "secondary",
       "trust_weight": 0.7,
-      "market_focus": ["macro", "equities", "contrarian"],
-      "routing_tags": ["macro", "equities"],
+      "market_focus": [
+        "macro",
+        "equities",
+        "contrarian"
+      ],
+      "routing_tags": [
+        "macro",
+        "equities"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 240,
       "research_style": "Contrarian macro and equity analysis with focus on overlooked risks and narrative challenges.",
-      "validation_focus": ["broad_panic", "growth_scare"],
+      "validation_focus": [
+        "broad_panic",
+        "growth_scare"
+      ],
       "channels": [
-        { "channel_type": "substack", "label": "Substack", "url": "https://quoththeraven.substack.com" }
+        {
+          "channel_type": "substack",
+          "label": "Substack",
+          "url": "https://quoththeraven.substack.com"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T2"
     },
     {
       "source_id": "bitcoin_layer",
@@ -161,17 +295,33 @@
       "author": "The Bitcoin Layer",
       "priority": "secondary",
       "trust_weight": 0.7,
-      "market_focus": ["crypto", "macro", "rates"],
-      "routing_tags": ["crypto", "macro", "rates"],
+      "market_focus": [
+        "crypto",
+        "macro",
+        "rates"
+      ],
+      "routing_tags": [
+        "crypto",
+        "macro",
+        "rates"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 240,
       "research_style": "Bitcoin-centric macro analysis connecting monetary policy, rates, and crypto markets.",
-      "validation_focus": ["dovish_liquidity_wave", "monetary_debasement_hard_asset"],
+      "validation_focus": [
+        "dovish_liquidity_wave",
+        "monetary_debasement_hard_asset"
+      ],
       "channels": [
-        { "channel_type": "substack", "label": "Substack", "url": "https://thebitcoinlayer.substack.com" }
+        {
+          "channel_type": "substack",
+          "label": "Substack",
+          "url": "https://thebitcoinlayer.substack.com"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T2"
     },
     {
       "source_id": "deepvalue_capital",
@@ -180,19 +330,31 @@
       "author": "Kyler Johnson",
       "priority": "secondary",
       "trust_weight": 0.65,
-      "market_focus": ["equities", "value"],
-      "routing_tags": ["equities"],
+      "market_focus": [
+        "equities",
+        "value"
+      ],
+      "routing_tags": [
+        "equities"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 240,
       "research_style": "Bottom-up value investing with focus on undervalued equities.",
-      "validation_focus": ["growth_scare", "broad_panic"],
+      "validation_focus": [
+        "growth_scare",
+        "broad_panic"
+      ],
       "channels": [
-        { "channel_type": "substack", "label": "Substack", "url": "https://deepvaluecapitalbykyler.substack.com" }
+        {
+          "channel_type": "substack",
+          "label": "Substack",
+          "url": "https://deepvaluecapitalbykyler.substack.com"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T1"
     },
-
     {
       "source_id": "forward_guidance",
       "name": "Forward Guidance",
@@ -200,18 +362,37 @@
       "author": "Jack Farley",
       "priority": "core",
       "trust_weight": 0.85,
-      "market_focus": ["macro", "rates", "liquidity", "fx"],
-      "routing_tags": ["macro", "rates", "liquidity", "fx"],
+      "market_focus": [
+        "macro",
+        "rates",
+        "liquidity",
+        "fx"
+      ],
+      "routing_tags": [
+        "macro",
+        "rates",
+        "liquidity",
+        "fx"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 168,
       "transcription_mode": "full",
       "research_style": "Long-form macro interviews. User favorite. Full transcription enabled.",
-      "validation_focus": ["dovish_liquidity_wave", "growth_scare", "inflation_shock"],
+      "validation_focus": [
+        "dovish_liquidity_wave",
+        "growth_scare",
+        "inflation_shock"
+      ],
       "channels": [
-        { "channel_type": "podcast_rss", "label": "RSS", "url": "https://feeds.megaphone.fm/forwardguidance" }
+        {
+          "channel_type": "podcast_rss",
+          "label": "RSS",
+          "url": "https://feeds.megaphone.fm/forwardguidance"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T0"
     },
     {
       "source_id": "wolf_of_all_streets",
@@ -220,18 +401,34 @@
       "author": "Scott Melker",
       "priority": "core",
       "trust_weight": 0.7,
-      "market_focus": ["crypto", "macro", "equities"],
-      "routing_tags": ["crypto", "macro", "equities"],
+      "market_focus": [
+        "crypto",
+        "macro",
+        "equities"
+      ],
+      "routing_tags": [
+        "crypto",
+        "macro",
+        "equities"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 168,
       "transcription_mode": "full",
       "research_style": "Daily crypto + macro show. Full transcription enabled.",
-      "validation_focus": ["dovish_liquidity_wave", "broad_panic"],
+      "validation_focus": [
+        "dovish_liquidity_wave",
+        "broad_panic"
+      ],
       "channels": [
-        { "channel_type": "podcast_rss", "label": "RSS", "url": "https://feeds.megaphone.fm/wolfofallstreets" }
+        {
+          "channel_type": "podcast_rss",
+          "label": "RSS",
+          "url": "https://feeds.megaphone.fm/wolfofallstreets"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T0"
     },
     {
       "source_id": "real_vision_journeyman",
@@ -240,18 +437,34 @@
       "author": "Raoul Pal",
       "priority": "core",
       "trust_weight": 0.8,
-      "market_focus": ["macro", "crypto", "equities"],
-      "routing_tags": ["macro", "crypto", "equities"],
+      "market_focus": [
+        "macro",
+        "crypto",
+        "equities"
+      ],
+      "routing_tags": [
+        "macro",
+        "crypto",
+        "equities"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 168,
       "transcription_mode": "full",
       "research_style": "Cycle / liquidity-focused macro by Raoul Pal. Full transcription enabled.",
-      "validation_focus": ["dovish_liquidity_wave", "monetary_debasement_hard_asset"],
+      "validation_focus": [
+        "dovish_liquidity_wave",
+        "monetary_debasement_hard_asset"
+      ],
       "channels": [
-        { "channel_type": "podcast_rss", "label": "RSS", "url": "https://feeds.megaphone.fm/realvisioncryptopodcast" }
+        {
+          "channel_type": "podcast_rss",
+          "label": "RSS",
+          "url": "https://feeds.megaphone.fm/realvisioncryptopodcast"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T0"
     },
     {
       "source_id": "moonshots_diamandis",
@@ -260,20 +473,33 @@
       "author": "Peter Diamandis",
       "priority": "secondary",
       "trust_weight": 0.55,
-      "market_focus": ["ai", "tech", "future_trends"],
-      "routing_tags": ["ai", "tech"],
+      "market_focus": [
+        "ai",
+        "tech",
+        "future_trends"
+      ],
+      "routing_tags": [
+        "ai",
+        "tech"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 336,
       "transcription_mode": "show_notes_only",
       "research_style": "AI/futurist focus. Light direct macro influence. Show notes only.",
-      "validation_focus": ["dovish_liquidity_wave"],
+      "validation_focus": [
+        "dovish_liquidity_wave"
+      ],
       "channels": [
-        { "channel_type": "podcast_rss", "label": "RSS", "url": "https://feeds.megaphone.fm/DVVTS2890392624" }
+        {
+          "channel_type": "podcast_rss",
+          "label": "RSS",
+          "url": "https://feeds.megaphone.fm/DVVTS2890392624"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T0"
     },
-
     {
       "source_id": "blockworks_breakdown",
       "name": "Blockworks: The Breakdown",
@@ -281,17 +507,30 @@
       "author": "Blockworks",
       "priority": "secondary",
       "trust_weight": 0.7,
-      "market_focus": ["crypto", "macro"],
-      "routing_tags": ["crypto", "macro"],
+      "market_focus": [
+        "crypto",
+        "macro"
+      ],
+      "routing_tags": [
+        "crypto",
+        "macro"
+      ],
       "fetch_cadence": "P1D",
       "freshness_sla_hours": 72,
-      "research_style": "Daily crypto/macro breakdown. Source defined in gmail_connector.py — to be migrated here.",
-      "validation_focus": ["dovish_liquidity_wave"],
+      "research_style": "Daily crypto/macro breakdown. Source defined in gmail_connector.py \u2014 to be migrated here.",
+      "validation_focus": [
+        "dovish_liquidity_wave"
+      ],
       "channels": [
-        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:newsletter@blockworks.co" }
+        {
+          "channel_type": "gmail",
+          "label": "Gmail newsletter",
+          "url": "gmail://search/from:newsletter@blockworks.co"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T0"
     },
     {
       "source_id": "weekly_wizdom",
@@ -300,19 +539,31 @@
       "author": "Weekly Wizdom",
       "priority": "secondary",
       "trust_weight": 0.65,
-      "market_focus": ["macro", "equities"],
-      "routing_tags": ["macro", "equities"],
+      "market_focus": [
+        "macro",
+        "equities"
+      ],
+      "routing_tags": [
+        "macro",
+        "equities"
+      ],
       "fetch_cadence": "P1W",
       "freshness_sla_hours": 240,
-      "research_style": "Weekly macro/equities digest. Source defined in gmail_connector.py — to be migrated here.",
-      "validation_focus": ["growth_scare"],
+      "research_style": "Weekly macro/equities digest. Source defined in gmail_connector.py \u2014 to be migrated here.",
+      "validation_focus": [
+        "growth_scare"
+      ],
       "channels": [
-        { "channel_type": "gmail", "label": "Gmail newsletter", "url": "gmail://search/from:weeklywizdom" }
+        {
+          "channel_type": "gmail",
+          "label": "Gmail newsletter",
+          "url": "gmail://search/from:weeklywizdom"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "T2"
     },
-
     {
       "source_id": "fred",
       "name": "FRED Economic Data",
@@ -320,17 +571,39 @@
       "author": "St. Louis Fed",
       "priority": "core",
       "trust_weight": 1.0,
-      "market_focus": ["macro", "rates", "inflation", "growth", "labor", "credit"],
-      "routing_tags": ["macro", "rates", "inflation", "growth", "labor", "credit", "liquidity"],
+      "market_focus": [
+        "macro",
+        "rates",
+        "inflation",
+        "growth",
+        "labor",
+        "credit"
+      ],
+      "routing_tags": [
+        "macro",
+        "rates",
+        "inflation",
+        "growth",
+        "labor",
+        "credit",
+        "liquidity"
+      ],
       "fetch_cadence": "P1D",
       "freshness_sla_hours": 48,
       "research_style": "Authoritative time-series data. Used by momentum module + regime classifier.",
-      "validation_focus": ["all"],
+      "validation_focus": [
+        "all"
+      ],
       "channels": [
-        { "channel_type": "api", "label": "FRED API", "url": "https://api.stlouisfed.org/fred" }
+        {
+          "channel_type": "api",
+          "label": "FRED API",
+          "url": "https://api.stlouisfed.org/fred"
+        }
       ],
       "onboarded_at": "2026-04-05",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "infra"
     },
     {
       "source_id": "finnhub",
@@ -339,17 +612,32 @@
       "author": "Finnhub",
       "priority": "core",
       "trust_weight": 0.6,
-      "market_focus": ["equities", "ticker_news", "sentiment"],
-      "routing_tags": ["equities", "sentiment"],
+      "market_focus": [
+        "equities",
+        "ticker_news",
+        "sentiment"
+      ],
+      "routing_tags": [
+        "equities",
+        "sentiment"
+      ],
       "fetch_cadence": "PT1H",
       "freshness_sla_hours": 12,
       "research_style": "Per-ticker news + aggregated sentiment. High volume, mixed quality.",
-      "validation_focus": ["dovish_liquidity_wave", "broad_panic"],
+      "validation_focus": [
+        "dovish_liquidity_wave",
+        "broad_panic"
+      ],
       "channels": [
-        { "channel_type": "api", "label": "Finnhub API", "url": "https://finnhub.io/api/v1" }
+        {
+          "channel_type": "api",
+          "label": "Finnhub API",
+          "url": "https://finnhub.io/api/v1"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "infra"
     },
     {
       "source_id": "google_news_macro",
@@ -358,19 +646,32 @@
       "author": "Google News",
       "priority": "secondary",
       "trust_weight": 0.4,
-      "market_focus": ["macro", "headlines"],
-      "routing_tags": ["macro", "headlines"],
+      "market_focus": [
+        "macro",
+        "headlines"
+      ],
+      "routing_tags": [
+        "macro",
+        "headlines"
+      ],
       "fetch_cadence": "PT2H",
       "freshness_sla_hours": 24,
       "research_style": "Broad headline aggregation. Noisy. Useful for catching big surprises early.",
-      "validation_focus": ["broad_panic", "war_escalation"],
+      "validation_focus": [
+        "broad_panic",
+        "war_escalation"
+      ],
       "channels": [
-        { "channel_type": "rss", "label": "Google News query feeds", "url": "https://news.google.com/rss/search" }
+        {
+          "channel_type": "rss",
+          "label": "Google News query feeds",
+          "url": "https://news.google.com/rss/search"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "infra"
     },
-
     {
       "source_id": "manual_notes",
       "name": "User Manual Notes",
@@ -378,17 +679,29 @@
       "author": "Thomas R. Lindsey",
       "priority": "core",
       "trust_weight": 1.0,
-      "market_focus": ["all"],
-      "routing_tags": ["manual", "high_priority"],
+      "market_focus": [
+        "all"
+      ],
+      "routing_tags": [
+        "manual",
+        "high_priority"
+      ],
       "fetch_cadence": "manual",
       "freshness_sla_hours": null,
       "research_style": "User's own notes; treated as authoritative input to brain.",
-      "validation_focus": ["all"],
+      "validation_focus": [
+        "all"
+      ],
       "channels": [
-        { "channel_type": "cli", "label": "macro-positioning text", "url": "cli" }
+        {
+          "channel_type": "cli",
+          "label": "macro-positioning text",
+          "url": "cli"
+        }
       ],
       "onboarded_at": "2026-04-05",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "self"
     },
     {
       "source_id": "chart_screenshots",
@@ -397,17 +710,337 @@
       "author": "Thomas R. Lindsey",
       "priority": "core",
       "trust_weight": 1.0,
-      "market_focus": ["technical"],
-      "routing_tags": ["chart", "technical", "vision"],
+      "market_focus": [
+        "technical"
+      ],
+      "routing_tags": [
+        "chart",
+        "technical",
+        "vision"
+      ],
       "fetch_cadence": "manual",
       "freshness_sla_hours": null,
       "research_style": "User-uploaded chart images; routed to chart_vision agent.",
-      "validation_focus": ["all"],
+      "validation_focus": [
+        "all"
+      ],
       "channels": [
-        { "channel_type": "upload", "label": "Dashboard chart upload widget", "url": "/charts/analyze" }
+        {
+          "channel_type": "upload",
+          "label": "Dashboard chart upload widget",
+          "url": "/charts/analyze"
+        }
       ],
       "onboarded_at": "2026-04-19",
-      "archived_at": null
+      "archived_at": null,
+      "tier": "self"
+    },
+    {
+      "source_id": "joejoe55",
+      "name": "joejoe55",
+      "source_type": "social",
+      "author": "joejoe55",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Cross-asset Telegram author.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [],
+      "group_membership": [],
+      "notes": "Author within group channels. No independent Telegram channel. Attribution via sender_id on group messages."
+    },
+    {
+      "source_id": "gem_hunters",
+      "name": "Gem Hunters",
+      "source_type": "social",
+      "author": "Gem Hunters",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Telegram group that also publishes as an author. Cross-asset.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [
+        {
+          "channel_type": "telegram",
+          "label": "primary",
+          "url": ""
+        }
+      ],
+      "group_members": []
+    },
+    {
+      "source_id": "the_wolf_pack",
+      "name": "The Wolf Pack",
+      "source_type": "social",
+      "author": "",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Telegram group. Members: Mark Wood, MixinCrypto.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [
+        {
+          "channel_type": "telegram",
+          "label": "primary",
+          "url": ""
+        }
+      ],
+      "group_members": [
+        "mark_wood",
+        "mixincrypto"
+      ]
+    },
+    {
+      "source_id": "mark_wood",
+      "name": "Mark Wood",
+      "source_type": "social",
+      "author": "Mark Wood",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Cross-asset Telegram author. Member of The Wolf Pack.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [],
+      "group_membership": [
+        "the_wolf_pack"
+      ],
+      "notes": "Author within group channels. No independent Telegram channel. Attribution via sender_id on group messages."
+    },
+    {
+      "source_id": "mixincrypto",
+      "name": "MixinCrypto",
+      "source_type": "social",
+      "author": "MixinCrypto",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Cross-asset Telegram author. Member of The Wolf Pack.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [],
+      "group_membership": [
+        "the_wolf_pack"
+      ],
+      "notes": "Author within group channels. No independent Telegram channel. Attribution via sender_id on group messages."
+    },
+    {
+      "source_id": "og_whales",
+      "name": "OG Whales",
+      "source_type": "social",
+      "author": "",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Telegram group. Members: Big_Nuts.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [
+        {
+          "channel_type": "telegram",
+          "label": "primary",
+          "url": ""
+        }
+      ],
+      "group_members": [
+        "big_nuts"
+      ]
+    },
+    {
+      "source_id": "feather_hands_trading",
+      "name": "Feather Hands Trading",
+      "source_type": "social",
+      "author": "",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Telegram group. Members: Big_Nuts, MadDog31.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [
+        {
+          "channel_type": "telegram",
+          "label": "primary",
+          "url": ""
+        }
+      ],
+      "group_members": [
+        "big_nuts",
+        "maddog31"
+      ]
+    },
+    {
+      "source_id": "big_nuts",
+      "name": "Big_Nuts",
+      "source_type": "social",
+      "author": "Big_Nuts",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Cross-asset Telegram author. Member of OG Whales and Feather Hands Trading.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [],
+      "group_membership": [
+        "og_whales",
+        "feather_hands_trading"
+      ],
+      "notes": "Author within group channels. No independent Telegram channel. Attribution via sender_id on group messages."
+    },
+    {
+      "source_id": "maddog31",
+      "name": "MadDog31",
+      "source_type": "social",
+      "author": "MadDog31",
+      "priority": "core",
+      "trust_weight": 1.0,
+      "tier": "T0",
+      "market_focus": [
+        "macro",
+        "rates",
+        "equities",
+        "commodities",
+        "energy",
+        "crypto",
+        "fx",
+        "geopolitics"
+      ],
+      "research_style": "Cross-asset Telegram author. Member of Feather Hands Trading.",
+      "routing_tags": [
+        "macro",
+        "equities",
+        "crypto",
+        "commodities",
+        "rates"
+      ],
+      "channels": [],
+      "group_membership": [
+        "feather_hands_trading"
+      ],
+      "notes": "Author within group channels. No independent Telegram channel. Attribution via sender_id on group messages."
     }
   ]
 }

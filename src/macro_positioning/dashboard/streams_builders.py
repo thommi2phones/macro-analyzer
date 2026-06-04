@@ -41,6 +41,11 @@ _WINDOW_THEME_DAYS = 28
 _WINDOW_CONCEPT_DAYS = 14
 _WINDOW_NODE_DAYS = 90
 
+# Max tickers returned by build_asset_map. The lifecycle scatter is for the
+# most-discussed names; the long tail is noise and bloats the SPA. The
+# front-end minor-cluster rollup folds the lower portion of this further.
+_ASSET_MAP_CAP = 60
+
 _BULL_SIDES = {"LONG", "ADD"}
 _BEAR_SIDES = {"SHORT", "AVOID"}
 
@@ -818,7 +823,11 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         })
 
     out.sort(key=lambda t: sum(t["mentions_by_week"]), reverse=True)
-    return out
+    # Cap the payload: there's a long tail of hundreds of one-off tickers
+    # that aren't useful as scatter bubbles and bloat the SPA (the lifecycle
+    # map is for the most-discussed names, not the entire mention universe).
+    # The SPA's own minor-cluster rollup then folds the lower part of this.
+    return out[:_ASSET_MAP_CAP]
 
 
 # ---------------------------------------------------------------------------

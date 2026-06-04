@@ -242,16 +242,29 @@ function ThemeMap({ themeMap, onThemeClick }) {
       out.push(...live);
     });
 
+    // Expanding a cluster reveals its members, but NEVER all of them — a
+    // 146-member expansion blows up the O(n²) thread pass and crashes the
+    // tab. Cap the reveal; spill the remainder back into a residual cluster
+    // the user can keep paging.
+    const EXPAND_CAP = 24;
+    const expandInto = (members, kind, dir, lifecycle) => {
+      const sorted = members.slice().sort((a, b) => _mentionTotal(b) - _mentionTotal(a));
+      out.push(...sorted.slice(0, EXPAND_CAP));
+      if (sorted.length > EXPAND_CAP) {
+        out.push(_makeCluster(kind, dir, sorted.slice(EXPAND_CAP), lifecycle));
+      }
+    };
+
     // Append minor cluster pseudos (at lifecycle 0.55 — middle of the chart).
     Object.entries(minor).forEach(([dir, members]) => {
       if (members.length === 0) return;
-      if (expandedMinor[dir]) { out.push(...members); return; }
+      if (expandedMinor[dir]) { expandInto(members, "minor", dir, 0.55); return; }
       out.push(_makeCluster("minor", dir, members, 0.55));
     });
     // Append fading cluster pseudos (at lifecycle 0.95 — right edge).
     Object.entries(fading).forEach(([dir, members]) => {
       if (members.length === 0) return;
-      if (expanded[dir]) { out.push(...members); return; }
+      if (expanded[dir]) { expandInto(members, "fading", dir, 0.95); return; }
       out.push(_makeCluster("fading", dir, members, 0.95));
     });
     return { renderThemes: out, fadingByDir: fading, minorByDir: minor };
@@ -334,12 +347,21 @@ function ThemeMap({ themeMap, onThemeClick }) {
     return Math.round((m / totalNow) * 100);
   };
 
-  // Threads between themes sharing ≥1 source (NOW frame only)
+  // Threads between themes sharing ≥1 source (NOW frame only).
+  // Hard-bounded: the pairing is O(n²) and cluster pseudo-bubbles aggregate
+  // every member's sources, so without limits a large map renders tens of
+  // thousands of <line>s and crashes the tab. We (1) skip cluster bubbles
+  // entirely (their threads are meaningless aggregates), (2) bail if there
+  // are too many real bubbles, and (3) keep only the strongest threads.
+  const _MAX_THREAD_NODES = 40;
+  const _MAX_THREADS = 80;
   const overlapThreads = () => {
+    const reals = visibleThemes.filter(t => !t._cluster);
+    if (reals.length > _MAX_THREAD_NODES) return [];  // too dense to be legible
     const threads = [];
-    for (let i = 0; i < visibleThemes.length; i++) {
-      for (let j = i + 1; j < visibleThemes.length; j++) {
-        const a = visibleThemes[i], b = visibleThemes[j];
+    for (let i = 0; i < reals.length; i++) {
+      for (let j = i + 1; j < reals.length; j++) {
+        const a = reals[i], b = reals[j];
         const shared = (a.sources || []).filter(s => (b.sources || []).includes(s));
         if (shared.length > 0) {
           const pa = layout[a.id], pb = layout[b.id];
@@ -351,7 +373,9 @@ function ThemeMap({ themeMap, onThemeClick }) {
         }
       }
     }
-    return threads;
+    // Keep only the strongest co-citations if we're over budget.
+    threads.sort((a, b) => b.shared - a.shared);
+    return threads.slice(0, _MAX_THREADS);
   };
 
   const handlePlay = useCallback(() => {

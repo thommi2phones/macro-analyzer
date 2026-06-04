@@ -55,7 +55,7 @@ def _insert_signal(
     author_id: str = "doomberg",
     trust: float = 1.0,
     conviction: float = 3.0,
-    ticker: str = "URA",
+    ticker: str = "ZZZZ",   # neutral: not in any curated asset_themes entry
     asset_class: str = "equity",
     thesis_summary: str = "",
 ):
@@ -124,7 +124,10 @@ def test_derive_market_focus_tokens_win_over_asset_class():
 
 
 def test_title_label():
-    assert _title_label("uranium_energy") == "Uranium / energy"
+    assert _title_label("uranium_energy") == "Uranium Energy"
+    assert _title_label("technology_ai") == "Technology / AI"
+    assert _title_label("risk_on_expansion") == "Risk On Expansion"
+    assert _title_label("equities_broad") == "Equities · broad"
 
 
 def test_is_real_theme_filters_technical_patterns_and_sentiment():
@@ -148,17 +151,47 @@ def test_is_real_theme_filters_technical_patterns_and_sentiment():
 
 def test_theme_map_excludes_technical_pattern_tags(tmp_path: Path):
     conn = _conn(tmp_path)
+    # Technical-pattern tag on a ticker NOT in any curated theme → the
+    # signal falls through to the equities_broad bucket, not a
+    # "technical_breakout" theme.
     for _ in range(4):
-        _insert_signal(conn, thesis_tags=["technical_breakout"],
+        _insert_signal(conn, ticker="ZZZZ", thesis_tags=["technical_breakout"],
                        extracted_at=NOW - timedelta(days=1))
     for _ in range(4):
-        _insert_signal(conn, thesis_tags=["uranium"],
+        _insert_signal(conn, ticker="ZZZZ", thesis_tags=["uranium"],
                        extracted_at=NOW - timedelta(days=1))
     conn.commit()
     themes = build_theme_map(conn, now=NOW)
     ids = {t["id"] for t in themes}
     assert "uranium" in ids
     assert "technical_breakout" not in ids
+
+
+def test_theme_map_rolls_ticker_into_curated_sector(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # NVDA is in technology_ai per config/asset_themes.json. Even with a
+    # noise-only tag, the signal should roll up to technology_ai.
+    for _ in range(4):
+        _insert_signal(conn, ticker="NVDA", thesis_tags=["social_sentiment"],
+                       extracted_at=NOW - timedelta(days=1))
+    conn.commit()
+    themes = build_theme_map(conn, now=NOW)
+    ids = {t["id"] for t in themes}
+    assert "technology_ai" in ids
+    assert "social_sentiment" not in ids
+
+
+def test_theme_map_asset_class_catchall_covers_long_tail(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # Unknown ticker, noise-only tag, equity asset_class → equities_broad.
+    for _ in range(4):
+        _insert_signal(conn, ticker="MEMEX", asset_class="equity",
+                       thesis_tags=["trending"],
+                       extracted_at=NOW - timedelta(days=1))
+    conn.commit()
+    themes = build_theme_map(conn, now=NOW)
+    ids = {t["id"] for t in themes}
+    assert "equities_broad" in ids
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +238,7 @@ def test_theme_map_direction_bullish_when_sides_aligned(tmp_path: Path):
     assert len(themes) == 1
     t = themes[0]
     assert t["id"] == "uranium_energy"
-    assert t["label"] == "Uranium / energy"
+    assert t["label"] == "Uranium Energy"
     assert t["direction"] == "bullish"
     assert t["age_days"] >= 0
     assert sum(t["mentions_by_week"]) == 4

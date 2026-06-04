@@ -5,8 +5,21 @@ without owning DB lifecycle. Each builder returns JSON-serializable
 dicts/lists matching the shapes the JSX already consumes (see
 web/streams.jsx and web/data.mock.js streams: {...}).
 
-No schema changes: tier and market_focus are derived in-builder; theme
-ids are derived from `signals.thesis_tags_json` + `macro_regime_tags_json`.
+Theme membership for a signal is the UNION of three sources, so the map
+encompasses everything we process — not just whatever the extractors
+happened to tag:
+  1. Curated sector theme by ticker — config/asset_themes.json maps
+     tickers → themes (uranium, technology_ai, energy, defense, ...).
+     A signal on NVDA rolls up to technology_ai even if its free-text
+     tags are noise.
+  2. Real macro/regime tags from thesis_tags_json + macro_regime_tags_json,
+     after filtering chart-pattern / sentiment / direction noise.
+  3. Asset-class catch-all bucket (equities_broad, crypto_broad, ...) for
+     any signal that matched neither of the above — so the long tail of
+     undifferentiated retail mentions still appears as a bubble instead of
+     silently vanishing.
+
+No schema changes: tier and market_focus are derived in-builder.
 """
 
 from __future__ import annotations
@@ -92,7 +105,8 @@ _NON_THEME_TOKENS: set[str] = {
     "positive", "negative",
     # sentiment / social platforms
     "social", "media", "sentiment", "trending", "trend", "buzz",
-    "interest", "wallstreetbets", "wsb", "stocktwits", "twitter",
+    "interest", "attention", "mention", "mentions", "chatter", "hype",
+    "wallstreetbets", "wsb", "stocktwits", "twitter",
     "reddit", "ape", "apewisdom", "rss", "news", "headline",
     # generic direction / lifecycle words
     "stock", "stocks", "trade", "trading", "trades",
@@ -143,9 +157,80 @@ def _normalize_tag(raw: Any) -> str | None:
     return s or None
 
 
+# Friendly labels for curated themes + generic buckets. Anything not here
+# gets word-wise title case with known acronyms upper-cased.
+_EXPLICIT_LABELS: dict[str, str] = {
+    "technology_ai":     "Technology / AI",
+    "precious_metals":   "Precious Metals",
+    "equities_broad":    "Equities · broad",
+    "crypto_broad":      "Crypto · broad",
+    "commodities_broad": "Commodities · broad",
+    "rates_broad":       "Rates · broad",
+    "fx_broad":          "FX · broad",
+    "options_broad":     "Options · broad",
+    "cash":              "Cash",
+}
+_ACRONYMS = {"ai", "fx", "etf", "us", "em", "btc", "eth", "ev", "reit", "ipo"}
+
+
 def _title_label(theme_id: str) -> str:
-    """uranium_energy → Uranium / energy (per brief)."""
-    return theme_id.replace("_", " / ").capitalize()
+    """Render a theme id as a clean display label.
+
+    technology_ai → Technology / AI · risk_on_expansion → Risk On Expansion
+    """
+    if theme_id in _EXPLICIT_LABELS:
+        return _EXPLICIT_LABELS[theme_id]
+    parts = [p for p in str(theme_id).split("_") if p]
+    if not parts:
+        return str(theme_id)
+    return " ".join(p.upper() if p in _ACRONYMS else p.capitalize() for p in parts)
+
+
+# Asset-class → generic catch-all bucket id (the long-tail fallback).
+_ASSET_CLASS_BUCKET: dict[str, str] = {
+    "equity":      "equities_broad",
+    "equities":    "equities_broad",
+    "etf":         "equities_broad",
+    "crypto":      "crypto_broad",
+    "commodity":   "commodities_broad",
+    "commodities": "commodities_broad",
+    "rates":       "rates_broad",
+    "bond":        "rates_broad",
+    "credit":      "rates_broad",
+    "fx":          "fx_broad",
+    "currency":    "fx_broad",
+    "option":      "options_broad",
+    "cash":        "cash",
+}
+
+# Cached ticker → curated-theme index, loaded from config/asset_themes.json.
+_TICKER_THEME_CACHE: dict[str, str] | None = None
+
+
+def _ticker_theme_index() -> dict[str, str]:
+    """Map TICKER (upper) → curated theme key from config/asset_themes.json.
+
+    Cached per-process; the config is static at runtime. Returns {} if the
+    file is missing or malformed so the builder degrades to tag + asset-class
+    coverage only.
+    """
+    global _TICKER_THEME_CACHE
+    if _TICKER_THEME_CACHE is not None:
+        return _TICKER_THEME_CACHE
+    idx: dict[str, str] = {}
+    try:
+        from macro_positioning.core.settings import settings as _settings
+        path = _settings.base_dir / "config" / "asset_themes.json"
+        data = json.loads(path.read_text())
+        for key, spec in (data.get("themes") or {}).items():
+            for tk in (spec.get("watchlist_tickers") or []):
+                t = str(tk).strip().upper()
+                if t:
+                    idx.setdefault(t, key)
+    except Exception:
+        idx = {}
+    _TICKER_THEME_CACHE = idx
+    return idx
 
 
 def _load_json_list(raw: Any) -> list[str]:
@@ -220,11 +305,30 @@ def _load_signals(conn: sqlite3.Connection, window_days: int, now: datetime) -> 
     return out
 
 
-def _signal_themes(s: dict) -> set[str]:
-    """All theme tokens this signal touches, filtered to remove chart-
-    pattern / sentiment / generic-direction noise (see _NON_THEME_TOKENS)."""
-    raw = set(s["thesis_tags"]) | set(s["regime_tags"])
-    return {t for t in raw if _is_real_theme(t)}
+def _signal_themes(s: dict, ticker_idx: dict[str, str] | None = None) -> set[str]:
+    """All themes this signal belongs to: curated sector (by ticker) ∪ real
+    macro/regime tags ∪ asset-class catch-all. See module docstring.
+
+    ticker_idx is the result of _ticker_theme_index(); passed in by callers
+    so it's computed once per build rather than per signal.
+    """
+    if ticker_idx is None:
+        ticker_idx = _ticker_theme_index()
+    out: set[str] = set()
+    # 1. real macro/regime tags (noise-filtered)
+    for t in (set(s["thesis_tags"]) | set(s["regime_tags"])):
+        if _is_real_theme(t):
+            out.add(t)
+    # 2. curated sector theme by ticker
+    tk = (s.get("asset_ticker") or "").strip().upper()
+    if tk and tk in ticker_idx:
+        out.add(ticker_idx[tk])
+    # 3. asset-class catch-all so the long tail still shows up
+    if not out:
+        bucket = _ASSET_CLASS_BUCKET.get(s.get("asset_class", ""))
+        if bucket:
+            out.add(bucket)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -238,11 +342,12 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
     if not signals:
         return []
 
+    ticker_idx = _ticker_theme_index()
     by_theme: dict[str, list[dict]] = defaultdict(list)
     for s in signals:
         if s["extracted_at"] is None:
             continue
-        for theme in _signal_themes(s):
+        for theme in _signal_themes(s, ticker_idx):
             by_theme[theme].append(s)
 
     out: list[dict] = []

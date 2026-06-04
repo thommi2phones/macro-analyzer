@@ -159,12 +159,21 @@ const _FADE_START   = 0.85;
 const _FADE_ROLLUP  = 0.90;
 const _FADED_OPACITY = 0.40;
 
+// Per-direction cap on individually-rendered themes. Anything past this
+// (by total mention count, smallest first) folds into a "minor themes"
+// pseudo-bubble that sits at the band's lifecycle midpoint. Without this
+// the mixed band gets 10+ overlapping 3-mention themes and the chart is
+// unreadable. Cluster expands on click just like the fading one.
+const _MAX_PER_BAND = 5;
+
 function ThemeMap({ themeMap, onThemeClick }) {
   const [weekIndex, setWeekIndex] = useState(3);
   const [playing, setPlaying]     = useState(false);
   const [dirFilter, setDirFilter] = useState("all");
   // Per-direction expansion state for the fading-cluster roll-up bubbles.
   const [expanded, setExpanded]   = useState({ bullish: false, mixed: false, bearish: false });
+  // Per-direction expansion state for the minor-theme rollup (tail by mentions).
+  const [expandedMinor, setExpandedMinor] = useState({ bullish: false, mixed: false, bearish: false });
   const timerRef = useRef(null);
   const svgRef = useRef(null);
   const pz = usePanZoom(svgRef);
@@ -174,54 +183,79 @@ function ThemeMap({ themeMap, onThemeClick }) {
   const innerW = W - PAD.left - PAD.right;
   const innerH = H - PAD.top  - PAD.bottom;
 
-  // Apply the direction filter, then split each direction into "live" (real
-  // bubbles always shown) and "fading" (folded into a cluster unless that
-  // cluster is expanded). renderThemes is the flat list passed to the
-  // layout engine — clusters are pseudo-themes with id `__fading_<dir>`.
-  const { renderThemes, fadingByDir } = useMemo(() => {
+  // Apply the direction filter, then split each direction into:
+  //  (a) live  — top-N by mentions, rendered individually
+  //  (b) minor — tail past the cap, folded into one cluster per direction
+  //              at the band's lifecycle midpoint
+  //  (c) fading — lifecycle > FADE_ROLLUP, folded into another cluster at
+  //               the right edge
+  // Each cluster is a pseudo-theme with id `__<kind>_<dir>` that expands
+  // on click into its members.
+  const _mentionTotal = (t) => (t.mentions_by_week || []).reduce((a, b) => a + b, 0);
+  const _makeCluster = (kind, dir, members, lifecycle) => {
+    const sumWeeks = [0, 0, 0, 0];
+    const allSources = new Set();
+    let maxAge = 0;
+    members.forEach(m => {
+      (m.mentions_by_week || []).forEach((v, i) => { sumWeeks[i] += v; });
+      (m.sources || []).forEach(s => allSources.add(s));
+      maxAge = Math.max(maxAge, m.age_days || 0);
+    });
+    return {
+      id: `__${kind}_${dir}`,
+      label: `${members.length} ${kind} themes`,
+      direction: dir,
+      lifecycle,
+      novelty: 0,
+      velocity: 0,
+      age_days: maxAge,
+      mentions_by_week: sumWeeks,
+      sources: [...allSources],
+      _cluster: true,
+      _clusterKind: kind,
+      _members: members,
+    };
+  };
+
+  const { renderThemes, fadingByDir, minorByDir } = useMemo(() => {
     const filtered = dirFilter === "all"
       ? themeMap
       : themeMap.filter(t => t.direction === dirFilter);
     const byDir = { bullish: [], mixed: [], bearish: [] };
     filtered.forEach(t => (byDir[t.direction] || byDir.mixed).push(t));
+
     const fading = { bullish: [], mixed: [], bearish: [] };
-    const live = [];
+    const minor  = { bullish: [], mixed: [], bearish: [] };
+    const out = [];
+
     Object.entries(byDir).forEach(([dir, arr]) => {
+      // Step 1: split off fading themes
+      const remaining = [];
       arr.forEach(t => {
         if ((t.lifecycle || 0) > _FADE_ROLLUP) fading[dir].push(t);
-        else live.push(t);
+        else remaining.push(t);
       });
+      // Step 2: from what's left, keep top-N by mentions; rest are minor.
+      remaining.sort((a, b) => _mentionTotal(b) - _mentionTotal(a));
+      const live = remaining.slice(0, _MAX_PER_BAND);
+      minor[dir] = remaining.slice(_MAX_PER_BAND);
+      out.push(...live);
     });
-    const out = [...live];
+
+    // Append minor cluster pseudos (at lifecycle 0.55 — middle of the chart).
+    Object.entries(minor).forEach(([dir, members]) => {
+      if (members.length === 0) return;
+      if (expandedMinor[dir]) { out.push(...members); return; }
+      out.push(_makeCluster("minor", dir, members, 0.55));
+    });
+    // Append fading cluster pseudos (at lifecycle 0.95 — right edge).
     Object.entries(fading).forEach(([dir, members]) => {
       if (members.length === 0) return;
       if (expanded[dir]) { out.push(...members); return; }
-      // Build a single cluster pseudo-theme per direction band. mentions =
-      // sum of members so radius reflects the collective tail.
-      const sumWeeks = [0, 0, 0, 0];
-      const allSources = new Set();
-      let maxAge = 0;
-      members.forEach(m => {
-        (m.mentions_by_week || []).forEach((v, i) => { sumWeeks[i] += v; });
-        (m.sources || []).forEach(s => allSources.add(s));
-        maxAge = Math.max(maxAge, m.age_days || 0);
-      });
-      out.push({
-        id: `__fading_${dir}`,
-        label: `${members.length} fading themes`,
-        direction: dir,
-        lifecycle: 0.95,
-        novelty: 0,
-        velocity: 0,
-        age_days: maxAge,
-        mentions_by_week: sumWeeks,
-        sources: [...allSources],
-        _cluster: true,
-        _members: members,
-      });
+      out.push(_makeCluster("fading", dir, members, 0.95));
     });
-    return { renderThemes: out, fadingByDir: fading };
-  }, [themeMap, dirFilter, expanded]);
+    return { renderThemes: out, fadingByDir: fading, minorByDir: minor };
+  }, [themeMap, dirFilter, expanded, expandedMinor]);
 
   const visibleThemes = renderThemes;
 
@@ -237,10 +271,13 @@ function ThemeMap({ themeMap, onThemeClick }) {
   // spread evenly on Y. Then nudge X to enforce minimum spacing so adjacent
   // bubbles don't horizontally pile up in the FRESH zone.
   const layout = useMemo(() => {
+    // Mixed gets the widest vertical band because it tends to carry the
+    // most themes (the directional bands are end-states; mixed is the
+    // default for noisy/contested narratives).
     const BAND_RANGES = {
-      bullish: [0.06, 0.36],
-      mixed:   [0.42, 0.58],
-      bearish: [0.64, 0.94],
+      bullish: [0.04, 0.28],
+      mixed:   [0.34, 0.72],
+      bearish: [0.78, 0.96],
     };
     const out = {};
     const byDir = { bullish: [], mixed: [], bearish: [] };
@@ -508,7 +545,8 @@ function ThemeMap({ themeMap, onThemeClick }) {
 
             const onClick = () => {
               if (isCluster) {
-                setExpanded(e => ({ ...e, [theme.direction]: !e[theme.direction] }));
+                const setter = theme._clusterKind === "minor" ? setExpandedMinor : setExpanded;
+                setter(e => ({ ...e, [theme.direction]: !e[theme.direction] }));
                 return;
               }
               if (onThemeClick) onThemeClick(theme);
@@ -555,24 +593,42 @@ function ThemeMap({ themeMap, onThemeClick }) {
               </g>
             );
           })}
-          {/* Per-direction "collapse" affordance when a cluster is expanded */}
-          {["bullish", "mixed", "bearish"].map(dir => {
-            if (!expanded[dir] || (fadingByDir[dir] || []).length === 0) return null;
-            // Place at the right edge of the chart at the band's vertical center.
-            const yFrac = dir === "bullish" ? 0.21 : dir === "mixed" ? 0.50 : 0.79;
-            const x = PAD.left + innerW - 60;
+          {/* Per-direction "collapse" affordance when a cluster is expanded.
+              Both fading (right edge, lifecycle≈0.95) and minor (middle,
+              lifecycle≈0.55) get one. */}
+          {["bullish", "mixed", "bearish"].flatMap(dir => {
+            const yFrac = dir === "bullish" ? 0.16 : dir === "mixed" ? 0.53 : 0.87;
             const y = PAD.top + yFrac * innerH;
-            return (
-              <g key={`collapse_${dir}`} style={{ cursor: "pointer" }}
-                onClick={() => setExpanded(e => ({ ...e, [dir]: false }))}>
-                <rect x={x - 38} y={y - 9} width={76} height={18} rx={3}
-                  fill="var(--bg-card-2, #1a1a1a)" stroke="var(--text-mute-3)"
-                  strokeWidth="0.8" opacity="0.85" />
-                <text x={x} y={y + 4} fontSize="9" textAnchor="middle"
-                  fill="var(--text-mute-2)" fontFamily="var(--mono)"
-                  letterSpacing="0.14em">⤺ COLLAPSE</text>
-              </g>
-            );
+            const chips = [];
+            if (expanded[dir] && (fadingByDir[dir] || []).length > 0) {
+              const x = PAD.left + innerW - 60;
+              chips.push(
+                <g key={`collapse_fading_${dir}`} style={{ cursor: "pointer" }}
+                  onClick={() => setExpanded(e => ({ ...e, [dir]: false }))}>
+                  <rect x={x - 50} y={y - 9} width={100} height={18} rx={3}
+                    fill="var(--bg-card-2, #1a1a1a)" stroke="var(--text-mute-3)"
+                    strokeWidth="0.8" opacity="0.85" />
+                  <text x={x} y={y + 4} fontSize="9" textAnchor="middle"
+                    fill="var(--text-mute-2)" fontFamily="var(--mono)"
+                    letterSpacing="0.14em">⤺ HIDE FADING</text>
+                </g>
+              );
+            }
+            if (expandedMinor[dir] && (minorByDir[dir] || []).length > 0) {
+              const x = PAD.left + innerW * 0.55;
+              chips.push(
+                <g key={`collapse_minor_${dir}`} style={{ cursor: "pointer" }}
+                  onClick={() => setExpandedMinor(e => ({ ...e, [dir]: false }))}>
+                  <rect x={x - 48} y={y - 9} width={96} height={18} rx={3}
+                    fill="var(--bg-card-2, #1a1a1a)" stroke="var(--text-mute-3)"
+                    strokeWidth="0.8" opacity="0.85" />
+                  <text x={x} y={y + 4} fontSize="9" textAnchor="middle"
+                    fill="var(--text-mute-2)" fontFamily="var(--mono)"
+                    letterSpacing="0.14em">⤺ HIDE MINOR</text>
+                </g>
+              );
+            }
+            return chips;
           })}
         </g>
         </svg>
@@ -799,32 +855,52 @@ function SourceGraph({ sourceGraph, onNodeClick }) {
   const visibleIds = new Set(nodes.map(n => n.id));
   const links = allLinks.filter(l => visibleIds.has(l.source) && visibleIds.has(l.target));
 
-  // Layout: position nodes within cluster circles
+  // Layout: each cluster gets a rectangular sub-region of the 3×3 grid.
+  // Inside the sub-region, top-N nodes (sorted by tier asc, weight desc)
+  // pack into a grid; the rest fold into one "+M more" overflow marker
+  // anchored at the cluster center. This replaces the prior polar/ring
+  // layout, which produced unreadable concentric rings once any cluster
+  // grew past ~10 nodes.
   const innerW = W - PAD.left - PAD.right;
   const innerH = H - PAD.top  - PAD.bottom;
+  const SG_CAP_PER_CLUSTER = 12;
   const pos = {};
+  const overflow = {}; // cluster key → count of nodes hidden
   const byCluster = {};
   nodes.forEach(n => {
     const k = _clusterFor(n);
     (byCluster[k] ||= []).push(n);
   });
-  // Track per-cluster spread radius so we can place the header above the top
-  // node, not on top of it.
-  const clusterRadius = {};
+  // Cell metrics for the 3×3 cluster grid. Each cluster's bounding box is
+  // (cellW × cellH), centered on (baseX, baseY). Leave a margin so labels
+  // and edge nodes don't bleed into neighbouring clusters.
+  const cellW = innerW / 3, cellH = innerH / 3;
+  const cellPad = 22;
+  // Per-cluster bounding box (for "show N more" badge + header placement).
+  const clusterBox = {};
   for (const c of _CLUSTERS) {
-    const list = byCluster[c.key] || [];
+    const list = (byCluster[c.key] || []).slice().sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      return (b.weight || 0) - (a.weight || 0);
+    });
     const baseX = PAD.left + c.cx * innerW;
     const baseY = PAD.top  + c.cy * innerH;
-    const count = list.length;
-    // Tighter spread per cluster — with 9 cells in the grid each gets less real estate.
-    const radius = count <= 1 ? 0 : 42 + count * 8;
-    clusterRadius[c.key] = radius;
-    list.forEach((n, i) => {
-      const angle = (2 * Math.PI * i) / Math.max(count, 1) + _seed(n.id) * 0.5;
-      pos[n.id] = {
-        x: baseX + Math.cos(angle) * radius,
-        y: baseY + Math.sin(angle) * radius,
-      };
+    const boxW = cellW - cellPad * 2;
+    const boxH = cellH - cellPad * 2 - 18; // reserve top strip for the label
+    const visible = list.slice(0, SG_CAP_PER_CLUSTER);
+    overflow[c.key] = Math.max(0, list.length - visible.length);
+    clusterBox[c.key] = { baseX, baseY, boxW, boxH, count: list.length };
+    if (visible.length === 0) continue;
+    const cols = Math.min(visible.length, Math.ceil(Math.sqrt(visible.length * (boxW / boxH))));
+    const rows = Math.ceil(visible.length / cols);
+    const stepX = boxW / Math.max(cols, 1);
+    const stepY = boxH / Math.max(rows, 1);
+    const originX = baseX - boxW / 2 + stepX / 2;
+    const originY = baseY - boxH / 2 + stepY / 2 + 6;
+    visible.forEach((n, i) => {
+      const row = Math.floor(i / cols);
+      const col = i % cols;
+      pos[n.id] = { x: originX + col * stepX, y: originY + row * stepY };
     });
   }
 
@@ -881,21 +957,25 @@ function SourceGraph({ sourceGraph, onNodeClick }) {
               render as ghosts so the user can see *which* themes have no
               source coverage yet. */}
           {_CLUSTERS.map(c => {
-            const list = byCluster[c.key] || [];
-            const baseX = PAD.left + c.cx * innerW;
-            const baseY = PAD.top  + c.cy * innerH;
-            if (list.length === 0) {
+            const box = clusterBox[c.key];
+            const baseX = box.baseX;
+            const baseY = box.baseY;
+            // Cluster bounding rectangle so the user can read the grid as
+            // a partition of the chart instead of a soup of bubbles.
+            const rectX = baseX - box.boxW / 2 - 4;
+            const rectY = baseY - box.boxH / 2 - 4;
+            if (box.count === 0) {
               return (
                 <g key={c.key} className="sg-ghost-cluster" opacity="0.42">
-                  <circle cx={baseX} cy={baseY} r="36"
+                  <rect x={rectX} y={rectY} width={box.boxW + 8} height={box.boxH + 8} rx={4}
                     fill="none" stroke="var(--text-mute-3)" strokeWidth="1"
                     strokeDasharray="3,4" />
-                  <text x={baseX} y={baseY - 50} fontSize="10.5"
+                  <text x={baseX} y={baseY - 4} fontSize="10.5"
                     fill="var(--text-mute-3)" fontFamily="var(--mono)" letterSpacing="0.22em"
                     textAnchor="middle">
                     {c.label}
                   </text>
-                  <text x={baseX} y={baseY + 4} fontSize="9"
+                  <text x={baseX} y={baseY + 14} fontSize="9"
                     fill="var(--text-mute-3)" fontFamily="var(--mono)" letterSpacing="0.16em"
                     textAnchor="middle">
                     NO COVERAGE
@@ -903,14 +983,27 @@ function SourceGraph({ sourceGraph, onNodeClick }) {
                 </g>
               );
             }
-            const maxR  = Math.max(...list.map(n => _tierRadius(n.tier, n.weight)));
-            const labelY = baseY - (clusterRadius[c.key] || 0) - maxR - 14;
+            const more = overflow[c.key] || 0;
             return (
-              <text key={c.key} x={baseX} y={labelY} fontSize="10.5"
-                fill="var(--text-mute-2)" fontFamily="var(--mono)" letterSpacing="0.22em"
-                textAnchor="middle" opacity="0.9">
-                {c.label}
-              </text>
+              <g key={c.key}>
+                {/* Faint bounding box delineating the cluster's region */}
+                <rect x={rectX} y={rectY} width={box.boxW + 8} height={box.boxH + 8} rx={4}
+                  fill="none" stroke="var(--border, #333)" strokeWidth="0.6"
+                  opacity="0.35" />
+                <text x={baseX} y={rectY - 4} fontSize="10.5"
+                  fill="var(--text-mute-2)" fontFamily="var(--mono)" letterSpacing="0.22em"
+                  textAnchor="middle" opacity="0.9">
+                  {c.label}
+                  {box.count > SG_CAP_PER_CLUSTER ? ` · top ${SG_CAP_PER_CLUSTER} of ${box.count}` : ""}
+                </text>
+                {more > 0 && (
+                  <text x={baseX} y={rectY + box.boxH + 18} fontSize="9"
+                    fill="var(--text-mute-3)" fontFamily="var(--mono)" letterSpacing="0.16em"
+                    textAnchor="middle" opacity="0.85">
+                    +{more} MORE
+                  </text>
+                )}
+              </g>
             );
           })}
 

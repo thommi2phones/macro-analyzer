@@ -77,13 +77,24 @@ def test_split_crowd_collapses_to_neutral():
 
 
 def test_moderate_long_bias_scales_partway():
-    # half of _SCALE → halfway between neutral and full
+    # half of the (explicit) pass scale → halfway between neutral and full
     ss = score_signal_alignment(_setup({
         "n_signals": 2,
-        "net_bias": 6.0,
+        "net_bias": 4.0,
         "bias_direction": "long",
+        "pass_scale": 8.0,
     }))
     assert ss.value == 0.75
+
+
+def test_pass_scale_overrides_default():
+    # Same net_bias reads stronger under a tighter (smaller) pass scale.
+    agg = {"n_signals": 1, "net_bias": 2.0, "bias_direction": "long"}
+    loose = score_signal_alignment(_setup({**agg, "pass_scale": 8.0})).value
+    tight = score_signal_alignment(_setup({**agg, "pass_scale": 2.0})).value
+    assert tight > loose
+    assert tight == 1.0          # 2.0 / 2.0 → full tilt
+    assert loose == 0.625        # 0.5 + 0.5 * (2/8)
 
 
 def test_avoid_voices_push_below_neutral():

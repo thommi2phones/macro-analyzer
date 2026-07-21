@@ -249,3 +249,38 @@ def aggregate_for_tickers(
             now=now, db_path=db_path,
         )
     return out
+
+
+# Sensible defaults for the per-pass net_bias scale (see directional_scale).
+_SCALE_FLOOR = 3.0        # sparse passes can't over-amplify noise
+_SCALE_DEFAULT = 4.0      # used when no ticker in the pass carries a signal
+
+
+def directional_scale(
+    aggregates: dict[str, dict],
+    *,
+    percentile: float = 0.9,
+    floor: float = _SCALE_FLOOR,
+    default: float = _SCALE_DEFAULT,
+) -> float:
+    """The net_bias magnitude that should read as *full* directional
+    conviction for this scoring pass — used by the signal_alignment
+    scorer to normalise net_bias into 0..1.
+
+    Dynamic by design: the most-convicted tickers *this pass* define the
+    top of the scale, so the component auto-calibrates as signal volume
+    and conviction grow instead of relying on a hand-tuned constant.
+
+    `percentile` (default 90th) of the nonzero |net_bias| across signaled
+    tickers sets the level; `floor` keeps a thin/quiet pass from
+    saturating on noise; `default` covers a pass with no signals at all.
+    """
+    mags = sorted(
+        abs(a.get("net_bias") or 0.0)
+        for a in aggregates.values()
+        if (a.get("n_signals") or 0) > 0 and (a.get("net_bias") or 0.0) != 0.0
+    )
+    if not mags:
+        return default
+    idx = min(len(mags) - 1, int(round(percentile * (len(mags) - 1))))
+    return max(floor, mags[idx])

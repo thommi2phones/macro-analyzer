@@ -12,10 +12,13 @@ from macro_positioning.core.settings import settings
 from macro_positioning.db.schema import initialize_database
 from macro_positioning.signals import repository
 from macro_positioning.signals.aggregation import (
+    _SCALE_DEFAULT,
+    _SCALE_FLOOR,
     _alignment_score,
     _recency_weight,
     aggregate_for_ticker,
     aggregate_for_tickers,
+    directional_scale,
 )
 from macro_positioning.signals.base import Signal, SignalSide
 
@@ -181,3 +184,37 @@ def test_batch_aggregate(db):
     assert out["AAPL"]["bias_direction"] == "long"
     assert out["MSFT"]["bias_direction"] == "short"
     assert out["NVDA"]["bias_direction"] == "neutral"
+
+
+# --- directional_scale (per-pass dynamic conviction scale) -----------------
+
+def test_directional_scale_no_signals_returns_default():
+    aggs = {"AAA": {"n_signals": 0, "net_bias": 0.0}}
+    assert directional_scale(aggs) == _SCALE_DEFAULT
+
+
+def test_directional_scale_floors_quiet_pass():
+    # All net_bias magnitudes tiny → floor prevents saturating on noise.
+    aggs = {t: {"n_signals": 2, "net_bias": b} for t, b in
+            {"A": 0.1, "B": -0.2, "C": 0.15}.items()}
+    assert directional_scale(aggs) == _SCALE_FLOOR
+
+
+def test_directional_scale_tracks_high_percentile_when_convicted():
+    # A wide spread with strong outliers lifts the scale above the floor.
+    aggs = {f"T{i}": {"n_signals": 3, "net_bias": float(v)}
+            for i, v in enumerate([1, 2, 3, 4, 20])}
+    scale = directional_scale(aggs)
+    assert scale > _SCALE_FLOOR
+    # 90th percentile of [1,2,3,4,20] → index round(0.9*4)=4 → 20
+    assert scale == 20.0
+
+
+def test_directional_scale_ignores_zero_and_signalless():
+    aggs = {
+        "A": {"n_signals": 0, "net_bias": 99.0},   # no signals → ignored
+        "B": {"n_signals": 2, "net_bias": 0.0},     # zero bias → ignored
+        "C": {"n_signals": 2, "net_bias": 5.0},
+    }
+    # only C counts → single value 5.0 (above floor)
+    assert directional_scale(aggs) == 5.0

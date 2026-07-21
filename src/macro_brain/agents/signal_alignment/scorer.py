@@ -18,11 +18,14 @@ Input: `setup.signal_aggregate`, the output of
 
 Mapping to a flat 0..1 sub-signal (0.5 = neutral / no signal):
 
-    signed = clamp(net_bias / _SCALE, -1, +1)
+    scale  = agg["pass_scale"]  (falls back to _DEFAULT_SCALE)
+    signed = clamp(net_bias / scale, -1, +1)
     value  = 0.5 + 0.5 * signed
 
-`_SCALE` mirrors `aggregation._alignment_score`'s scale (12.0) so a net
-bias that would read ~10/10 there lands near 1.0 here. net_bias already
+`scale` is the per-pass conviction scale from
+`aggregation.directional_scale()` — the net_bias level that reads as
+full tilt *this pass*, so the component auto-calibrates as signal volume
+grows rather than relying on a hand-tuned constant. net_bias already
 nets long against short, so a split crowd (long≈short) collapses toward
 0.5 — disagreement reads as *no conviction*, which is correct.
 
@@ -41,10 +44,10 @@ from macro_brain.types import SetupContext, SubScore
 
 VERSION = "signal_alignment@v1"
 
-# Net-bias magnitude that maps to full directional tilt (value 0 or 1).
-# Kept in sync with signals.aggregation._alignment_score's scale so the
-# raw 0..10 alignment_score and this 0..1 value tell a consistent story.
-_SCALE = 12.0
+# Fallback net_bias→full-tilt scale when the aggregate carries no
+# per-pass `pass_scale` (e.g. a single-ticker /score call). Matches
+# aggregation._SCALE_DEFAULT.
+_DEFAULT_SCALE = 4.0
 
 # Each explicit AVOID voice pulls a net-neutral score down by this much.
 _AVOID_PENALTY = 0.1
@@ -61,7 +64,8 @@ def _compute(agg: dict) -> SubScore:
         )
 
     net_bias = float(agg.get("net_bias") or 0.0)
-    signed = max(-1.0, min(1.0, net_bias / _SCALE))
+    scale = float(agg.get("pass_scale") or _DEFAULT_SCALE) or _DEFAULT_SCALE
+    signed = max(-1.0, min(1.0, net_bias / scale))
     value = 0.5 + 0.5 * signed
 
     # Voices explicitly calling to avoid the name push a directionless
@@ -87,6 +91,7 @@ def _compute(agg: dict) -> SubScore:
             "alignment_score_raw": float(agg.get("alignment_score") or 0.0),
             "n_signals": float(n_signals),
             "avoid_count": float(avoid_count),
+            "pass_scale": scale,
         },
         notes=(
             f"{direction} bias ({confidence:.0%} conf) across {n_signals} "

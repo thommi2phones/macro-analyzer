@@ -490,12 +490,19 @@ def run_scoring_pass(
         # composer sees a stable snapshot and we don't pay the join cost
         # per ticker inside the write transaction. Half-life = 14d so a
         # signal from two weeks ago is worth half a fresh one.
-        from macro_positioning.signals.aggregation import aggregate_for_tickers
+        from macro_positioning.signals.aggregation import (
+            aggregate_for_tickers,
+            directional_scale,
+        )
         ticker_signal_aggregates = aggregate_for_tickers(
             (e.ticker for e in resolved.entries),
             since_days=90,
             half_life_days=14.0,
         )
+        # Per-pass conviction scale — the signal_alignment scorer divides
+        # net_bias by this to get its 0..1 tilt. Computed once so every
+        # ticker is normalised against the same pass.
+        signal_pass_scale = directional_scale(ticker_signal_aggregates)
 
         # 5. Score each + persist
         errors: list[dict] = []
@@ -542,7 +549,10 @@ def run_scoring_pass(
                         "scale": theme_scale,
                     }
 
-                    sig_agg = ticker_signal_aggregates.get(entry.ticker.upper(), {})
+                    sig_agg = ticker_signal_aggregates.get(entry.ticker.upper()) or {}
+                    # Stamp the per-pass scale so the scorer normalises
+                    # net_bias against this pass's own conviction spread.
+                    sig_agg = {**sig_agg, "pass_scale": signal_pass_scale}
                     # Expose the signal aggregate to the composer via
                     # relevant_sources — designed for this purpose.
                     relevant_sources_payload = []

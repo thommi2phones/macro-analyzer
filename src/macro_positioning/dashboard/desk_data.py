@@ -464,6 +464,7 @@ def _load_latest_scores() -> list[dict]:
                     ts.risk_reward_score,
                     ts.relative_strength_score,
                     ts.psychology_score,
+                    ts.signal_alignment_score,
                     ts.grade,
                     ts.position_size_tier,
                     ts.reasoning_trail_json,
@@ -491,7 +492,8 @@ def _load_latest_scores() -> list[dict]:
                 c.relative_strength_score, c.psychology_score,
                 c.grade, c.position_size_tier, c.reasoning_trail_json,
                 a.ticker, a.asset_name, a.asset_class,
-                p.prior_score, p.prior_scored_at
+                p.prior_score, p.prior_scored_at,
+                c.signal_alignment_score
             FROM current c
             JOIN assets a ON a.asset_id = c.asset_id
             LEFT JOIN prior p ON p.asset_id = c.asset_id
@@ -529,6 +531,7 @@ def _load_latest_scores() -> list[dict]:
             "asset_class": r[17],
             "prior_score": prior_score,
             "prior_scored_at": r[19],
+            "signal": r[20],
             "d_score": d_score,
         })
     return out
@@ -682,20 +685,21 @@ def build_reasoning_section() -> dict:
     out: dict[str, dict] = {}
 
     component_specs = [
-        ("Macro alignment", "macro", 20),
+        ("Macro alignment", "macro", 15),
         ("Liquidity", "liquidity", 15),
-        ("Sector strength", "sector_theme", 10),
+        ("Sector strength", "sector_theme", 5),
         ("Technical structure", "tech", 20),
         ("Volume confirm", "vol", 15),
         ("Risk / Reward", "rr", 10),
-        ("Relative strength", "rs", 5),
-        ("Psychology · clean", "psych", 5),
+        ("Signal conviction", "signal", 15),
+        ("Relative strength", "rs", 3),
+        ("Psychology · clean", "psych", 2),
     ]
 
     for r in rows:
         comps = []
         for label, key, max_v in component_specs:
-            score = r.get(key, 0)
+            score = r.get(key) or 0  # coerce None (pre-signal_alignment rows) → 0
             color = "green" if (score / max_v) >= 0.7 else "amber" if (score / max_v) >= 0.5 else "red"
             comps.append({"label": label, "score": score, "max": max_v, "color": color})
 

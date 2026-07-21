@@ -342,9 +342,10 @@ def _persist_trade_score(
         annotated_trail["signal_bias"] = {
             "direction": signal_aggregate.get("bias_direction"),
             "confidence": signal_aggregate.get("bias_confidence"),
-            "alignment_score": signal_aggregate.get("alignment_score"),
+            "alignment_score": signal_aggregate.get("alignment_score"),  # raw 0..10
             "n_signals": signal_aggregate.get("n_signals"),
             "dominant_catalyst": signal_aggregate.get("dominant_catalyst"),
+            "weighted_points": score.signal_alignment_score,  # 0..15 into the total
         }
 
     conn.execute(
@@ -379,7 +380,10 @@ def _persist_trade_score(
             score.position_size_tier,
             None,  # feature_vector_json — TODO once feature_vector helper persisted
             json.dumps(annotated_trail, default=str),
-            signal_aggregate.get("alignment_score") if signal_aggregate else None,
+            # Weighted 0..15 signal_alignment contribution (matches the other
+            # per-component columns). The raw 0..10 aggregate alignment_score
+            # remains recoverable from signal_aggregate_json below.
+            score.signal_alignment_score,
             json.dumps(signal_aggregate, default=str) if signal_aggregate else None,
         ),
     )
@@ -563,6 +567,7 @@ def run_scoring_pass(
                         relative_strength_features=rs_features,
                         liquidity_features=liquidity_payload,
                         relevant_sources=relevant_sources_payload,
+                        signal_aggregate=sig_agg or {},
                     )
                     score = compose(setup)
                     scored_count += 1

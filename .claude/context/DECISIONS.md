@@ -4,6 +4,37 @@ Append-only. Never delete entries. Most recent first.
 
 ---
 
+## 2026-07-20 — `signal_alignment` is a first-class scoring component (15 pts)
+
+**Decision:** The tracked-voice conviction aggregate
+(`signals.aggregation.aggregate_for_ticker` → net long-vs-short weight
+across KOL calls + insider filings + newsletters, recency- and
+trust-weighted) is now a 9th scoring component, `signal_alignment`,
+weighted **15/100**. Funded by trimming `macro_alignment` 20→15,
+`sector_theme_strength` 10→5, `relative_strength` 5→3,
+`psychological_execution_quality` 5→2. New `COMPONENT_WEIGHTS` still
+sums to 100 (`macro_brain/types.py`). Scorer:
+`macro_brain/agents/signal_alignment/scorer.py`, mapping
+`0.5 + 0.5·clamp(net_bias/12, −1, +1)` with an AVOID-voice penalty; the
+DB column `trade_scores.signal_alignment_score` was repurposed from the
+raw 0..10 aggregate to the weighted 0..15 contribution (raw value still
+lives in `signal_aggregate_json`).
+
+**Rationale:** The signals pipeline was fully built, wired, and
+persisted, but weighted **0** — so who's-positioning conviction, this
+project's entire premise, could not move a ranking. Making it a
+weighted component is what closes "sources → trustworthy conviction →
+score." 15pts makes it a real driver, just under macro/technical (which
+score the setup's *impersonal* quality), without letting it dominate the
+chart read. Donor split favors trimming the two near-stub components
+(psych, RS) and the *thematic* crowd signal (sector_theme) that
+signal_alignment's *ticker-specific* crowd signal partly subsumes.
+
+**Alternatives:** 0pts shadow-mode (rejected — user wanted it live);
+10pts / 20pts (rejected — 15 balances differentiator-weight vs. not
+swamping technicals); halving macro to 10 (rejected — macro stays a
+top-tier component).
+
 ## 2026-06-09 — Source accuracy = SETUP-resolution (target-before-stop), not buy-and-hold
 
 **Decision:** Per-source call accuracy is measured by `setup_win_rate` —

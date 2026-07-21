@@ -69,19 +69,28 @@ ScoreComponent = Literal[
     "risk_reward_quality",
     "relative_strength",
     "psychological_execution_quality",
+    "signal_alignment",
 ]
 
 # Authored weights per framework v1. Sums to 100. Will become learned
 # parameters per regime once outcome data accrues.
+#
+# signal_alignment added 2026-07-20: ticker-level directional conviction
+# aggregated across all tracked signals (KOL chart calls + insider
+# filings + newsletters), recency- and trust-weighted. It is this
+# project's core differentiator, funded (15pts) by trimming
+# macro_alignment 20→15, sector_theme_strength 10→5, relative_strength
+# 5→3, psychological_execution_quality 5→2. See DECISIONS 2026-07-20.
 COMPONENT_WEIGHTS: dict[ScoreComponent, int] = {
-    "macro_alignment": 20,
+    "macro_alignment": 15,
     "liquidity_alignment": 15,
-    "sector_theme_strength": 10,
+    "sector_theme_strength": 5,
     "technical_structure": 20,
     "volume_flow_confirmation": 15,
     "risk_reward_quality": 10,
-    "relative_strength": 5,
-    "psychological_execution_quality": 5,
+    "relative_strength": 3,
+    "psychological_execution_quality": 2,
+    "signal_alignment": 15,
 }
 
 
@@ -128,8 +137,9 @@ class TradeScore(BaseModel):
     technical_structure_score: int  # 0..20
     volume_flow_score: int  # 0..15
     risk_reward_score: int  # 0..10
-    relative_strength_score: int  # 0..5
-    psychology_score: int  # 0..5
+    relative_strength_score: int  # 0..3
+    psychology_score: int  # 0..2
+    signal_alignment_score: int = 0  # 0..15 — tracked-voice conviction
     raw_total_score: int  # 0..100, sum of components
     adjusted_total_score: int  # raw + regime + conservative bias adjustments
 
@@ -183,6 +193,14 @@ class SetupContext(BaseModel):
     # Shape: {"nfci_latest": float | None, "nfci_4w_change": float | None,
     #         "regime_bullish": bool, "source": str}
     liquidity_features: dict = Field(default_factory=dict)
+
+    # Aggregated tracked-signal conviction for signal_alignment scorer.
+    # Output of signals.aggregation.aggregate_for_ticker(). Shape:
+    #   {"n_signals": int, "net_bias": float, "bias_direction": str,
+    #    "bias_confidence": float, "alignment_score": int (0..10),
+    #    "long_weight": float, "short_weight": float, "avoid_count": int,
+    #    "dominant_catalyst": str | None, ...}
+    signal_aggregate: dict = Field(default_factory=dict)
 
     # User psychology checklist state (per framework §12)
     psychology_state: dict = Field(default_factory=dict)

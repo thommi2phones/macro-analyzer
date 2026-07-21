@@ -16,9 +16,10 @@ from macro_brain.types import COMPONENT_WEIGHTS, SubScore
 
 
 def test_to_weighted_int_max_value():
-    assert to_weighted_int("macro_alignment", 1.0) == 20  # full 20pt weight
+    assert to_weighted_int("macro_alignment", 1.0) == 15  # full 15pt weight
     assert to_weighted_int("liquidity_alignment", 1.0) == 15
-    assert to_weighted_int("relative_strength", 1.0) == 5
+    assert to_weighted_int("relative_strength", 1.0) == 3
+    assert to_weighted_int("signal_alignment", 1.0) == 15
 
 
 def test_to_weighted_int_zero():
@@ -26,7 +27,7 @@ def test_to_weighted_int_zero():
 
 
 def test_to_weighted_int_partial():
-    assert to_weighted_int("macro_alignment", 0.5) == 10
+    assert to_weighted_int("macro_alignment", 0.5) == 8  # round(7.5) → 8
     assert to_weighted_int("technical_structure", 0.85) == 17  # round(17.0)
 
 
@@ -35,7 +36,7 @@ def test_to_weighted_int_clamps_negative():
 
 
 def test_to_weighted_int_clamps_above_one():
-    assert to_weighted_int("macro_alignment", 1.5) == 20
+    assert to_weighted_int("macro_alignment", 1.5) == 15
 
 
 def test_compose_weighted_scores_full_set():
@@ -49,7 +50,7 @@ def test_compose_weighted_scores_full_set():
 def test_compose_weighted_scores_missing_components_zero():
     sub_scores = [SubScore(component="macro_alignment", value=1.0)]
     weighted = compose_weighted_scores(sub_scores)
-    assert weighted["macro_alignment"] == 20
+    assert weighted["macro_alignment"] == 15
     assert weighted["liquidity_alignment"] == 0
     assert weighted["psychological_execution_quality"] == 0
 
@@ -57,12 +58,12 @@ def test_compose_weighted_scores_missing_components_zero():
 def test_raw_total_sums_components():
     weighted = compose_weighted_scores(
         [
-            SubScore(component="macro_alignment", value=0.5),  # 10
+            SubScore(component="macro_alignment", value=0.5),  # round(7.5) → 8
             SubScore(component="liquidity_alignment", value=1.0),  # 15
-            SubScore(component="psychological_execution_quality", value=1.0),  # 5
+            SubScore(component="psychological_execution_quality", value=1.0),  # 2
         ]
     )
-    assert raw_total(weighted) == 30
+    assert raw_total(weighted) == 25
 
 
 def test_assign_grade_thresholds():

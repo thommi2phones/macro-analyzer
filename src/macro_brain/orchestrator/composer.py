@@ -31,6 +31,7 @@ from macro_brain.agents.regime_classifier.classifier import (
 )
 from macro_brain.agents.relative_strength.scorer import score_relative_strength
 from macro_brain.agents.sector_theme_scorer.scorer import score_sector_theme_strength
+from macro_brain.agents.signal_alignment.scorer import score_signal_alignment
 from macro_brain.agents.technical_scorer.scorer import score_technical_structure
 from macro_brain.agents.volume_analyzer.scorer import score_volume_flow_confirmation
 from macro_brain.orchestrator.feature_vector import (
@@ -182,6 +183,10 @@ def compose(setup: SetupContext) -> TradeScore:
     # Psychology — REAL heuristic
     sub_scores.append(score_psychology_execution_quality(setup))
 
+    # Signal alignment — REAL heuristic over aggregated tracked-voice
+    # conviction (KOL calls + insider filings + newsletters).
+    sub_scores.append(score_signal_alignment(setup))
+
     # Compose weighted display scores
     weighted = compose_weighted_scores(sub_scores)
     raw = raw_total(weighted)
@@ -214,6 +219,7 @@ def compose(setup: SetupContext) -> TradeScore:
         risk_reward_score=weighted["risk_reward_quality"],
         relative_strength_score=weighted["relative_strength"],
         psychology_score=weighted["psychological_execution_quality"],
+        signal_alignment_score=weighted["signal_alignment"],
         raw_total_score=raw,
         adjusted_total_score=adjusted,
         grade=grade,  # type: ignore[arg-type]

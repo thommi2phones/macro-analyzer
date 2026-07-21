@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from macro_positioning.core.models import PipelineRunRequest, PipelineRunResult, PositioningMemo, SourceOnboardingRequest, Thesis
 from macro_positioning.core.settings import settings
 from macro_positioning.api.funnel import router as funnel_router
+from macro_positioning.api.insiders_routes import router as insiders_router
 from macro_positioning.api.journal_routes import router as journal_router
 from macro_positioning.api.manual_input import router as manual_input_router
 from macro_positioning.api.rules_routes import router as rules_router
@@ -24,6 +25,19 @@ from macro_positioning.pipelines.run_pipeline import build_pipeline
 from macro_positioning.services.framework import default_credential_requirements, onboarding_template
 
 app = FastAPI(title="Macro Positioning Analyzer", version="0.1.0")
+
+# CORS — allow the local review tooling (verify.html) and the IDE preview
+# panel to call the API cross-origin during dev. No credentials are sent, so
+# a wildcard origin is safe here; the deployed instance is gated by the
+# bearer-auth middleware below regardless.
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +101,7 @@ app.include_router(funnel_router)
 app.include_router(journal_router)
 app.include_router(rules_router)
 app.include_router(trade_plan_router)
+app.include_router(insiders_router)
 
 initialize_database(settings.sqlite_path)
 repository = SQLiteRepository(settings.sqlite_path)
@@ -145,6 +160,19 @@ def _spa_index() -> _HTMLResponse:
 
 if _WEB_DIR.is_dir():
     app.mount("/web", StaticFiles(directory=_WEB_DIR, html=True), name="web")
+
+# Manual-input chart attachments live under uploads/charts/YYYY-MM/.
+# The SPA's I3 ticker drill-down renders thumbnails from these URLs.
+_UPLOADS_DIR = settings.base_dir / "uploads"
+if _UPLOADS_DIR.is_dir():
+    app.mount("/uploads", StaticFiles(directory=_UPLOADS_DIR), name="uploads")
+
+# The baseline_seed (trading_agent archive) is served under a different
+# path. Surfaces the 223 historical charts in the SPA when their rows
+# are drilled into.
+_MANUAL_ENTRY_DIR = settings.base_dir / "manual_entry"
+if _MANUAL_ENTRY_DIR.is_dir():
+    app.mount("/manual_entry", StaticFiles(directory=_MANUAL_ENTRY_DIR), name="manual_entry")
 
 
 # Convenience root → SPA. Old per-view routes (/positioning, /dev, etc)

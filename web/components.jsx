@@ -232,43 +232,204 @@ function SetupCard({ s, onOpen, active = false }) {
 }
 
 // ─── Per-source detail panel (used in /streams + /dev DrillSheets) ──
+//
+// Renders the same card format as the TrustedAuthorCard on /inbox:
+//   Name · group · parent     [trust ×]   [CATEGORY]
+//   N analyzed · date range
+//   [bias bar — bullish / neutral / bearish %]
+//   CONVICTION PICKS  →  ticker chips (color-coded by bias)
+//   TOP TICKERS · CLICK TO DRILL DOWN  →  ticker chips
+//   RECURRING SETUPS  →  setup list
+//
+// For T0 trusted KOLs we hydrate `extras` from `/api/manual/themes/trusted`.
+// For Substack / sell-side / RSS sources, the same skeleton degrades to
+// "top themes" / "channels" / "tags" so every source looks consistent.
 function SourceDetailPanel({ s }) {
-  const rows = [
-    ["ID",            s.source_id || "—"],
-    ["Author",        s.author || "—"],
-    ["Market focus",  s.market_focus || "—"],
-    ["Research style",s.research_style || "—"],
-    ["Fetch cadence", s.fetch_cadence || "—"],
-    ["Freshness SLA", s.freshness_sla_hours ? `${s.freshness_sla_hours}h` : "—"],
-    ["Channels",      (s.channels || []).join(", ") || "—"],
-    ["Onboarded",     s.onboarded_at || "—"],
-  ];
-  const attrib = s.attrib30d ?? 0;
+  const [extras, setExtras] = React.useState(null);
+  // tier is a string ("T0".."T4" | infra | self); channels are dicts
+  // ({channel_type,label,url}) — detect KOL/manual sources accordingly.
+  const _chanTypes = (s.channels || []).map(c => typeof c === "string" ? c : (c.channel_type || ""));
+  const isManualKOL =
+    s.tier === "T0" || s.tier === 0 ||
+    ["social", "manual", "chart"].includes((s.kind || "").toLowerCase()) ||
+    _chanTypes.some(c => /manual|telegram|chat/i.test(c));
+
+  // Best-effort hydration for manual KOL sources from the existing API.
+  // Match is fuzzy: registry ids/names drift from the seeded author slugs
+  // (emoji, underscores, group↔member aliasing), so normalize both sides.
+  React.useEffect(() => {
+    if (!isManualKOL || !s.source_id) return;
+    let cancelled = false;
+    const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const keys = new Set([norm(s.source_id), norm(s.name), norm(s.author)].filter(Boolean));
+    fetch(`/api/manual/themes/trusted?window_days=90`)
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (cancelled || !j) return;
+        const match = (j.authors || []).find(a => {
+          const aKeys = [norm(a.display_name), ...(String(a.author_id || "").split(":").map(norm))];
+          return aKeys.some(k => k && keys.has(k));
+        });
+        if (match) setExtras(match);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isManualKOL, s.source_id, s.name]);
+
+  // Pull derived fields, falling back to whatever the source node carries.
+  const D = window.MA_DATA || {};
+  const themesForSource = (D.streams?.themeMap || [])
+    .filter(t => (t.sources || []).includes(s.source_id || s.id))
+    .sort((a, b) => (b.mentions_by_week?.[3] || 0) - (a.mentions_by_week?.[3] || 0));
+
+  const trustX   = (extras?.trust_weight ?? s.weight ?? 0).toFixed ? (extras?.trust_weight ?? s.weight ?? 0).toFixed(1) : "—";
+  const category = extras?.category || s.research_style || "";
+  // Header context: short kind label ("Social", "Newsletter"), NOT the
+  // full market_focus array (that rendered as a run-together blob).
+  const group    = s.group || s.kind || "";
+  const parent   = s.parent_channel || "";
+  // market_focus is a list — join readably for the meta grid.
+  const focusStr = Array.isArray(s.market_focus)
+    ? s.market_focus.join(" · ")
+    : (s.market_focus || "");
+
+  // bias distribution: manual API gives bullish/neutral/bearish %; otherwise
+  // fall back to single-direction source-level signal.
+  const bias = extras?.bias_distribution || (
+    s.direction ? { [s.direction]: 1 } : null
+  );
+  const totalBias = bias ? Object.values(bias).reduce((a, b) => a + b, 0) : 0;
+  const pct = (k) => totalBias ? Math.round((bias[k] || 0) / totalBias * 100) : 0;
+
+  // Conviction picks + top tickers
+  const realPicks = (extras?.high_conviction_tickers || []).filter(hc => hc.ticker !== "UNKNOWN");
+  const realTopTickers = (extras?.top_tickers || []).filter(([t]) => t !== "UNKNOWN");
+  const topSetups = extras?.top_setups || [];
+
+  // For non-KOL sources: synthesise "themes" chips from themeMap
+  const synthChips = themesForSource.map(t => ({
+    label: t.label, count: t.mentions_by_week?.[3] || 0, bias: t.direction
+  }));
+
+  const analyzedLine = extras
+    ? `${extras.n_with_vision}/${extras.n_drops} analyzed${extras.earliest_chart && extras.latest_chart ? ` · ${extras.earliest_chart} → ${extras.latest_chart}` : ""}`
+    : (s.items7d != null ? `${s.items7d} items · last 7d` : null);
+
   return (
-    <div className="source-detail">
-      {rows.map(([label, val]) => (
-        <div key={label} className="detail-row">
-          <span className="detail-label">{label}</span>
-          <span className="detail-val mono">{val}</span>
-        </div>
-      ))}
-      <div className="detail-row">
-        <span className="detail-label">30d attribution</span>
-        <span className={`detail-val mono ${attrib >= 0 ? "pos" : "neg"}`}>
-          {attrib >= 0 ? "+" : ""}${(attrib / 1000).toFixed(2)}k
-        </span>
+    <div className="ts-card source-detail-card">
+      <div className="ts-card-head">
+        <strong>{s.name || s.author}</strong>
+        {group && <span className="dim"> · {group}</span>}
+        {parent && <span className="dim"> · {parent}</span>}
+        <span className="ts-trust mono">{trustX}x</span>
+        {category && <span className="ts-cat">{category.replace(/_/g, " ")}</span>}
       </div>
-      {(s.tags || []).length > 0 && (
-        <div className="detail-row">
-          <span className="detail-label">Tags</span>
-          <span className="detail-val">
-            {(s.tags || []).map(t => <span key={t} className="tag-chip">{t}</span>)}
-          </span>
+
+      {analyzedLine && (
+        <div className="ts-card-meta dim mono">{analyzedLine}</div>
+      )}
+
+      {totalBias > 0 && (
+        <div className="ts-bias-bar"
+          title={`bullish ${pct("bullish")}% · neutral ${pct("neutral")}% · bearish ${pct("bearish")}%`}>
+          <div className="ts-bias-seg ts-bias-bull" style={{ width: `${pct("bullish")}%` }} />
+          <div className="ts-bias-seg ts-bias-neut" style={{ width: `${pct("neutral")}%` }} />
+          <div className="ts-bias-seg ts-bias-bear" style={{ width: `${pct("bearish")}%` }} />
         </div>
       )}
+
+      {realPicks.length > 0 ? (
+        <div className="ts-section">
+          <div className="ts-section-title">Conviction picks</div>
+          <div className="ts-chips">
+            {realPicks.slice(0, 10).map(hc => (
+              <span key={hc.ticker} className={`ts-chip ts-chip-${hc.bias}`}>
+                <strong>{hc.ticker}</strong>
+                <span className="dim mono"> ×{hc.mentions}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : synthChips.length > 0 && (
+        <div className="ts-section">
+          <div className="ts-section-title">Top themes</div>
+          <div className="ts-chips">
+            {synthChips.slice(0, 8).map(c => (
+              <span key={c.label} className={`ts-chip ts-chip-${c.bias}`}>
+                <strong>{c.label}</strong>
+                <span className="dim mono"> ×{c.count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {realTopTickers.length > 0 && (
+        <div className="ts-section">
+          <div className="ts-section-title">Top tickers · click to drill down</div>
+          <div className="ts-chips">
+            {realTopTickers.map(([t, c]) => (
+              <span key={t} className="ts-chip ts-chip-neutral">
+                <strong>{t}</strong><span className="dim mono"> ×{c}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {topSetups.length > 0 && (
+        <div className="ts-section">
+          <div className="ts-section-title">Recurring setups</div>
+          <ul className="ts-setup-list">
+            {topSetups.slice(0, 5).map(([setup, c]) => (
+              <li key={setup}><span className="dim mono">×{c}</span> {setup}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Source-metadata footer always shown, so non-KOL sources still
+          surface the channel / fetch / onboarded info. */}
+      <div className="ts-section ts-meta-grid">
+        <div className="ts-meta-cell">
+          <div className="ts-meta-lbl mono">CHANNELS</div>
+          <div className="ts-meta-val">
+            {(s.channels || []).length
+              ? s.channels.map(c => typeof c === "string" ? c : (c.channel_type || c.label || "?")).join(" · ")
+              : "—"}
+          </div>
+        </div>
+        <div className="ts-meta-cell">
+          <div className="ts-meta-lbl mono">MARKET FOCUS</div>
+          <div className="ts-meta-val">{focusStr || "—"}</div>
+        </div>
+        <div className="ts-meta-cell">
+          <div className="ts-meta-lbl mono">FETCH</div>
+          <div className="ts-meta-val">{s.fetch_cadence || "—"}</div>
+        </div>
+        <div className="ts-meta-cell">
+          <div className="ts-meta-lbl mono">FRESHNESS SLA</div>
+          <div className="ts-meta-val">{s.freshness_sla_hours ? `${s.freshness_sla_hours}h` : "—"}</div>
+        </div>
+        <div className="ts-meta-cell">
+          <div className="ts-meta-lbl mono">ONBOARDED</div>
+          <div className="ts-meta-val">{s.onboarded_at || "—"}</div>
+        </div>
+        <div className="ts-meta-cell">
+          <div className="ts-meta-lbl mono">30D ATTRIBUTION</div>
+          <div className={`ts-meta-val mono ${(s.attrib30d || 0) >= 0 ? "pos" : "neg"}`}>
+            {(s.attrib30d || 0) >= 0 ? "+" : ""}${((s.attrib30d || 0) / 1000).toFixed(2)}k
+          </div>
+        </div>
+        <div className="ts-meta-cell">
+          <div className="ts-meta-lbl mono">FRESHNESS</div>
+          <div className="ts-meta-val">{s.freshness || "—"}</div>
+        </div>
+      </div>
+
       {s.latestTitle && (
-        <div className="detail-section">
-          <div className="detail-section-head">Latest item</div>
+        <div className="ts-section">
+          <div className="ts-section-title">Latest item</div>
           <div className="detail-title">{s.latestTitle}</div>
           {s.latestSnippet && <p className="detail-snippet muted small">{s.latestSnippet}</p>}
         </div>

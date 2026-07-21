@@ -44,7 +44,7 @@ import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable, Optional
 
 from pydantic import BaseModel, Field
 
@@ -153,6 +153,33 @@ _DOLLAR_TICKER = re.compile(r"\$([A-Z][A-Z0-9.\-]{0,5})\b")
 # allow-list to filter.
 _BARE_TICKER = re.compile(r"\b([A-Z]{1,5})\b")
 
+# Chain-tag pattern — memecoin/altcoin posts on Telegram routinely label
+# the chain in parens: "TripleT (SOL)", "Worldcup (SOL)", "PEPE (ETH)".
+# These are NOT mentions of SOL/ETH — they're saying which chain the
+# named asset lives on. Strip the (CHAIN) parenthetical before ticker
+# extraction so the chain symbol only counts when it's the actual
+# subject of the post (other prose like "SOL @ $68" still hits).
+# Trigger: `<word>(CHAIN)` where <word> starts with a letter (the asset
+# name) — protects against false positives like "(SOL)" appearing alone
+# in genuine SOL commentary.
+_CHAIN_TAGS = ("SOL", "ETH", "BSC", "BNB", "BASE", "TRX", "AVAX", "ARB",
+               "MATIC", "POL", "TON", "SUI", "APT", "NEAR", "ATOM",
+               "OP", "BLAST", "BERA", "HYPE", "INJ")
+_CHAIN_TAG_RE = re.compile(
+    r"\b([A-Za-z][A-Za-z0-9]{0,19})\s*\((" + "|".join(_CHAIN_TAGS) + r")\)",
+)
+
+
+def _strip_chain_tags(text: str) -> str:
+    """Remove `<asset>(CHAIN)` chain-marker parentheticals.
+
+    Keeps the asset name (it's not a ticker itself, so it won't pollute
+    extraction; if it ever IS allow-listed, the bare-ticker pass still
+    catches it elsewhere in the text). Drops the `(CHAIN)` so the chain
+    symbol doesn't get falsely counted as a trade mention.
+    """
+    return _CHAIN_TAG_RE.sub(r"\1", text)
+
 
 def extract_tickers_from_text(text: str) -> set[str]:
     """Return the set of allow-listed tickers mentioned in `text`.
@@ -162,6 +189,7 @@ def extract_tickers_from_text(text: str) -> set[str]:
     """
     if not text:
         return set()
+    text = _strip_chain_tags(text)
     allow = get_allowlist()
     found: set[str] = set()
 
@@ -241,6 +269,37 @@ def _source_freshness_lookup() -> dict[str, float | None]:
     return out
 
 
+def insider_source_weight(source_id: str) -> float:
+    """Per-source mention-weight multiplier for the insiders channels.
+
+    Tunable conviction-by-source applied on top of recency × freshness.
+    Defaults match the conviction tiers we ship in
+    `insiders/ingest.py::CONVICTION_DEFAULTS` — a 13D filing should move
+    a theme more than a random news article.
+
+    Keyed on `source_id` prefix (the manual processor writes
+    `manual:{channel-slug}:{display-slug}`).
+    """
+    if not source_id or not source_id.startswith("manual:"):
+        return 1.0
+    # The author-channel slug sits after `manual:` and before `:`.
+    body = source_id[len("manual:"):]
+    channel = body.split(":", 1)[0] if ":" in body else body
+    if channel == "large-holder":
+        return 2.0   # 13D = strongest tape signal
+    if channel == "corp-insider":
+        return 1.7   # Form 4 — fresh and high signal
+    if channel == "gov-insider":
+        return 1.5   # House/Senate PTRs — 45d lag but strong historical
+    if channel == "fed-spend":
+        return 0.8   # macro/sector tilt; downweight as ticker signal
+    if channel == "lobbying":
+        return 0.6   # weakest direct ticker signal
+    if channel == "social":
+        return 0.5   # retail surge — dampened so it doesn't flood themes
+    return 1.0
+
+
 def count_mentions(
     docs: Iterable[dict],
     *,
@@ -248,6 +307,7 @@ def count_mentions(
     now: datetime | None = None,
     half_life_days: float = 30.0,
     apply_source_freshness: bool = True,
+    source_weight_fn: Optional[Callable[[str], float]] = None,
 ) -> WindowMentions:
     """Count distinct tickers across a doc set, filtered to docs published
     within the last `window_days`. Time-weighted.
@@ -277,6 +337,7 @@ def count_mentions(
     current = now or datetime.now(UTC)
     cutoff = current - timedelta(days=window_days)
     src_slas = _source_freshness_lookup() if apply_source_freshness else {}
+    weight_fn = source_weight_fn or insider_source_weight
 
     # ticker -> { docs: int, weighted: float, sources: set, most_recent_at: datetime }
     agg: dict[str, dict] = defaultdict(lambda: {"docs": 0, "weighted": 0.0, "sources": set(), "most_recent_at": None})
@@ -310,7 +371,11 @@ def count_mentions(
             sla = src_slas.get(source_id)
             if sla:
                 src_weight = freshness_score(published, sla, now=current)
-        weight = recency * src_weight
+        # Insider-source conviction multiplier on top of recency × freshness.
+        # Default `insider_source_weight` returns 1.0 for non-insider rows
+        # so behavior is unchanged for everything outside the manual pipeline.
+        insider_weight = weight_fn(source_id) if weight_fn else 1.0
+        weight = recency * src_weight * insider_weight
 
         for t in tickers:
             entry = agg[t]

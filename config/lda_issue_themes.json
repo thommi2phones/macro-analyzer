@@ -1,0 +1,26 @@
+{
+  "_comment": "Map LDA general_issue_code_display values -> our asset_themes keys. Multiple themes per issue are allowed. Issues not listed contribute nothing to themes (they're macro/social signals without a clean ticker bucket). Update freely; the scoring runner reads this each pass.",
+  "_themes_available": ["uranium", "precious_metals", "crypto", "technology_ai", "energy", "defense", "agriculture", "cash"],
+  "mapping": {
+    "Energy/Nuclear":                              ["uranium", "energy"],
+    "Energy & Nuclear":                            ["uranium", "energy"],
+    "Energy":                                      ["energy"],
+    "Defense":                                     ["defense"],
+    "Aerospace":                                   ["defense"],
+    "Homeland Security":                           ["defense"],
+    "Science/Technology":                          ["technology_ai"],
+    "Computer Industry":                           ["technology_ai"],
+    "Communications/Broadcasting/Radio/TV":        ["technology_ai"],
+    "Telecommunications":                          ["technology_ai"],
+    "Agriculture":                                 ["agriculture"],
+    "Food Industry (safety, labeling, etc.)":      ["agriculture"],
+    "Financial Institutions/Investments/Securities": ["crypto", "cash"],
+    "Banking":                                     ["cash"],
+    "Manufacturing":                               ["defense", "energy"],
+    "Trade (domestic/foreign)":                    ["agriculture", "energy"],
+    "Tariff (miscellaneous tariff bills)":         ["agriculture", "defense"],
+    "Mining/Natural Mineral Resources":            ["precious_metals", "uranium"],
+    "Marine/Maritime/Boating/Fisheries":           ["energy"]
+  },
+  "weight_per_filing": 1.0
+}

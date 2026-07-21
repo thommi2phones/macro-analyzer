@@ -75,7 +75,17 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
       {/* ── Macro indicator tiles ────────────────────────── */}
       {D.regime.indicators && <MacroIndicatorStrip ind={D.regime.indicators} />}
 
+      {/* ── Data-freshness strip ─────────────────────────── */}
+      {D.dataHealth && D.dataHealth.sources && D.dataHealth.sources.length > 0 && (
+        <DataFreshnessStrip dh={D.dataHealth} />
+      )}
+
       {/* KPI strip rendered by app shell — single source of truth */}
+
+      {/* ── Live signals (direct from extractors, last 72h) ─ */}
+      {Array.isArray(D.liveSignals) && D.liveSignals.length > 0 && (
+        <LiveSignalsPanel signals={D.liveSignals} />
+      )}
 
       {/* ── Hero signals ────────────────────────────────── */}
       <section className="block">
@@ -472,4 +482,142 @@ function TradeLogPanel({ onSubmit }) {
   );
 }
 
-Object.assign(window, { Positioning, RegimeTape });
+// ── Data freshness strip ────────────────────────────────────────────────
+// One chip per input/output source showing green/yellow/red based on
+// how long since the last update. Lets the operator spot a stalled
+// pipeline at a glance — no more silent-zero dashboards.
+function DataFreshnessStrip({ dh }) {
+  const sources = dh.sources || [];
+  function fmtAge(min) {
+    if (min == null) return "—";
+    if (min < 60) return `${Math.round(min)}m`;
+    if (min < 24 * 60) return `${Math.round(min / 60)}h`;
+    return `${Math.round(min / (60 * 24))}d`;
+  }
+  const colorFor = {
+    green: { bg: "rgba(60,160,80,0.15)", fg: "#7dd87d", dot: "#4caf50" },
+    yellow: { bg: "rgba(200,160,40,0.18)", fg: "#e0c060", dot: "#e0a020" },
+    red: { bg: "rgba(200,80,80,0.18)", fg: "#e07070", dot: "#cc3030" },
+  };
+  return (
+    <div className="data-freshness-strip" style={{
+      display: "flex", flexWrap: "wrap", gap: 8,
+      padding: "8px 14px", marginBottom: 12,
+      fontSize: 11, fontFamily: "monospace",
+      borderTop: "1px solid #222", borderBottom: "1px solid #222",
+    }}>
+      <span style={{ color: "#888", marginRight: 8 }}>SOURCES ·</span>
+      {sources.map(s => {
+        const c = colorFor[s.status] || colorFor.red;
+        return (
+          <span key={s.key} title={s.last_ts || "never"}
+                style={{
+                  background: c.bg, color: c.fg,
+                  padding: "2px 8px", borderRadius: 3,
+                  display: "inline-flex", alignItems: "center", gap: 5,
+                }}>
+            <span style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: c.dot, display: "inline-block",
+            }} />
+            {s.label}
+            <span style={{ opacity: 0.7 }}>
+              · {fmtAge(s.minutes_since)}
+              {s.docs_today > 0 ? ` · ${s.docs_today} today` : ""}
+            </span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Live signals panel ──────────────────────────────────────────────────
+// Reads directly from the signals table — visible BEFORE a scoring pass
+// rolls them into trade_scores. So the positioning desk surfaces real
+// extracted intelligence within seconds of ingestion.
+function LiveSignalsPanel({ signals }) {
+  const sideColor = {
+    LONG: "#7dd87d", ADD: "#7dd87d",
+    SHORT: "#e07070", HEDGE: "#e07070",
+    EXIT: "#e0a020", TRIM: "#e0a020",
+    WATCH: "#a0a0a0", AVOID: "#888",
+  };
+  function fmtAge(iso) {
+    if (!iso) return "—";
+    try {
+      const d = new Date(iso);
+      const m = (Date.now() - d.getTime()) / 60000;
+      if (m < 60) return `${Math.round(m)}m`;
+      if (m < 24 * 60) return `${Math.round(m / 60)}h`;
+      return `${Math.round(m / (60 * 24))}d`;
+    } catch (e) { return "—"; }
+  }
+  return (
+    <section className="block">
+      <header className="block-head">
+        <div className="block-title">
+          <span className="block-num mono">01a</span>
+          <span>Live signals</span>
+          <span className="block-sub">
+            top {signals.length} extracted in the last 72h ·
+            direct from manual / insider / vision / LLM extractors
+          </span>
+        </div>
+      </header>
+      <div className="live-signals-grid" style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+        gap: 10,
+      }}>
+        {signals.map(s => (
+          <div key={s.signal_id} className="live-signal-card" style={{
+            border: "1px solid #2a2a2a",
+            borderLeft: `3px solid ${sideColor[s.side] || "#666"}`,
+            background: "#101010",
+            padding: "10px 12px",
+            fontSize: 12,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between",
+                          alignItems: "baseline", marginBottom: 4 }}>
+              <span style={{ fontWeight: 600, fontSize: 14, color: "#e8e8e8" }}>
+                {s.ticker}
+              </span>
+              <span style={{ color: sideColor[s.side] || "#aaa",
+                             fontFamily: "monospace", fontSize: 11 }}>
+                {s.side} · conv {s.conviction != null ? s.conviction.toFixed(1) : "—"}
+              </span>
+            </div>
+            <div style={{ color: "#888", fontSize: 10, fontFamily: "monospace",
+                          marginBottom: 6 }}>
+              {[
+                s.extractor_name,
+                s.source_channel || s.source_slug,
+                s.horizon,
+                s.catalyst_type,
+                fmtAge(s.extracted_at) + " ago",
+              ].filter(Boolean).join(" · ")}
+            </div>
+            {s.thesis_summary && (
+              <div style={{ color: "#bbb", fontSize: 11,
+                            lineHeight: 1.4, marginBottom: 4 }}>
+                {s.thesis_summary}
+              </div>
+            )}
+            {(s.stop_loss != null || s.target_1 != null) && (
+              <div style={{ color: "#888", fontSize: 10,
+                            fontFamily: "monospace" }}>
+                {s.stop_loss != null && <>stop {s.stop_loss}</>}
+                {s.stop_loss != null && s.target_1 != null && " · "}
+                {s.target_1 != null && <>tgt {s.target_1}</>}
+                {s.target_2 != null && <> / {s.target_2}</>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+Object.assign(window, { Positioning, RegimeTape, DataFreshnessStrip, LiveSignalsPanel });

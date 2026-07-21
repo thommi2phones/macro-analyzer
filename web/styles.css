@@ -1198,6 +1198,29 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
   background: rgba(255,255,255,0.04);
   border-radius: 3px;
 }
+/* Backtested call-accuracy badge on a trusted-source card */
+.ts-accuracy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+}
+.ts-acc-label {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim, #8a8a8a);
+}
+.ts-acc-win, .ts-acc-ret {
+  font-variant-numeric: tabular-nums;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.05);
+  color: var(--fg, #ddd);
+}
+.ts-acc-win.good, .ts-acc-ret.good { color: #4caf78; background: rgba(76,175,120,0.12); }
+.ts-acc-win.bad, .ts-acc-ret.bad { color: #d4736b; background: rgba(212,115,107,0.12); }
 .ts-bias-bar {
   display: flex;
   height: 6px;
@@ -1285,6 +1308,15 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
   background: rgba(255,255,255,0.06);
   color: var(--dim, #8a8a8a);
   letter-spacing: 0.04em;
+}
+
+/* Pattern-strong badge — diamond appears on chips whose underlying
+   chart structure is in the top tier (cup-and-handle, breakouts, wave 5). */
+.ts-pattern-badge {
+  font-size: 10px;
+  margin-left: 4px;
+  color: var(--gold, #c9a14a);
+  font-weight: 700;
 }
 .ts-conv-legend {
   font-size: 10px;
@@ -2787,3 +2819,86 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 .zoom-scale { min-width: 38px; text-align: center; }
 .tm-svg, .sg-svg { user-select: none; }
 .tm-svg:active, .sg-svg:active { cursor: grabbing !important; }
+
+/* ============== Sources — unified tier-grouped roster ============== */
+.sources-view { display: flex; flex-direction: column; gap: 14px; padding: 16px 24px; }
+
+/* Tier filter pills */
+.src-tier-filter-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.src-tier-pill.tier-t0.on { background: var(--green); color: var(--bg-0, #14160f); border-color: var(--green); }
+.src-tier-pill.tier-t1.on { background: var(--gold); color: var(--bg-0, #14160f); border-color: var(--gold); }
+.src-tier-pill.tier-t2.on { background: var(--amber); color: var(--bg-0, #14160f); border-color: var(--amber); }
+.src-tier-pill.tier-t3.on,
+.src-tier-pill.tier-t4.on { background: var(--text-mute-2); color: var(--bg-0, #14160f); border-color: var(--text-mute-2); }
+.src-tier-pill.tier-infra.on,
+.src-tier-pill.tier-self.on { background: var(--text-mute); color: var(--bg-0, #14160f); border-color: var(--text-mute); }
+
+/* Tier section */
+.src-tier-section { display: flex; flex-direction: column; gap: 10px; }
+.src-tier-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 2px; border-bottom: 1px solid var(--line);
+}
+.src-tier-blurb { flex: 1; }
+.src-tier-count { letter-spacing: 0.06em; }
+
+/* Tier badge */
+.src-tier-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 30px; padding: 2px 7px; border-radius: 3px;
+  font-family: var(--mono, monospace); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; border: 1px solid transparent;
+}
+.src-tier-badge.lg { font-size: 12px; min-width: 40px; padding: 3px 9px; }
+.src-tier-badge.tier-t0 { background: rgba(111,179,122,0.18); color: var(--green); border-color: var(--green-soft); }
+.src-tier-badge.tier-t1 { background: rgba(214,177,90,0.18); color: var(--gold); border-color: var(--gold-soft); }
+.src-tier-badge.tier-t2 { background: rgba(214,160,74,0.16); color: var(--amber); border-color: var(--amber); }
+.src-tier-badge.tier-t3,
+.src-tier-badge.tier-t4 { background: rgba(128,122,104,0.16); color: var(--text-mute); border-color: var(--text-mute-2); }
+.src-tier-badge.tier-infra,
+.src-tier-badge.tier-self { background: rgba(182,176,156,0.12); color: var(--text-mute); border-color: var(--text-mute-3); }
+.src-tier-badge.tier-none { background: var(--bg-card-2); color: var(--text-mute-2); border-color: var(--line-2); }
+
+/* Card grid */
+.src-card-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.src-card {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 12px; background: var(--bg-card); border: 1px solid var(--line);
+  border-radius: 4px; cursor: pointer; transition: border-color 120ms, transform 120ms;
+}
+.src-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.src-card-top { display: flex; align-items: center; gap: 8px; }
+.src-card-name { flex: 1; font-size: 13px; color: var(--text); font-weight: 500; }
+.src-card-drill { font-size: 12px; }
+.src-card-kind { text-transform: capitalize; }
+.src-card-stats { display: flex; gap: 12px; }
+.src-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+
+@media (max-width: 640px) {
+  .sources-view { padding: 12px 14px; }
+  .src-card-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Sources: group clustering within a tier ── */
+.src-group-cluster { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.src-group-cluster.is-group {
+  padding: 8px 10px; border: 1px solid var(--line); border-left: 2px solid var(--accent);
+  border-radius: 4px; background: rgba(255,255,255,0.012);
+}
+.src-group-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text); font-weight: 500;
+}
+.src-group-tag {
+  font-size: 9px; letter-spacing: 0.1em; padding: 1px 6px; border-radius: 2px;
+  background: rgba(214,177,90,0.16); color: var(--gold); border: 1px solid var(--gold-soft);
+}
+.src-group-indep { font-size: 10px; letter-spacing: 0.12em; }
+.src-group-count { font-size: 11px; }
+/* Group-head card gets a subtle gold edge; member cards a left rail. */
+.src-card-grouphead { border-color: var(--gold-soft); }
+.src-card-grouphead .src-card-grouptag { color: var(--gold); font-size: 11px; }
+.src-card-member { border-left: 2px solid var(--line-2); }

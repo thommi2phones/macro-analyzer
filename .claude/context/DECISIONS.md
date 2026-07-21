@@ -4,6 +4,182 @@ Append-only. Never delete entries. Most recent first.
 
 ---
 
+## 2026-06-09 — Source accuracy = SETUP-resolution (target-before-stop), not buy-and-hold
+
+**Decision:** Per-source call accuracy is measured by `setup_win_rate` —
+direction-aware "did price hit the take-profit before the stop within a
+timeframe horizon" — NOT by `dir_win` (fixed-horizon forward return). The
+backtester (`learning/call_accuracy.py`) only scores actionable
+directional_long/short calls (excludes no_trade/not_a_chart/retrospective/
+bidirectional) on the Coinbase-tradeable universe. Still TODO to fully trust
+the numbers: winsorize r_multiple outliers, min-sample gate, ticker validation,
+and a market-relative ALPHA measure (call return − BTC) to strip beta.
+
+**Rationale:** The full-corpus backtest showed `dir_win` dominated by market
+beta — crypto trended down over the window, so every source scored <50% / negative
+avg-return regardless of skill. OG Whales (12% dir win but 81% setup win) is the
+proof: their calls hit targets 81% of the time, but a dumb buy-and-hold-to-horizon
+would have lost. Setup-resolution measures whether the *specific trade* worked,
+which is what "is this source good" actually asks.
+
+**Alternatives:** buy-and-hold forward return (rejected — measures beta not skill);
+whole-corpus incl. shitcoins (rejected for scoring — untradeable, but kept for training).
+
+## 2026-06-04 — Chart-vision extraction rebuilt to be caption- + context-aware
+
+**Decision:** The vision extraction now reads the paired Telegram message
+(`caption`) alongside the chart and outputs a strict JSON schema with
+`call_type` (directional_long/short, bidirectional, retrospective, no_trade,
+not_a_chart), `trade_stage` (watching/active/completed), `bias` = CURRENT
+sentiment, plus nut-box/Elliott/dominance rules. Validated to 91% primary-field
+row accuracy on 173 hand-verified charts and locked. Prompt in
+`config/manual_chart_framework.md`; domain rules in memory (feedback_trade_call_types,
+feedback_multistage_trades, reference_kol_slang).
+
+**Rationale:** The original image-only extraction tagged ~everything "bullish
+directional_long" — it ignored the message (which states the actual call:
+direction, target, whether it already played out, conditional vs triggered),
+and had no concept of bidirectional/retrospective/not-a-chart or trade lifecycle.
+That made conviction/themes/accuracy untrustworthy. A manual verify-loop
+(web/verify.html) surfaced each failure class; each became a prompt rule.
+
+**Alternatives:** keep image-only (rejected — flying blind); per-image analysis
+then merge (kept for albums, but caption now passed to every call); chase
+trade_stage to 90%+ (rejected — inherently fuzzy even by hand; accepted as
+secondary at 88%).
+
+## 2026-06-04 — Extract the FULL corpus (cost not a constraint); training keeps shitcoins
+
+**Decision:** Re-drain ALL ~6.3k charts with the locked prompt (not just the
+tradeable subset), because: (a) accuracy backtesting scores RESOLVED trades, so
+older history is the most valuable; (b) the full set 5×'s the weak-label
+training corpus, and shitcoins are valid pattern-learning examples even though
+they're excluded from scoring (untradeable on Coinbase). Scoring/conviction
+still filter to the tradeable universe; TRAINING keeps everything.
+
+**Rationale:** Earlier leaned "skip full run" when cost-sensitive, but with ~$35
+acceptable the value flips — one good pass future-proofs both analytics and the
+custom-model dataset. Run hit the credit wall at ~822; rest re-queued for resume.
+
+## 2026-06-04 — Telegram dedupe/conviction keys on distinct AUTHOR, not channel
+
+**Decision:** Cross-source conviction amplification (+0.25 per confirmation) keys
+on distinct real-world *author identity*, not on distinct channel. Implemented via
+three maps in `telegram_poller.py`:
+- `_POST_AUTHOR_ALIASES` — forward `post_author` signature → seeded author
+  (BigNuts/MadDog31/joejoe55 → Feather Hands family authors). Resolves Ari Gold's
+  mass-relayed DM content to its true author.
+- `_AUTHOR_IDENTITY` — collapses the Feather Hands crew + Feather Hands Trading
+  channel + Market Traders groups into one `feather-hands-family` canonical identity.
+- `_RELAY_AUTHOR_IDS = {ari-gold:ari-gold}` — pure relays never count as a
+  confirming voice.
+`_annotate_duplicate()` on a byte (sha256) match: same identity → `repost_count`;
+relay → `relayed_count`; genuinely different author → `also_called_by` (the +0.25 driver).
+
+**Rationale:** BigNuts broadcasts the same chart across Feather Hands, Market Traders,
+and via Ari's relay. Channel-based crossover counted these as 3 independent votes,
+massively inflating one source. User directive: "only discredit dupes... when cross
+posted dedupe and rate with perhaps a .25 increase." Author identity is the only key
+that distinguishes genuine independent confirmation (OG Whales sister-group landing on
+the same setup) from one person echoing themselves. Verified: 85 raw → 11 genuine
+confirmations (all OG Whales ↔ Big_Nuts, which the user explicitly wants to count).
+
+**Alternatives:** (a) channel-based `also_seen_in` (original impl — rejected, inflates
+BigNuts). (b) Register Market Traders monthly groups as tracked channels (rejected —
+rolling monthly instances, and still wouldn't fix the family-identity problem).
+(c) OCR the TradingView watermark to attribute joejoe55 separately (deferred — BigNuts
+post_author granularity is the practical ceiling from TG metadata).
+
+## 2026-06-04 — Telegram poller is read-only by construction (import-time guard)
+
+**Decision:** `telegram_poller._enforce_read_only()` runs at import and raises if any
+send/forward/delete/edit/reply token appears in the module source (tokens built from
+split fragments so the guard doesn't trip itself).
+
+**Rationale:** User's hard constraint — "We cannot get our Telegram banned." Read-only
+MTProto calls (iter_messages, download_media, events.NewMessage) are indistinguishable
+from normal client usage; any write path is a ban/TOS risk. Belt-and-suspenders on the
+never-post promise so a future edit can't silently introduce a write.
+
+**Alternatives:** Trust code review only (rejected — too easy to regress). Telegram
+Desktop JSON export (rejected — user is not admin on these channels).
+
+## 2026-06-01 — Insiders channel: reuse the manual-input pipeline, don't fork
+
+**Decision:** The 10 free public-disclosure scrapers (House/Senate PTRs,
+SEC Form 4/13F/13D-G, USAspending, LDA, ApeWisdom, StockTwits, UW) emit
+source-agnostic `ScrapedEvent` objects, which a single `insiders.ingest.funnel()`
+rewrites into `ManualInputPayload` and pushes through `manual.processor.ingest()`.
+No new routing rules, no new mention/tag plumbing, no per-channel special-casing.
+
+**Rationale:**
+- `config/source_routing.json` already routes `manual` → all four downstream
+  agents. `pre_tagger` already auto-tags manual drops. Forking would have meant
+  re-implementing all of that.
+- Per-author leaderboard machinery already keyed on `input_authors.author_id`
+  via `documents.author_id` — every Congress member, Form-4 filer, hedge-fund
+  CIK, and lobbying registrant naturally becomes a row, no schema changes.
+- Each scraper is now ~150 LOC of source-specific parsing + a shared funnel.
+  Adding the 11th source is one new module + one line in `cli.SOURCES`.
+
+**Alternatives considered:**
+- Standalone `insiders_documents` table + parallel pipeline → would have
+  duplicated the manual-input fan-out logic and made the per-author
+  leaderboard a join across two tables.
+- Per-source FastAPI endpoints (one per scraper) → unnecessary HTTP layer
+  for code that runs in-process from the morning_run scheduler.
+
+---
+
+## 2026-06-01 — Author = disclosing principal, not the related party
+
+**Decision:** When a PTR or Form 4 discloses a position held by a spouse,
+trust, LLC, or other related party, the `input_authors` row is keyed to
+the **disclosing principal** (the Congress member, the Section-16 filer).
+The related-party linkage is preserved in `user_metadata_json` and the
+body text the mention_extractor sees.
+
+**Rationale:** Per-author hit-rate aggregation needs one row per principal.
+A Pelosi-self PTR and a Paul-Pelosi-spouse PTR are the same signal source
+from the leaderboard's POV — splitting them would dilute attribution and
+make the learning loop's per-author calibration meaningless.
+
+**Alternatives considered:**
+- One author row per actor (self, spouse, trust, ...) → fragments the
+  leaderboard and creates duplicate rows for what's really one source.
+- Drop related-party rows entirely → throws away signal explicitly
+  required by the user ("family members, close friends, things of that sort").
+
+---
+
+## 2026-06-01 — Lobbying graph layer in scope for v1 (not deferred)
+
+**Decision:** The LDA scraper writes typed edges to a new `lobbying_edges`
+table (5 edge kinds, node-namespacing via `client:` / `registrant:` /
+`lobbyist:` / `agency:` / `issue:` / `prev_role:` prefixes), backed by a
+new `/api/insiders/lobbying-graph` endpoint and a `/05 influence` SPA tab
+that renders a force-directed graph in-browser with a small Verlet-style
+layout (~250 ticks, no external lib).
+
+**Rationale:**
+- LDA filings as a table of names burys the signal; the graph is the
+  answer to the user's actual question ("where their funds are going").
+- The data shape (typed edges with node-namespacing) is non-trivial
+  enough that retrofitting later costs more than building now.
+- In-browser SVG force layout keeps the SPA's all-CDN dependency story
+  intact (no `react-force-graph-2d` bundled, no plotly).
+- Sankey was scoped out; the force-directed view + side panel covers the
+  user's intent at lower complexity.
+
+**Alternatives considered:**
+- `react-force-graph-2d` from CDN → another script tag + version pinning
+  pain; the home-grown Verlet relaxation is ~50 LOC and fast enough at
+  the per-quarter LDA scale.
+- Defer the graph; ship the LDA scraper as just-another-channel → plan
+  explicitly called this out as the high-leverage piece; would have made
+  the source feel "shipped but unusable".
+
+
 ## 2026-05-09 — manual_entry/baseline_seed/ as the seed corpus location; vendor/ is source-only
 
 **Decision:** The trading_agent's 392 chart screenshots (the foundational

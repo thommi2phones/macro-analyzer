@@ -42,6 +42,11 @@ class PodcastSource:
     priority: str = "secondary"
     tags: list[str] = field(default_factory=list)
     notes: str = ""
+    # Optional `input_authors.author_id` this show maps to. Set for shows that
+    # are seeded macro-sentiment authors so their episodes attribute on the
+    # per-author leaderboard + source graph (not just by source_id). Slug
+    # convention: ``{channel-slug}:{display-slug}`` — see manual/authors.py.
+    author_id: str | None = None
 
 
 # ─── Configured podcasts ───────────────────────────────────────────────────
@@ -57,6 +62,7 @@ PODCAST_SOURCES: list[PodcastSource] = [
         priority="core",
         tags=["macro", "rates", "podcast"],
         notes="User favorite — full transcription enabled.",
+        author_id="forward-guidance:forward-guidance",
     ),
     PodcastSource(
         source_id="wolf_of_all_streets",
@@ -66,6 +72,7 @@ PODCAST_SOURCES: list[PodcastSource] = [
         market_focus=["crypto", "macro", "equities"],
         priority="core",
         tags=["crypto", "macro", "podcast"],
+        author_id="wolf-of-all-streets:woas",
     ),
     PodcastSource(
         source_id="real_vision_journeyman",
@@ -257,12 +264,19 @@ def parse_podcast_feed(
     return docs
 
 
+def _author_id_for(source_id: str) -> str | None:
+    """Resolve a configured show's `input_authors` slug, if any."""
+    src = next((p for p in PODCAST_SOURCES if p.source_id == source_id), None)
+    return src.author_id if src else None
+
+
 def _build_document(
     source_id: str,
     episode: ParsedEpisode,
     raw_text: str,
     tags: list[str],
     extra_tags: list[str] | None = None,
+    author_id: str | None = None,
 ) -> RawDocument:
     """Compose a RawDocument from a parsed episode + text + tags."""
     merged_tags = list(tags)
@@ -276,6 +290,7 @@ def _build_document(
         url=episode.url,
         published_at=episode.pub_date,
         author=None,
+        author_id=author_id if author_id is not None else _author_id_for(source_id),
         content_type="transcript",
         raw_text=raw_text,
         tags=merged_tags,

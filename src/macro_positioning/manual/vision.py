@@ -151,8 +151,16 @@ def analyze_manual_chart(
     *,
     model: Optional[str] = None,
     asset_context: str = "",
+    caption: str = "",
 ) -> dict:
     """Analyze a chart screenshot, returning TradeRecord-shaped dict.
+
+    `caption` is the trader's message text posted ALONGSIDE the chart. It
+    frequently states the actual call — direction, target, whether the move
+    already happened, or that it's conditional ("can long ON A BREAK over")
+    — context the image alone can't convey. Passed into the prompt and
+    folded into the cache key so the same image with a different caption
+    re-analyzes.
 
     Returns the raw dict (not a Pydantic instance) because callers want to
     JSON-serialize it directly into `documents.extracted_features_json`.
@@ -169,14 +177,19 @@ def analyze_manual_chart(
     image_sha256 = hashlib.sha256(raw_bytes).hexdigest()
     target_model = model or settings.vision_model
 
-    cached = _cache_lookup(image_sha256, target_model)
+    # Cache key folds in the caption — same chart, different message = a
+    # different call, so it must not return a stale image-only result.
+    cap = (caption or "").strip()
+    cache_key = (
+        hashlib.sha256(raw_bytes + b"\x00" + cap.encode("utf-8")).hexdigest()
+        if cap else image_sha256
+    )
+    cached = _cache_lookup(cache_key, target_model)
     if cached is not None:
         logger.info("vision cache hit for %s (%s)", p.name, target_model)
         return {**cached, "cache_hit": True}
 
-    if not settings.anthropic_api_key:
-        return {"error": "MPA_ANTHROPIC_API_KEY not configured"}
-
+    backend = settings.vision_backend or "cli"
     ext = p.suffix.lower().lstrip(".") or "png"
     mime_in = "image/jpeg" if ext in ("jpg", "jpeg") else "image/png"
     image_bytes, mime = _resize_if_large(raw_bytes, mime_in)
@@ -184,30 +197,62 @@ def analyze_manual_chart(
     system_prompt = _load_prompt()
     user_prompt = (
         "Analyze this chart screenshot and respond with valid JSON ONLY "
-        "(no prose, no Markdown fences). The JSON must conform to the "
-        "TradeRecord schema described above."
+        "(no prose, no Markdown fences) matching the SECTION 10 schema. "
+        "Decide `call_type` FIRST: is this a single directional call, a "
+        "BIDIRECTIONAL outlook (both long+short scenarios drawn — do NOT "
+        "collapse to one bias), a RETROSPECTIVE chart (the move already "
+        "happened — set is_forward_looking=false), or no_trade? Then fill "
+        "per-setup direction + entry/stop/take_profits/final_target. "
+        "Understanding WHAT KIND of call this is matters more than the "
+        "indicator detail."
     )
+    if cap:
+        # The paired message is the trader's OWN words about this chart —
+        # it usually states the actual call and often OVERRIDES what the
+        # chart geometry alone implies (e.g. caption says the move already
+        # happened → retrospective; "needs a break first" → conditional;
+        # "BTC vs money" musing → no_trade). Weight it heavily.
+        user_prompt += (
+            "\n\n=== TRADER'S MESSAGE POSTED WITH THIS CHART (weight heavily — "
+            "it states the actual call and overrides chart-only guesses) ===\n"
+            f"{cap[:1500]}"
+        )
     if asset_context:
         user_prompt += f"\n\nAsset context: {asset_context}"
 
     t0 = time.time()
+    text_response = None
     try:
-        result = generate_anthropic(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            model=target_model,
-            image_data=image_bytes,
-            image_mime=mime,
-            temperature=0.2,
-            max_tokens=4096,
-        )
+        if backend == "cli":
+            # Route through `claude -p` so we use the user's Claude Code
+            # subscription (no API credits burned). The CLI's Read tool
+            # accepts image paths and feeds them into the model context.
+            text_response = _generate_via_cli(
+                model=target_model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                image_path=p,
+            )
+        else:
+            if not settings.anthropic_api_key:
+                return {"error": "MPA_ANTHROPIC_API_KEY not configured (vision_backend=api)"}
+            result = generate_anthropic(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=target_model,
+                image_data=image_bytes,
+                image_mime=mime,
+                temperature=0.2,
+                max_tokens=4096,
+            )
+            text_response = result.text
     except BackendUnavailable as e:
         return {"error": str(e)}
     except Exception as e:
-        logger.exception("Claude vision call failed")
+        logger.exception("Claude vision call failed (backend=%s)", backend)
         log_brain_call(
             call_type="vision",
-            backend="anthropic", model=target_model,
+            backend=backend, model=target_model,
             input_size=len(image_bytes), output_size=0, latency_ms=0.0,
             success=False, error=str(e),
         )
@@ -216,16 +261,16 @@ def analyze_manual_chart(
     latency = (time.time() - t0) * 1000
 
     try:
-        parsed = _parse_response(result.text)
+        parsed = _parse_response(text_response or "")
     except json.JSONDecodeError as e:
-        logger.warning("vision response not JSON: %s\nraw: %s", e, result.text[:500])
+        logger.warning("vision response not JSON: %s\nraw: %s", e, (text_response or "")[:500])
         log_brain_call(
             call_type="vision",
-            backend="anthropic", model=target_model,
-            input_size=len(image_bytes), output_size=len(result.text), latency_ms=latency,
+            backend=backend, model=target_model,
+            input_size=len(image_bytes), output_size=len(text_response or ""), latency_ms=latency,
             success=False, error=f"json_decode: {e}",
         )
-        return {"error": f"non-JSON response: {e}", "raw_text": result.text[:2000]}
+        return {"error": f"non-JSON response: {e}", "raw_text": (text_response or "")[:2000]}
 
     # Validate against the canonical TradeRecord shape — drops keys Claude
     # may have hallucinated, fills defaults, normalizes direction/bias.
@@ -236,19 +281,94 @@ def analyze_manual_chart(
         logger.warning("TradeRecord validation failed, returning raw parsed: %s", e)
         out = parsed
 
+    # Claude sometimes returns a JSON array (multiple trade ideas on
+    # one chart). Wrap it so the rest of the pipeline gets a dict and
+    # the metadata fields below can be stamped on.
+    if isinstance(out, list):
+        out = {"trades": out, "multi_trade": True}
+    elif not isinstance(out, dict):
+        out = {"error": f"unexpected response type: {type(out).__name__}",
+               "raw": out}
+
     out["image_sha256"] = image_sha256
     out["analyzed_at"] = datetime.now(UTC).isoformat()
     out["vision_model"] = target_model
+    out["vision_backend"] = backend
 
     log_brain_call(
         call_type="vision",
-        backend="anthropic", model=target_model,
+        backend=backend, model=target_model,
         input_size=len(image_bytes),
-        output_size=len(result.text),
+        output_size=len(text_response or ""),
         latency_ms=latency,
         success=True,
     )
-    _cache_store(image_sha256, target_model, out, latency)
+    _cache_store(cache_key, target_model, out, latency)
+    return out
+
+
+# ── CLI subprocess backend (no API credits — uses Claude Code subscription) ──
+
+
+def _generate_via_cli(
+    *,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    image_path: Path,
+) -> str:
+    """Invoke `claude -p` with the image as a Read-tool target.
+
+    The CLI's Read tool ingests image files and feeds them to the model
+    context, so Claude sees the chart without us touching the Anthropic
+    API directly. Authentication flows through the user's logged-in
+    Claude Code session (Pro/Max subscription) — no API key required.
+
+    Returns the model's raw text response. Caller parses JSON.
+    """
+    import subprocess
+
+    cli = settings.vision_cli_path or "claude"
+    max_turns = max(2, int(settings.vision_cli_max_turns or 4))
+    timeout = max(30, int(settings.vision_cli_timeout_s or 120))
+
+    # The CLI doesn't take a system prompt arg in -p mode reliably across
+    # versions, so we fold it into the user prompt with clear delimiters.
+    full_prompt = (
+        f'You are a chart-analysis assistant. Read the image at "{image_path}" '
+        f'using the Read tool, then return ONLY a JSON object — no prose, '
+        f'no Markdown fences, no commentary before or after.\n\n'
+        f'=== analysis framework ===\n{system_prompt}\n\n'
+        f'=== request ===\n{user_prompt}'
+    )
+
+    cmd = [
+        cli, "-p",
+        "--model", model,
+        "--max-turns", str(max_turns),
+        "--output-format", "text",
+    ]
+    try:
+        proc = subprocess.run(
+            cmd, input=full_prompt,
+            capture_output=True, text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"claude CLI timeout after {timeout}s") from e
+    except FileNotFoundError as e:
+        raise RuntimeError(
+            f"claude CLI not found on PATH (looked for '{cli}'). "
+            "Set MPA_VISION_CLI_PATH or install Claude Code."
+        ) from e
+
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(f"claude CLI exit {proc.returncode}: {err[:500]}")
+
+    out = (proc.stdout or "").strip()
+    if not out:
+        raise RuntimeError(f"claude CLI returned empty stdout. stderr: {(proc.stderr or '')[:200]}")
     return out
 
 

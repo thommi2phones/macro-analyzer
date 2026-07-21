@@ -35,6 +35,7 @@ class DrainerSummary:
     processed: int = 0       # successfully analyzed
     skipped_no_image: int = 0
     failed: int = 0          # analyze returned {"error": ...}
+    transient: int = 0       # failed but TRANSIENT — left pending for retry
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -48,7 +49,8 @@ def _pending_query(document_id: Optional[str], limit: int) -> tuple[str, tuple]:
     `attachment_path` is the back-compat single-image fallback.
     """
     base = (
-        "SELECT document_id, attachment_path, attachment_paths_json, tags_json "
+        "SELECT document_id, attachment_path, attachment_paths_json, tags_json, "
+        "raw_text "
         "FROM documents "
         "WHERE json_extract(tags_json, '$.pending_vision') = 1 "
     )
@@ -57,15 +59,30 @@ def _pending_query(document_id: Optional[str], limit: int) -> tuple[str, tuple]:
     return (base + " ORDER BY ingested_at ASC LIMIT ?", (limit,))
 
 
+# Extensions Claude vision can actually process. Anything else
+# (mp4/mov/webm video, ogg/m4a/mp3 voice notes, pdf, etc.) gets
+# filtered out before we waste an API call on a guaranteed 400.
+# Telegram poller pulls all attached media types; this is the
+# downstream filter.
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+
+
+def _is_image_path(path: str) -> bool:
+    from os.path import splitext
+    return splitext(path)[1].lower() in _IMAGE_EXTS
+
+
 def _resolve_paths(attachment_path: Optional[str], paths_json: Optional[str]) -> list[str]:
     if paths_json:
         try:
             paths = json.loads(paths_json)
             if isinstance(paths, list) and paths:
-                return [str(p) for p in paths]
+                return [str(p) for p in paths if _is_image_path(str(p))]
         except json.JSONDecodeError:
             pass
-    return [attachment_path] if attachment_path else []
+    if attachment_path and _is_image_path(attachment_path):
+        return [attachment_path]
+    return []
 
 
 def _merge_results(per_image: list[dict]) -> dict:
@@ -124,18 +141,69 @@ def drain(
             _clear_pending(doc_id, error="no_attachment")
             continue
 
-        per_image = [analyze_manual_chart(p) for p in paths]
+        # Pass the paired message text as caption context — it states the
+        # actual call (direction, target, retrospective, conditional) that
+        # the chart pixels alone can't convey. Same caption for every image
+        # in an album bundle.
+        caption = (row["raw_text"] or "") if "raw_text" in row.keys() else ""
+        per_image = [analyze_manual_chart(p, caption=caption) for p in paths]
         merged = _merge_results(per_image)
 
         if "error" in merged:
             summary.failed += 1
-            _store_result(doc_id, merged, clear_pending=False)
+            # Distinguish TRANSIENT infra failures (out-of-credits, rate
+            # limit, 5xx, network) from PERMANENT ones (Claude says "not a
+            # chart", non-JSON, no_attachment). Transient → keep
+            # pending_vision=1 so a later pass retries once the condition
+            # clears; clearing it would permanently burn the doc (this is
+            # exactly how a mid-run credit exhaustion silently killed 6k
+            # charts before). Permanent → clear; re-running won't change
+            # the answer and would waste API calls. Error payload is kept
+            # either way for audit.
+            transient = _merged_is_transient(per_image)
+            if transient:
+                summary.transient += 1
+                _store_result(doc_id, merged, clear_pending=False)
+            else:
+                _store_result(doc_id, merged, clear_pending=True)
             continue
 
         _store_result(doc_id, merged, clear_pending=True)
         summary.processed += 1
 
     return summary
+
+
+# Substrings that mark an error as transient/retryable rather than a real
+# "this image isn't analyzable" verdict. Matched case-insensitively against
+# every per-image error string for a document.
+_TRANSIENT_MARKERS = (
+    "credit balance is too low",
+    "rate_limit", "rate limit", "429",
+    "overloaded", "overloaded_error",
+    "500", "502", "503", "504",
+    "internal server error", "bad gateway", "service unavailable",
+    "gateway timeout", "timeout", "timed out",
+    "connection", "connecterror", "read error",
+    "api_error", "temporarily",
+)
+
+
+def _merged_is_transient(per_image: list[dict]) -> bool:
+    """True if ANY per-image error looks transient/retryable.
+
+    Conservative: if a doc has a mix of a real not-a-chart verdict and a
+    transient failure on another image, we still retry (the transient one
+    might have masked a real chart). Better to re-run than to silently
+    drop a recoverable doc.
+    """
+    for img in per_image:
+        if not isinstance(img, dict):
+            continue
+        err = str(img.get("error", "")).lower()
+        if err and any(m in err for m in _TRANSIENT_MARKERS):
+            return True
+    return False
 
 
 def _store_result(document_id: str, result: dict, *, clear_pending: bool) -> None:

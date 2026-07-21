@@ -26,11 +26,65 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class BackendResult:
-    def __init__(self, text: str, model: str, latency_ms: float, raw: Any = None):
+    def __init__(
+        self,
+        text: str,
+        model: str,
+        latency_ms: float,
+        raw: Any = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cost_usd: float | None = None,
+    ):
         self.text = text
         self.model = model
         self.latency_ms = latency_ms
         self.raw = raw
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cost_usd = cost_usd
+
+
+# ─── Pricing table — USD per 1M tokens ──────────────────────────────────────
+# Lightweight reference; update when contracts change. None means "unknown
+# pricing" → cost_usd stays None rather than reporting wrong numbers.
+# Format: {model_substring: (input_per_1m, output_per_1m)}
+_PRICING: dict[str, tuple[float, float]] = {
+    # Gemini 2.5 family — public pay-as-you-go pricing.
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.0-flash": (0.10, 0.40),
+    # Claude — Anthropic public pricing.
+    "claude-sonnet-4": (3.00, 15.00),
+    "claude-opus-4": (15.00, 75.00),
+    "claude-haiku-4": (0.80, 4.00),
+    "claude-3-5-sonnet": (3.00, 15.00),
+    "claude-3-5-haiku": (0.80, 4.00),
+}
+
+
+def _estimate_cost(model: str, input_tokens: int | None, output_tokens: int | None) -> float | None:
+    """Best-effort cost estimate. Returns None if pricing unknown or
+    token counts missing — callers shouldn't silently report $0 when
+    the truth is "unknown."
+    """
+    if input_tokens is None and output_tokens is None:
+        return None
+    model_lc = (model or "").lower()
+    pricing = None
+    for key, p in _PRICING.items():
+        if key in model_lc:
+            pricing = p
+            break
+    if pricing is None:
+        return None
+    in_price, out_price = pricing
+    cost = 0.0
+    if input_tokens is not None:
+        cost += (input_tokens / 1_000_000.0) * in_price
+    if output_tokens is not None:
+        cost += (output_tokens / 1_000_000.0) * out_price
+    return round(cost, 6)
 
 
 class BackendUnavailable(RuntimeError):
@@ -88,8 +142,20 @@ def generate_gemini(
     latency = (time.time() - t0) * 1000
 
     text = response.text or ""
-    logger.info("Gemini %s responded in %.0fms (%d chars)", model_name, latency, len(text))
-    return BackendResult(text=text, model=model_name, latency_ms=latency, raw=response)
+    # Extract token usage if available. google-genai exposes it on
+    # response.usage_metadata (prompt_token_count / candidates_token_count).
+    in_toks = out_toks = None
+    usage = getattr(response, "usage_metadata", None)
+    if usage is not None:
+        in_toks = getattr(usage, "prompt_token_count", None)
+        out_toks = getattr(usage, "candidates_token_count", None)
+    cost = _estimate_cost(model_name, in_toks, out_toks)
+    logger.info("Gemini %s responded in %.0fms (%d chars, %s in, %s out)",
+                model_name, latency, len(text), in_toks, out_toks)
+    return BackendResult(
+        text=text, model=model_name, latency_ms=latency, raw=response,
+        input_tokens=in_toks, output_tokens=out_toks, cost_usd=cost,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +217,19 @@ def generate_anthropic(
         if hasattr(block, "text"):
             text += block.text
 
-    logger.info("Claude %s responded in %.0fms (%d chars)", model_name, latency, len(text))
-    return BackendResult(text=text, model=model_name, latency_ms=latency, raw=response)
+    # Anthropic SDK exposes usage on response.usage (input_tokens / output_tokens).
+    in_toks = out_toks = None
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        in_toks = getattr(usage, "input_tokens", None)
+        out_toks = getattr(usage, "output_tokens", None)
+    cost = _estimate_cost(model_name, in_toks, out_toks)
+    logger.info("Claude %s responded in %.0fms (%d chars, %s in, %s out)",
+                model_name, latency, len(text), in_toks, out_toks)
+    return BackendResult(
+        text=text, model=model_name, latency_ms=latency, raw=response,
+        input_tokens=in_toks, output_tokens=out_toks, cost_usd=cost,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +284,16 @@ def generate_ollama(
     data = response.json()
     text = data.get("message", {}).get("content", "")
 
-    logger.info("Ollama %s responded in %.0fms (%d chars)", model_name, latency, len(text))
-    return BackendResult(text=text, model=model_name, latency_ms=latency, raw=data)
+    # Ollama returns eval_count + prompt_eval_count when streaming=false.
+    in_toks = data.get("prompt_eval_count")
+    out_toks = data.get("eval_count")
+    logger.info("Ollama %s responded in %.0fms (%d chars, %s in, %s out)",
+                model_name, latency, len(text), in_toks, out_toks)
+    return BackendResult(
+        text=text, model=model_name, latency_ms=latency, raw=data,
+        input_tokens=in_toks, output_tokens=out_toks,
+        cost_usd=0.0,  # local model — actual cost is zero
+    )
 
 
 # ---------------------------------------------------------------------------

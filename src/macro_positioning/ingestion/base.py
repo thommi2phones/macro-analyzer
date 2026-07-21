@@ -27,6 +27,7 @@ def normalize_document(payload: RawDocument) -> NormalizedDocument:
         url=payload.url,
         published_at=payload.published_at,
         author=payload.author,
+        author_id=payload.author_id,
         content_type=payload.content_type,
         raw_text=payload.raw_text,
         cleaned_text=clean_text(payload.raw_text),

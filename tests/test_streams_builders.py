@@ -33,14 +33,34 @@ def _conn(tmp_path: Path) -> sqlite3.Connection:
     return sqlite3.connect(db)
 
 
-def _insert_document(conn, doc_id: str, source_id: str = "src_a", body: str = "Body text about something."):
+def _seed_author(conn, author_id: str):
+    """Register an author as one the user has explicitly stated, so it
+    passes the conviction allowlist (authors.SEEDED_AUTHOR_WHERE keys on
+    notes='seeded on first boot'). No-op if the row already exists."""
+    if not author_id:
+        return
+    conn.execute(
+        """INSERT INTO input_authors (author_id, display_name, channel,
+               last_seen_at, notes)
+           VALUES (?, ?, 'manual', ?, 'seeded on first boot')
+           ON CONFLICT(author_id) DO NOTHING""",
+        (author_id, author_id, NOW.isoformat()),
+    )
+
+
+def _insert_document(conn, doc_id: str, source_id: str = "src_a",
+                     body: str = "Body text about something.",
+                     author_id: str = "doomberg"):
+    # Document mentions only count toward the maps when the doc's author is
+    # a stated author — seed it so the test corpus is eligible.
+    _seed_author(conn, author_id)
     conn.execute(
         """INSERT INTO documents
            (document_id, source_id, title, published_at, content_type,
-            raw_text, cleaned_text, tags_json, ingested_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            raw_text, cleaned_text, tags_json, ingested_at, author_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (doc_id, source_id, "t", NOW.isoformat(), "manual",
-         body, body, "[]", NOW.isoformat()),
+         body, body, "[]", NOW.isoformat(), author_id),
     )
 
 
@@ -64,7 +84,8 @@ def _insert_signal(
     # The signals table has a FK to documents, but sqlite doesn't enforce
     # FKs without a PRAGMA. Still, insert a doc for realism so the synopsis
     # fallback can read cleaned_text.
-    _insert_document(conn, doc_id, source_id=source_slug, body=thesis_summary or "body")
+    _insert_document(conn, doc_id, source_id=source_slug,
+                     body=thesis_summary or "body", author_id=author_id)
     conn.execute(
         """INSERT INTO signals
            (signal_id, document_id, extracted_at, asset_ticker, asset_class,
@@ -95,10 +116,20 @@ def _insert_signal(
 
 def _insert_author(conn, author_id: str, display_name: str = None, trust: float = 1.0,
                    last_seen: datetime | None = None):
+    # notes='seeded on first boot' marks the author as explicitly stated so
+    # it passes the conviction allowlist. Upsert so a prior _seed_author /
+    # _insert_signal that auto-registered this id doesn't suppress the
+    # explicit trust_weight set here.
     conn.execute(
-        """INSERT INTO input_authors (author_id, display_name, channel, last_seen_at, trust_weight)
-           VALUES (?, ?, ?, ?, ?)""",
-        (author_id, display_name or author_id, "manual", (last_seen or NOW).isoformat(), trust),
+        """INSERT INTO input_authors
+               (author_id, display_name, channel, last_seen_at, trust_weight, notes)
+           VALUES (?, ?, 'manual', ?, ?, 'seeded on first boot')
+           ON CONFLICT(author_id) DO UPDATE SET
+               display_name=excluded.display_name,
+               last_seen_at=excluded.last_seen_at,
+               trust_weight=excluded.trust_weight,
+               notes=excluded.notes""",
+        (author_id, display_name or author_id, (last_seen or NOW).isoformat(), trust),
     )
 
 

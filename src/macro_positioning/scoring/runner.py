@@ -25,7 +25,7 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -122,13 +122,78 @@ def _build_ticker_to_themes(asset_themes_cfg: dict) -> dict[str, list[str]]:
     return out
 
 
+def _load_lda_issue_themes_cfg() -> dict:
+    """Load config/lda_issue_themes.json. Returns {} when missing so the
+    score path safely no-ops when lobbying data isn't around."""
+    path = settings.base_dir / "config" / "lda_issue_themes.json"
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return {}
+
+
+def _lda_issue_theme_signal(
+    asset_themes_cfg: dict,
+    lda_cfg: dict,
+    *,
+    window_days: int = 30,
+) -> dict[str, float]:
+    """Aggregate LDA filing_covers_issue edges into theme buckets.
+
+    Each filing that mentions an issue mapped to a theme contributes
+    `weight_per_filing` (default 1.0) to that theme. Window is bounded
+    by `lobbying_edges.period` matching the most recent quarters.
+
+    Returns {} when no LDA data exists, when the table doesn't exist,
+    or when the mapping is empty. Safe to call.
+    """
+    mapping = lda_cfg.get("mapping") or {}
+    weight = float(lda_cfg.get("weight_per_filing") or 1.0)
+    if not mapping or weight <= 0:
+        return {}
+
+    themes_available = set(asset_themes_cfg.get("themes", {}).keys())
+    out: dict[str, float] = {}
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT replace(to_node, 'issue:', '') AS issue,
+                       count(DISTINCT filing_id) AS n
+                FROM lobbying_edges
+                WHERE edge_kind = 'filing_covers_issue'
+                GROUP BY issue
+                """
+            ).fetchall()
+    except sqlite3.OperationalError:
+        # lobbying_edges table not yet created — first-boot DBs.
+        return {}
+
+    for row in rows:
+        issue = row["issue"]
+        n = int(row["n"] or 0)
+        for theme in mapping.get(issue, []):
+            if theme in themes_available:
+                out[theme] = out.get(theme, 0.0) + weight * n
+    return out
+
+
 def _build_theme_signals(
     docs: list[dict],
     asset_themes_cfg: dict,
     *,
     window_days: int = 30,
+    lda_cfg: Optional[dict] = None,
 ) -> tuple[dict[str, float], float]:
     """Aggregate weighted mentions per theme. Returns (signals, scale).
+
+    Sources of theme weight:
+      1. Ticker mentions in `docs` (insider conviction baked in via
+         `mention_extractor.insider_source_weight`).
+      2. LDA lobbying filings mapped via `config/lda_issue_themes.json`
+         (the macro/sector tilt half of the signal).
 
     `scale` = 75th percentile of theme scores so the sector_theme scorer
     can normalize. Falls back to max(scores) when only a few themes are
@@ -150,6 +215,13 @@ def _build_theme_signals(
         for tk in theme_def.get("watchlist_tickers", []) or []:
             s += weighted_by_ticker.get(tk.upper(), 0.0)
         theme_scores[theme_key] = s
+
+    # Lobbying overlay — additive contribution per filing↔theme mapping.
+    lda_cfg = lda_cfg if lda_cfg is not None else _load_lda_issue_themes_cfg()
+    for theme_key, lda_score in _lda_issue_theme_signal(
+        asset_themes_cfg, lda_cfg, window_days=window_days,
+    ).items():
+        theme_scores[theme_key] = theme_scores.get(theme_key, 0.0) + lda_score
 
     scores_sorted = sorted(theme_scores.values())
     if not scores_sorted or all(v == 0 for v in scores_sorted):
@@ -217,6 +289,7 @@ def _persist_trade_score(
     asset_ticker: str,
     asset_class: str,
     origins: list[str],
+    signal_aggregate: dict | None = None,
 ) -> None:
     """Insert one row into trade_scores. Caller wraps in a transaction.
 
@@ -263,6 +336,16 @@ def _persist_trade_score(
     # can render a "why this ticker?" pill.
     annotated_trail = dict(score.reasoning_trail or {})
     annotated_trail["watchlist_origins"] = origins
+    if signal_aggregate:
+        # Compact subset for the trail — the full aggregate goes in its
+        # own column for the dashboard / learning loop.
+        annotated_trail["signal_bias"] = {
+            "direction": signal_aggregate.get("bias_direction"),
+            "confidence": signal_aggregate.get("bias_confidence"),
+            "alignment_score": signal_aggregate.get("alignment_score"),
+            "n_signals": signal_aggregate.get("n_signals"),
+            "dominant_catalyst": signal_aggregate.get("dominant_catalyst"),
+        }
 
     conn.execute(
         """
@@ -273,8 +356,9 @@ def _persist_trade_score(
             relative_strength_score, psychology_score,
             raw_total_score, adjusted_total_score,
             grade, position_size_tier,
-            feature_vector_json, reasoning_trail_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            feature_vector_json, reasoning_trail_json,
+            signal_alignment_score, signal_aggregate_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score.score_id,
@@ -295,6 +379,8 @@ def _persist_trade_score(
             score.position_size_tier,
             None,  # feature_vector_json — TODO once feature_vector helper persisted
             json.dumps(annotated_trail, default=str),
+            signal_aggregate.get("alignment_score") if signal_aggregate else None,
+            json.dumps(signal_aggregate, default=str) if signal_aggregate else None,
         ),
     )
 
@@ -396,6 +482,17 @@ def run_scoring_pass(
             "source": "fred:NFCI" if nfci_latest is not None else "missing",
         }
 
+        # 4b. Per-ticker signal aggregation. Run once up front so the
+        # composer sees a stable snapshot and we don't pay the join cost
+        # per ticker inside the write transaction. Half-life = 14d so a
+        # signal from two weeks ago is worth half a fresh one.
+        from macro_positioning.signals.aggregation import aggregate_for_tickers
+        ticker_signal_aggregates = aggregate_for_tickers(
+            (e.ticker for e in resolved.entries),
+            since_days=90,
+            half_life_days=14.0,
+        )
+
         # 5. Score each + persist
         errors: list[dict] = []
         scored_count = 0
@@ -441,6 +538,13 @@ def run_scoring_pass(
                         "scale": theme_scale,
                     }
 
+                    sig_agg = ticker_signal_aggregates.get(entry.ticker.upper(), {})
+                    # Expose the signal aggregate to the composer via
+                    # relevant_sources — designed for this purpose.
+                    relevant_sources_payload = []
+                    if sig_agg.get("top_signals"):
+                        relevant_sources_payload = sig_agg["top_signals"]
+
                     setup = SetupContext(
                         setup_id=f"setup-{entry.ticker.lower()}-{run_id[:8]}",
                         asset_ticker=entry.ticker,
@@ -458,6 +562,7 @@ def run_scoring_pass(
                         theme_signals=theme_payload,
                         relative_strength_features=rs_features,
                         liquidity_features=liquidity_payload,
+                        relevant_sources=relevant_sources_payload,
                     )
                     score = compose(setup)
                     scored_count += 1
@@ -470,6 +575,7 @@ def run_scoring_pass(
                             asset_ticker=entry.ticker,
                             asset_class=entry.asset_class or "equity",
                             origins=entry.origins,
+                            signal_aggregate=sig_agg or None,
                         )
                         persisted_count += 1
                 except Exception as exc:

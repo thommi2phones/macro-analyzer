@@ -29,6 +29,97 @@ function _stripPrice(text) {
   return { price: null, desc: String(text) };
 }
 
+// ── Attribution card with inline reassign ──
+// Renders the document's current FROM line as a clickable chip. Click
+// → fetches the seeded author picklist → user selects → PATCH the
+// document → header refreshes. Designed for bulk-import cleanup: when
+// 90 drops land all tagged "Big_Nuts" but ~10% are actually joejoe55,
+// the user can correct them inline without leaving the analysis card.
+function ReassignableAttribution({ historyRow }) {
+  const [editing, setEditing] = useIS(false);
+  const [authors, setAuthors] = useIS([]);
+  const [saving, setSaving] = useIS(false);
+  const [author, setAuthor] = useIS(historyRow.author);
+  const [channel, setChannel] = useIS(historyRow.user_metadata?.channel || "");
+  const [parent, setParent] = useIS(historyRow.user_metadata?.parent_channel || "");
+
+  useIE(() => {
+    if (editing && authors.length === 0) {
+      fetch("/api/manual/authors").then(r => r.json()).then(rows => {
+        // Hide the synthetic archive author from the picker.
+        setAuthors(rows.filter(a => a.channel !== "archive"));
+      });
+    }
+  }, [editing]);
+
+  async function pickAuthorForReassign(a) {
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/manual/inputs/${historyRow.document_id}/author`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          display_name: a.display_name,
+          channel: a.channel,
+          channel_type: a.channel_type,
+        }),
+      });
+      if (!r.ok) {
+        alert(`Reassign failed: ${r.status}`);
+        return;
+      }
+      const data = await r.json();
+      setAuthor(data.display_name);
+      setChannel(data.channel || "");
+      setParent(data.parent_channel || "");
+      setEditing(false);
+      // Tell the parent table to refresh too so the row re-renders.
+      window.dispatchEvent(new CustomEvent("macro:author-reassigned", {
+        detail: { document_id: historyRow.document_id, author_id: data.author_id }
+      }));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="cd-pane-attribution">
+      <span className="cd-pane-lbl">FROM</span>
+      <strong>{author || "—"}</strong>
+      {channel && <span className="dim"> · {channel}</span>}
+      {parent && <span className="dim"> · {parent}</span>}
+      <button
+        className="filter-pill"
+        style={{ marginLeft: "auto", fontSize: 10, padding: "2px 8px" }}
+        onClick={() => setEditing(v => !v)}
+        title="Re-attribute this drop to a different author"
+      >
+        {editing ? "✕ cancel" : "↻ reassign"}
+      </button>
+      {editing && (
+        <div style={{ width: "100%", marginTop: 8 }}>
+          <div className="dim mono" style={{ fontSize: 10, marginBottom: 6 }}>
+            pick the actual author:
+          </div>
+          <div className="filter-pill-row">
+            {authors.map(a => (
+              <button
+                key={a.author_id}
+                className={`filter-pill ${a.display_name === author ? "on" : ""}`}
+                title={`${a.channel || "—"}${a.parent_channel ? " · " + a.parent_channel : ""}`}
+                disabled={saving}
+                onClick={() => pickAuthorForReassign(a)}
+              >
+                {a.display_name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Reconcile author voice with AI vision ──
 // Cheap rule-based "synthesis" — no LLM call. Compares the user's typed
 // blurb (and metadata side) against Claude's extracted bias/setup, surfaces
@@ -119,16 +210,7 @@ function ChartDropDetail({ historyRow, attachmentPaths = [], onJumpToAsset }) {
       {/* === AUTHOR === */}
       {tab === "author" && (
         <div className="cd-pane">
-          <div className="cd-pane-attribution">
-            <span className="cd-pane-lbl">FROM</span>
-            <strong>{historyRow.author || historyRow.author_id?.split(":").pop() || "—"}</strong>
-            {historyRow.user_metadata?.channel && (
-              <span className="dim"> · {historyRow.user_metadata.channel}</span>
-            )}
-            {historyRow.user_metadata?.parent_channel && (
-              <span className="dim"> · {historyRow.user_metadata.parent_channel}</span>
-            )}
-          </div>
+          <ReassignableAttribution historyRow={historyRow} />
           {authorText ? (
             <blockquote className="cd-quote">{authorText}</blockquote>
           ) : (
@@ -621,6 +703,14 @@ function Inbox() {
   // extracts the TradeRecord, then shows the result inline. Off = save
   // returns immediately and you click "analyze pending" later.
   const [analyzeOnSave, setAnalyzeOnSave] = useIS(true);
+  // When true, the drop is marked as the operator's own chart. The
+  // server runs signal extraction synchronously so the confirmation
+  // panel can render the extracted signals immediately. Other drops
+  // get batched in the next morning_run.
+  const [isMyChart, setIsMyChart] = useIS(false);
+  // Signal previews returned from /api/manual/ingest when is_self_authored=true.
+  const [lastSignals, setLastSignals] = useIS([]);
+  const [lastInlineErr, setLastInlineErr] = useIS(null);
   // Doc id whose history row is expanded to show full extracted_features_json.
   // Default behavior: when history loads, auto-expand the most recent
   // analyzed row so the user immediately sees what Claude extracted —
@@ -629,6 +719,14 @@ function Inbox() {
   const [autoExpandedOnce, setAutoExpandedOnce] = useIS(false);
 
   useIE(() => { refreshHistory(); refreshAuthors(); }, []);
+
+  // When ReassignableAttribution PATCHes a row, refresh the history table
+  // so the AUTHOR column re-renders with the new attribution.
+  useIE(() => {
+    function onReassigned() { refreshHistory(); refreshAuthors(); }
+    window.addEventListener("macro:author-reassigned", onReassigned);
+    return () => window.removeEventListener("macro:author-reassigned", onReassigned);
+  }, []);
 
   // Auto-expand the most recent analyzed row once the history first loads.
   // This way the page lands with the latest extraction visible — the user
@@ -849,6 +947,7 @@ function Inbox() {
         channel: channel || null,
         channel_type: channelType || null,
       },
+      is_self_authored: isMyChart,
     };
   }
 
@@ -889,10 +988,17 @@ function Inbox() {
       const visionStatus = analyzeOnSave && images.length
         ? " · analyzed ✓"
         : (data.pending_vision ? " · vision pending" : "");
+      // Signals returned by inline extraction (only present for
+      // is_self_authored drops). Render in the confirmation panel.
+      setLastSignals(Array.isArray(data.signals) ? data.signals : []);
+      setLastInlineErr(data.inline_extraction_error || null);
+      const sigNote = Array.isArray(data.signals) && data.signals.length
+        ? ` · ${data.signals.length} signal${data.signals.length === 1 ? "" : "s"} extracted`
+        : (isMyChart ? " · no signals extracted" : "");
       setSubmitMsg({
         type: "ok",
         text: `Saved · ${data.detected_tickers.join(", ") || "no tickers"} · tags ${data.tags.join(", ")}` +
-              imgNote + visionStatus,
+              imgNote + visionStatus + sigNote,
       });
       // Auto-expand the just-saved doc so the user sees the analysis inline.
       if (analyzeOnSave && images.length) setExpandedDoc(data.document_id);
@@ -1145,10 +1251,72 @@ function Inbox() {
                 />
                 analyze on save
               </label>
+              {/* My-chart toggle. ON = signal extraction runs inline so
+                  the confirmation panel shows what was extracted. OFF =
+                  chart batched in next morning_run. Auto-fills self
+                  attribution. */}
+              <label className="inbox-msg" style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+                <input
+                  type="checkbox"
+                  checked={isMyChart}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setIsMyChart(on);
+                    if (on) {
+                      // Auto-fill self attribution so the operator
+                      // doesn't double-type. Seeded picklist has Me/self.
+                      if (!author || author === "") setAuthor("Me");
+                      if (!channel || channel === "") setChannel("self");
+                      if (!channelType || channelType === "") setChannelType("self");
+                    }
+                  }}
+                />
+                my chart (extract now)
+              </label>
               {submitMsg && (
                 <span className={`inbox-msg ${submitMsg.type}`}>{submitMsg.text}</span>
               )}
             </div>
+
+            {/* Inline extraction result — populated only on self-authored drops. */}
+            {(lastSignals.length > 0 || lastInlineErr) && (
+              <div className="inbox-preview-card" style={{ borderColor: "#4a4" }}>
+                <div className="inbox-preview-row">
+                  <span className="lbl">extracted signals</span>
+                  <span>{lastSignals.length} from inline extraction</span>
+                </div>
+                {lastSignals.map((s, i) => (
+                  <div key={s.signal_id || i} className="inbox-preview-row"
+                       style={{ borderTop: "1px dashed #333", paddingTop: 4 }}>
+                    <span className="lbl">
+                      {s.asset_ticker} · {s.side}
+                      {typeof s.conviction === "number" ? ` · conv ${s.conviction.toFixed(1)}` : ""}
+                    </span>
+                    <span style={{ fontSize: 11 }}>
+                      {[
+                        s.extractor_name,
+                        s.horizon,
+                        s.catalyst_type,
+                        s.stop_loss ? `stop ${s.stop_loss}` : null,
+                        s.target_1 ? `tgt ${s.target_1}` : null,
+                        typeof s.cost_usd === "number" ? `$${s.cost_usd.toFixed(4)}` : null,
+                      ].filter(Boolean).join(" · ")}
+                      {s.thesis_summary ? (
+                        <span className="dim" style={{ display: "block" }}>
+                          {String(s.thesis_summary).slice(0, 180)}
+                        </span>
+                      ) : null}
+                    </span>
+                  </div>
+                ))}
+                {lastInlineErr && (
+                  <div className="inbox-preview-row">
+                    <span className="lbl">inline error</span>
+                    <span style={{ color: "#c66", fontSize: 11 }}>{String(lastInlineErr).slice(0, 200)}</span>
+                  </div>
+                )}
+              </div>
+            )}
 
             {previewData && (
               <div className="inbox-preview-card">
@@ -1379,6 +1547,10 @@ function Inbox() {
         )}
       </section>
 
+      {/* I3 Trusted-source themes panel has MOVED to the /streams page
+          (S6) — it's a cross-source conviction view, not a manual-input
+          action. Defined below and exposed on window for streams.jsx. */}
+
       {/* Full-size image viewer — opens when a thumb is clicked. */}
       {lightboxUrl && (
         <div className="inbox-lightbox" onClick={() => setLightboxUrl(null)}>
@@ -1389,4 +1561,309 @@ function Inbox() {
   );
 }
 
-Object.assign(window, { Inbox });
+// ── Trusted-source themes panel ──
+function TrustedSourceThemes() {
+  const [data, setData] = useIS(null);
+  const [loading, setLoading] = useIS(true);
+  const [windowDays, setWindowDays] = useIS(90);
+  // Per-author call-accuracy (win rate / avg return vs real price action),
+  // keyed by author_id. Fetched alongside themes and passed to each card.
+  const [accuracy, setAccuracy] = useIS({});
+
+  useIE(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(`/api/manual/themes/trusted?window_days=${windowDays}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    // Accuracy rollup — separate endpoint, joined by author_id in the card.
+    fetch(`/api/manual/accuracy/sources?window_days=${windowDays}`)
+      .then(r => r.json())
+      .then(d => {
+        if (cancelled) return;
+        const map = {};
+        (d.sources || []).forEach(s => { map[s.author_id] = s; });
+        setAccuracy(map);
+      })
+      .catch(() => {});
+    // Refresh on author reassign — performance shifts.
+    function onReassign() {
+      fetch(`/api/manual/themes/trusted?window_days=${windowDays}`)
+        .then(r => r.json()).then(setData);
+    }
+    window.addEventListener("macro:author-reassigned", onReassign);
+    return () => { cancelled = true; window.removeEventListener("macro:author-reassigned", onReassign); };
+  }, [windowDays]);
+
+  return (
+    <section className="block">
+      <header className="block-head">
+        <div className="block-title">
+          <span className="block-num mono">I3</span>
+          <span>Trusted sources · themes &amp; conviction picks</span>
+          <span className="block-sub">
+            Feather Hands · Stock Unlocked · Forward Guidance — top tickers and bias direction over the last {windowDays}d
+          </span>
+        </div>
+        <div className="block-actions">
+          <div className="filter-pill-row">
+            {[14, 30, 90, 180].map(d => (
+              <button key={d}
+                className={`filter-pill ${windowDays === d ? "on" : ""}`}
+                onClick={() => setWindowDays(d)}>{d}d</button>
+            ))}
+          </div>
+        </div>
+      </header>
+      {loading ? (
+        <div className="inbox-empty">Loading…</div>
+      ) : !data || !data.authors || data.authors.length === 0 ? (
+        <div className="inbox-empty">No analyzed drops yet from trusted sources in this window.</div>
+      ) : (
+        <div className="ts-grid">
+          {data.authors.map(a => <TrustedAuthorCard key={a.author_id} a={a} acc={accuracy[a.author_id]} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Drill-down rendered when a ticker chip is clicked — shows the drops
+// behind that mention with their bias, setup, key levels, next-move.
+function TickerDrillDown({ authorId, ticker, onClose }) {
+  const [data, setData] = useIS(null);
+  const [loading, setLoading] = useIS(true);
+  useIE(() => {
+    let cancelled = false;
+    setLoading(true);
+    const url = `/api/manual/themes/author/${encodeURIComponent(authorId)}/ticker/${encodeURIComponent(ticker)}?window_days=365`;
+    fetch(url).then(r => r.json()).then(d => { if (!cancelled) { setData(d); setLoading(false); } })
+      .catch(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [authorId, ticker]);
+
+  return (
+    <div className="ts-drill">
+      <div className="ts-drill-head">
+        <strong>{ticker}</strong>
+        <span className="dim mono">
+          {loading ? "loading…" : `${data?.n || 0} drop${(data?.n || 0) === 1 ? "" : "s"}`}
+        </span>
+        <button className="filter-pill" style={{ marginLeft: "auto", fontSize: 10 }}
+                onClick={onClose}>✕ close</button>
+      </div>
+      {!loading && (!data?.drops || data.drops.length === 0) && (
+        <div className="dim cd-text">No drops found for this ticker / author pair.</div>
+      )}
+      <div className="ts-drill-list">
+        {(data?.drops || []).map(d => {
+          const biasFirstWord = (d.bias || "").toLowerCase().split(/[\s—-]/)[0];
+          const biasCls = biasFirstWord ? `bias-${biasFirstWord}` : "";
+          return (
+            <div key={d.document_id} className="ts-drill-row">
+              {d.attachment_paths?.[0] && (
+                <img
+                  className="ts-drill-thumb"
+                  src={`/${d.attachment_paths[0]}`}
+                  alt={d.ticker}
+                  onError={(e) => { e.target.style.display = "none"; }}
+                />
+              )}
+              <div className="ts-drill-body">
+                <div className="ts-drill-row-head">
+                  {d.bias && <span className={`cd-badge ${biasCls}`}>● {d.bias}</span>}
+                  {d.timeframe && <span className="cd-tf">{d.timeframe}</span>}
+                  <span className="dim mono">{(d.published_at || "").slice(0, 10)}</span>
+                  {/* Freshness badge — active (green) / aging (gold) /
+                      stale (dim) / unknown (dim). Drives whether the
+                      setup is still actionable. */}
+                  {d.decay && (
+                    <span className={`ts-decay ts-decay-${d.decay.signal_status}`}
+                          title={`${d.decay_label || d.decay.signal_status} · decay window ${d.decay.decay_window}d · weight ${d.decay.decay_weight}`}>
+                      {d.decay_label || d.decay.signal_status}
+                    </span>
+                  )}
+                  {d.confluence_score && (
+                    <span className="ts-trust" style={{ marginLeft: "auto" }}>
+                      {d.confluence_score}/5
+                    </span>
+                  )}
+                </div>
+                {d.setup && <div className="cd-pattern" style={{ fontSize: 14 }}>{d.setup}</div>}
+                {d.next_move && (
+                  <div className="cd-block-text" style={{ fontSize: 12, marginTop: 4 }}>
+                    <span className="cd-block-title" style={{ marginRight: 6 }}>NEXT</span>
+                    {d.next_move}
+                  </div>
+                )}
+                {d.invalidation && (
+                  <div className="cd-block-text dim" style={{ fontSize: 11 }}>
+                    <span className="cd-block-title" style={{ marginRight: 6 }}>INVAL</span>
+                    {typeof d.invalidation === "string" ? d.invalidation : JSON.stringify(d.invalidation)}
+                  </div>
+                )}
+                {Array.isArray(d.key_levels) && d.key_levels.length > 0 && (
+                  <div className="cd-chips" style={{ marginTop: 4 }}>
+                    {d.key_levels.slice(0, 6).map((l, i) => {
+                      const text = typeof l === "string" ? l : JSON.stringify(l);
+                      const cls = _classifyLevel(text);
+                      const { price, desc } = _stripPrice(text);
+                      return (
+                        <span key={i} className={`cd-chip cd-chip-${cls}`}>
+                          {price && <span className="cd-chip-price mono">{price}</span>}
+                          <span className="cd-chip-desc">{(desc || "").slice(0, 50)}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TrustedAuthorCard({ a, acc }) {
+  // Drill-down state — which ticker is expanded inline below the chips.
+  const [openTicker, setOpenTicker] = useIS(null);
+  const totalBias = Object.values(a.bias_distribution || {}).reduce((s, n) => s + n, 0);
+  const pct = (k) => totalBias ? Math.round((a.bias_distribution[k] || 0) / totalBias * 100) : 0;
+
+  // Skip the "UNKNOWN" sentinel — that's Claude's "couldn't read ticker"
+  // marker, not a real symbol. Polluted the panel with bogus chips.
+  const realPicks = (a.high_conviction_tickers || []).filter(hc => hc.ticker !== "UNKNOWN");
+  const realTopTickers = (a.top_tickers || []).filter(([t]) => t !== "UNKNOWN");
+
+  function toggleTicker(t) {
+    setOpenTicker(prev => prev === t ? null : t);
+  }
+
+  return (
+    <div className="ts-card">
+      <div className="ts-card-head">
+        <strong>{a.display_name}</strong>
+        {a.channel && <span className="dim"> · {a.channel}</span>}
+        {a.parent_channel && <span className="dim"> · {a.parent_channel}</span>}
+        <span className="ts-trust mono">{a.trust_weight.toFixed(1)}x</span>
+        {a.category && <span className="ts-cat">{a.category.replace("_", " ")}</span>}
+      </div>
+      <div className="ts-card-meta dim mono">
+        {a.n_with_vision}/{a.n_drops} analyzed
+        {a.earliest_chart && a.latest_chart && (
+          <span> · {a.earliest_chart} → {a.latest_chart}</span>
+        )}
+      </div>
+
+      {/* Accuracy badge HIDDEN — the v1 backtest scored 99% of calls as
+          buy-and-hold (no call_type / targets extracted), so the numbers
+          reflect market beta, not skill. Re-enable after the extraction
+          rebuild (call_type + targets) + re-drain. Backend + endpoint kept;
+          `acc` prop still passed for when this turns back on. */}
+
+      {totalBias > 0 && (
+        <div className="ts-bias-bar" title={`bullish ${pct("bullish")}% · neutral ${pct("neutral")}% · bearish ${pct("bearish")}%`}>
+          <div className="ts-bias-seg ts-bias-bull" style={{ width: `${pct("bullish")}%` }} />
+          <div className="ts-bias-seg ts-bias-neut" style={{ width: `${pct("neutral")}%` }} />
+          <div className="ts-bias-seg ts-bias-bear" style={{ width: `${pct("bearish")}%` }} />
+        </div>
+      )}
+
+      {realPicks.length > 0 && (
+        <div className="ts-section">
+          <div className="ts-section-title">Conviction picks</div>
+          <div className="ts-chips">
+            {realPicks.slice(0, 12).map(hc => {
+              const allStale = hc.active_mentions === 0 && hc.mentions > 0;
+              const conv = Math.round(hc.conviction_score || 0);
+              // Color band: 75+ strong, 50-74 mid, <50 soft.
+              const convClass = conv >= 75 ? "ts-conv-strong"
+                              : conv >= 50 ? "ts-conv-mid"
+                              : "ts-conv-soft";
+              const tt = [
+                `conviction ${conv}/100`,
+                `${hc.agreement_pct}% bias agreement`,
+                hc.confluence_avg != null ? `Claude confluence avg ${hc.confluence_avg}/5` : null,
+                hc.pattern_strength_avg != null ? `pattern strength ${hc.pattern_strength_avg}/100` : null,
+                hc.n_timeframes ? `${hc.n_timeframes} timeframe${hc.n_timeframes === 1 ? "" : "s"} (${(hc.timeframes || []).join(", ") || "?"})` : null,
+                hc.distinct_days ? `${hc.distinct_days} distinct chart date${hc.distinct_days === 1 ? "" : "s"}` : null,
+                hc.n_distinct_setups ? `${hc.n_distinct_setups} distinct setup pattern${hc.n_distinct_setups === 1 ? "" : "s"}` : null,
+                `${hc.mentions} total mentions · ${hc.active_mentions} active / ${hc.stale_mentions} stale`,
+                "click to see drops",
+              ].filter(Boolean).join(" · ");
+              // Pattern-strong tag — for top-tier structures only (cup-and-handle,
+              // breakouts, wave 5). Tunable threshold in source_themes.py.
+              const patternStrong = (hc.pattern_strength_avg || 0) >= 75;
+              return (
+                <button key={hc.ticker}
+                  className={`ts-chip ts-chip-${hc.bias} ts-chip-button ${convClass} ${openTicker === hc.ticker ? "on" : ""} ${allStale ? "ts-chip-faded" : ""}`}
+                  title={tt}
+                  onClick={() => toggleTicker(hc.ticker)}>
+                  <strong>{hc.ticker}</strong>
+                  <span className="ts-conv-score mono">{conv}</span>
+                  {hc.n_timeframes > 1 && (
+                    <span className="ts-tf-badge mono" title={`${hc.n_timeframes} timeframes confluent`}>
+                      {hc.n_timeframes}TF
+                    </span>
+                  )}
+                  {patternStrong && (
+                    <span className="ts-pattern-badge mono" title={`pattern strength ${hc.pattern_strength_avg}/100`}>
+                      ◆
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="ts-conv-legend dim mono">
+            conviction = 30% confluence + 25% pattern + 20% TF coverage + 15% persistence + 10% freshness · ±10% bias-strength · ◆ = high-conviction pattern · hover for breakdown
+          </div>
+        </div>
+      )}
+
+      {realTopTickers.length > 0 && (
+        <div className="ts-section">
+          <div className="ts-section-title">Top tickers · click to drill down</div>
+          <div className="ts-chips">
+            {realTopTickers.map(([t, c]) => (
+              <button key={t}
+                className={`ts-chip ts-chip-neutral ts-chip-button ${openTicker === t ? "on" : ""}`}
+                title={`click to see Big_Nuts's ${c} drop${c === 1 ? "" : "s"} on ${t}`}
+                onClick={() => toggleTicker(t)}>
+                <strong>{t}</strong><span className="dim mono"> ×{c}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {openTicker && (
+        <TickerDrillDown
+          authorId={a.author_id}
+          ticker={openTicker}
+          onClose={() => setOpenTicker(null)}
+        />
+      )}
+
+      {a.top_setups && a.top_setups.length > 0 && (
+        <div className="ts-section">
+          <div className="ts-section-title">Recurring setups</div>
+          <ul className="ts-setup-list">
+            {a.top_setups.slice(0, 5).map(([s, c]) => (
+              <li key={s}><span className="dim mono">×{c}</span> {s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// TrustedSourceThemes/TrustedAuthorCard/TickerDrillDown render the I3
+// conviction panel — now mounted on the /streams page (S6) rather than
+// here. Exposed on window so streams.jsx can render them; their closures
+// (useIS/useIE aliases) stay intact because they're still defined here.
+Object.assign(window, { Inbox, TrustedSourceThemes, TrustedAuthorCard, TickerDrillDown });

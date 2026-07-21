@@ -1430,6 +1430,18 @@ function Streams() {
         </div>
       </section>
 
+      {/* ── S6 Trusted sources · conviction picks ────────────────────────
+          The I3 panel, relocated from /04 inbox. Cross-source themes +
+          conviction picks for all T0/T1 authors (trust ≥ 1.15), including
+          the Telegram-poller channels (Feather Hands, Gem Hunters, OG
+          Whales, Wolf Pack, Ari Gold) and the seeded macro sources.
+          Component is defined in inbox.jsx and exposed on window; rendered
+          here at runtime (inbox.jsx loads before app mounts). It renders
+          its own <section> with header, so no wrapper needed. */}
+      {window.TrustedSourceThemes
+        ? React.createElement(window.TrustedSourceThemes)
+        : null}
+
       {/* S1 theme drilldown */}
       <DrillSheet open={!!openTheme} onClose={() => setOpenTheme(null)}
         title={openTheme ? openTheme.label : ""}

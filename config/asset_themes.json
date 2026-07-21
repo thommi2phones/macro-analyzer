@@ -77,7 +77,7 @@
       "exposure_type": "tactical",
       "preferred_regimes": ["risk_on_expansion"],
       "thesis_regime_alignment": ["dovish_liquidity_wave"],
-      "watchlist_tickers": ["BTC", "ETH", "SOL", "COIN", "MSTR"],
+      "watchlist_tickers": ["BTC", "ETH", "SOL", "COIN", "MSTR", "HYPE", "XRP", "SUI", "APT", "TON", "NEAR", "AVAX", "ARB", "OP", "INJ", "PEPE", "DOGE", "SHIB", "WIF", "BONK"],
       "treat_as": "high_beta_liquidity_asset",
       "explicit_warnings": ["Not a universal safe haven", "Closely tied to risk appetite + tech leadership"],
       "bullish_conditions": [

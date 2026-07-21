@@ -98,7 +98,23 @@ def morning_run() -> dict:
         logger.error("Podcast step failed: %s", e, exc_info=True)
         summary["steps"]["podcasts"] = {"status": "error", "error": str(e)}
 
-    # 4. Run pipeline with fresh RSS + podcast docs (Gmail already persisted directly)
+    # 3b. Substack — operator-curated newsletter feeds. Each post lands
+    #     with source_id='substack:{slug}' so attribution stays clean.
+    try:
+        from macro_positioning.ingestion import substack
+
+        substack_docs = substack.fetch_all(max_items_per_feed=10)
+        fresh_docs.extend(substack_docs)
+        summary["steps"]["substack"] = {
+            "status": "ok",
+            "documents_fetched": len(substack_docs),
+            "feeds_configured": len(substack.load_feeds()),
+        }
+    except Exception as e:
+        logger.error("Substack step failed: %s", e, exc_info=True)
+        summary["steps"]["substack"] = {"status": "error", "error": str(e)}
+
+    # 4. Run pipeline with fresh RSS + podcast + substack docs (Gmail persisted directly)
     try:
         pipeline = build_pipeline()
         result = pipeline.run(fresh_docs)
@@ -111,6 +127,150 @@ def morning_run() -> dict:
     except Exception as e:
         logger.error("Pipeline step failed: %s", e, exc_info=True)
         summary["steps"]["pipeline"] = {"status": "error", "error": str(e)}
+
+    # 5. Insiders: pull all free public-disclosure sources (House/Senate
+    # PTRs, SEC Form 4/13F/13D-G, USAspending, LDA, social trending).
+    # `catch_errors=True` so one bad source never aborts the morning run.
+    try:
+        from macro_positioning.insiders import cli as insiders_cli
+        insiders_summary = insiders_cli.pull_all(catch_errors=True)
+        summary["steps"]["insiders"] = {
+            "status": "ok",
+            "by_source": insiders_summary,
+        }
+    except Exception as e:
+        logger.error("Insiders step failed: %s", e, exc_info=True)
+        summary["steps"]["insiders"] = {"status": "error", "error": str(e)}
+
+    # 6. Signals: extract structured positioning signals from any docs
+    # the prior ingest steps just landed. Runs BEFORE scoring so the
+    # composer sees today's fresh signals.
+    try:
+        from macro_positioning.signals.runner import extract_pending
+        sig_summary = extract_pending(limit=500, since_days=14)
+        summary["steps"]["signals"] = {
+            "status": "ok",
+            **sig_summary.to_dict(),
+        }
+    except Exception as e:
+        logger.error("Signals step failed: %s", e, exc_info=True)
+        summary["steps"]["signals"] = {"status": "error", "error": str(e)}
+
+    # 7. Prices: yfinance OHLCV for the active watchlist + any tickers
+    # that produced signals in the last 14d. Without this, every
+    # technical feature degrades to {n_bars: 0} and the composer can't
+    # synthesize entry/stop/target.
+    try:
+        import sqlite3 as _sqlite3
+        from macro_positioning.core.settings import settings
+        from macro_positioning.prices.fetcher import fetch_and_persist as fetch_prices_persist
+        from macro_positioning.scoring.watchlist_resolver import resolve_watchlist
+
+        # Anchors + theme-aligned for active regime hint.
+        resolved = resolve_watchlist(framework_regime="commodity_led_inflation")
+        tickers: set[str] = {e.ticker for e in resolved.entries}
+        # Plus recently-signalled tickers so the composer can score them.
+        with _sqlite3.connect(settings.sqlite_path) as _conn:
+            for (t,) in _conn.execute(
+                "SELECT DISTINCT asset_ticker FROM signals "
+                "WHERE extracted_at >= datetime('now','-14 day')"
+            ).fetchall():
+                if t:
+                    tickers.add(str(t).upper())
+        if tickers:
+            price_result = fetch_prices_persist(sorted(tickers), days=200)
+            summary["steps"]["prices"] = {
+                "status": "ok",
+                "tickers_requested": price_result.tickers_requested,
+                "tickers_with_data": price_result.tickers_with_data,
+                "bars_persisted": price_result.bars_persisted,
+                "failures": len(price_result.failures or []),
+            }
+        else:
+            summary["steps"]["prices"] = {
+                "status": "ok",
+                "skipped": "no tickers resolved",
+            }
+    except Exception as e:
+        logger.error("Prices step failed: %s", e, exc_info=True)
+        summary["steps"]["prices"] = {"status": "error", "error": str(e)}
+
+    # 8. FRED: macro indicators. Incremental refresh by default; if the
+    # table is empty (fresh DB), fall through to a 5y backfill so the
+    # regime quadrant / FCI / EPU / COT panels have data.
+    try:
+        import sqlite3 as _sqlite3
+        from macro_positioning.core.settings import settings
+        from macro_positioning.market.fred_history import (
+            backfill_series,
+            incremental_refresh,
+        )
+        from macro_positioning.market.fred_provider import (
+            ALL_SERIES,
+            FREDMarketDataProvider,
+        )
+
+        if not settings.fred_api_key:
+            summary["steps"]["fred"] = {
+                "status": "skipped",
+                "reason": "MPA_FRED_API_KEY not configured",
+            }
+        else:
+            provider = FREDMarketDataProvider()
+            with _sqlite3.connect(settings.sqlite_path) as _conn:
+                n_rows = _conn.execute(
+                    "SELECT COUNT(*) FROM fred_observations"
+                ).fetchone()[0]
+                if n_rows == 0:
+                    # Fresh DB → backfill 5y of history so the indicator
+                    # strip lights up immediately rather than waiting
+                    # for the daily refresh to slowly populate.
+                    total = 0
+                    for sid in ALL_SERIES.keys():
+                        try:
+                            total += backfill_series(
+                                provider, _conn, sid, start="2021-01-01"
+                            )
+                        except Exception:
+                            logger.exception("FRED backfill failed for %s", sid)
+                    summary["steps"]["fred"] = {
+                        "status": "ok",
+                        "mode": "backfill",
+                        "rows_persisted": total,
+                    }
+                else:
+                    counts = incremental_refresh(
+                        provider, _conn, ALL_SERIES.keys(), window_days=14
+                    )
+                    summary["steps"]["fred"] = {
+                        "status": "ok",
+                        "mode": "incremental",
+                        "rows_upserted": sum(counts.values()),
+                        "series": len(counts),
+                    }
+    except Exception as e:
+        logger.error("FRED step failed: %s", e, exc_info=True)
+        summary["steps"]["fred"] = {"status": "error", "error": str(e)}
+
+    # 9. Scoring pass: resolve watchlist + score each ticker + persist
+    # to trade_scores. This is the step whose absence kept the dashboard
+    # empty for weeks. Per-ticker errors are already isolated inside
+    # run_scoring_pass; the outer try is for total-failure cases (e.g.
+    # macro_brain import error).
+    try:
+        from macro_positioning.scoring.runner import run_scoring_pass
+        score_summary = run_scoring_pass()
+        summary["steps"]["scoring"] = {
+            "status": "ok",
+            "run_id": score_summary.run_id,
+            "watchlist_size": score_summary.watchlist_size,
+            "scored": score_summary.scored,
+            "persisted": score_summary.persisted,
+            "errors": len(score_summary.errors or []),
+        }
+    except Exception as e:
+        logger.error("Scoring step failed: %s", e, exc_info=True)
+        summary["steps"]["scoring"] = {"status": "error", "error": str(e)}
 
     summary["duration_seconds"] = round(time.time() - started, 2)
     logger.info("=== MORNING RUN END (%.2fs) ===", summary["duration_seconds"])

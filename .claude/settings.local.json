@@ -35,7 +35,17 @@
       "Bash(sysctl -n machdep.cpu.brand_string)",
       "Bash(sysctl -n hw.memsize)",
       "Read(//Users/thom/Documents/Personal/Code Projects/Macro Analyzer/{print $0/**)",
-      "Bash(system_profiler SPHardwareDataType)"
+      "Bash(system_profiler SPHardwareDataType)",
+      "Bash(awk 'NR>=2100 && NR<=2515 { for\\(i=1;i<=length\\($0\\);i++\\){c=substr\\($0,i,1\\); if\\(c==\"{\"\\)o++; else if\\(c==\"}\"\\)cl++}} END{print \"open:\",o,\"close:\",cl}' \"/Users/thom/Documents/Personal/Code Projects/Macro Analyzer/web/styles.css\")",
+      "Bash(uv run *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8001/)",
+      "Bash(ps -p 10623 -o pid,etime,command)",
+      "Bash(kill -0 10625)",
+      "Bash(git stash *)",
+      "Bash(lsof -iTCP -sTCP:LISTEN -n -P)",
+      "Bash(curl -s http://127.0.0.1:8000/ -o /dev/null -w \"8000: %{http_code} %{redirect_url}\\\\n\")",
+      "Bash(curl -s http://127.0.0.1:8000/dashboard -o /dev/null -w \"8000/dashboard: %{http_code}\\\\n\")",
+      "Bash(ps -p 45296 -o command=)"
     ]
   }
 }

@@ -23,6 +23,63 @@ class Settings(BaseSettings):
     # requests pick it up from a cookie set at /login (separate scaffolding).
     auth_token: str = ""
 
+    # Telegram user-account API (Telethon). Used to read PE Deal Flow
+    # chat messages directly — no screenshotting, no OCR. api_id +
+    # api_hash come from https://my.telegram.org → API development tools.
+    # Session file is a credentials artefact (gitignored).
+    telegram_api_id: int = 0
+    telegram_api_hash: str = ""
+    telegram_session_path: Path = Field(
+        default_factory=lambda: Path.cwd() / "data" / "telegram.session"
+    )
+
+    # Telegram channels + DMs the poller ingests from. Keys are stable
+    # slugs used on the CLI (--channel feather_hands_trading). chat_id
+    # is the numeric identifier from Telegram. author_display matches
+    # one of the seeded entries in SEED_AUTHORS — that's how messages
+    # get attributed downstream.
+    #
+    # is_dm=True for direct-message sources (Ari Gold). The poller
+    # filters DMs to messages FROM the other party (skips the user's
+    # own replies so they don't end up looking like trade calls).
+    #
+    # Stored in code (not env) because chat_ids are stable identifiers,
+    # not secrets. Add new channels here as needed.
+    telegram_channels: dict[str, dict] = Field(default_factory=lambda: {
+        "feather_hands_trading": {
+            "chat_id": -1001309918571, "author_display": "Feather Hands Trading", "is_dm": False,
+            # Known authors inside this group. Keyed by Telegram user_id (int).
+            # Run scripts/telegram_smoke_test.py to discover user_ids.
+            "known_senders": {
+                # "123456789": "MadDog31",
+                # "987654321": "Big_Nuts",
+            },
+        },
+        "gem_hunters": {
+            "chat_id": -1002332468588, "author_display": "Gem Hunters 💎", "is_dm": False,
+            "known_senders": {
+                # "123456789": "joejoe55",  # populate after smoke test
+            },
+        },
+        "og_whales": {
+            "chat_id": -1001548106275, "author_display": "🐳 OG Whales 🐳", "is_dm": False,
+            "known_senders": {
+                # "123456789": "Big_Nuts",
+            },
+        },
+        "the_wolf_pack": {
+            "chat_id": -1002616207282, "author_display": "The Wolf Pack", "is_dm": False,
+            "known_senders": {
+                # "123456789": "Mark Wood",
+                # "987654321": "MixinCrypto",
+            },
+        },
+        "ari_gold": {
+            "chat_id": 1073329886, "author_display": "Ari Gold", "is_dm": True,
+            "known_senders": {},
+        },
+    })
+
     # LLM Brain — direct APIs (multi-model)
     # Primary synthesis model
     gemini_api_key: str = ""           # Google Gemini direct API key
@@ -41,6 +98,13 @@ class Settings(BaseSettings):
     vision_max_image_width: int = 1500       # downscale wider images before send
     vision_resize_target_width: int = 1024   # post-resize width
     vision_cache_enabled: bool = True        # hash-dedupe identical bytes
+    # Backend: "cli" (default — uses Claude Code subscription via the
+    # `claude -p` CLI, no API credits) or "api" (uses MPA_ANTHROPIC_API_KEY
+    # with per-call billing). CLI is preferred when Claude Code is installed.
+    vision_backend: str = "cli"
+    vision_cli_path: str = "claude"          # falls back to PATH lookup
+    vision_cli_max_turns: int = 4            # Read tool + answer typically needs 2
+    vision_cli_timeout_s: int = 120
 
     # Routing defaults
     brain_primary_backend: str = "gemini"    # gemini | anthropic | ollama

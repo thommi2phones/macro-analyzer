@@ -113,6 +113,56 @@ def test_empty_or_none_text():
 
 
 # ---------------------------------------------------------------------------
+# Chain-tag false positives — memecoin/altcoin posts that name the chain
+# in parens (`TripleT (SOL)`, `Worldcup (SOL)`, `PEPE (ETH)`) must NOT
+# count as mentions of the chain symbol. Regression: feather-hands
+# memecoin posts were flooding the SOL theme card with bullish lean.
+# ---------------------------------------------------------------------------
+
+def test_chain_tag_sol_memecoin_not_extracted():
+    text = "TripleT (SOL) caution .. breaking previous nut box that structure needs to break"
+    assert "SOL" not in extract_tickers_from_text(text)
+
+
+def test_chain_tag_sol_worldcup_not_extracted():
+    text = "Worldcup (SOL) again we nutted the fuck out of this at top"
+    assert "SOL" not in extract_tickers_from_text(text)
+
+
+def test_chain_tag_eth_memecoin_not_extracted():
+    text = "PEPE (ETH) running hot here"
+    assert "ETH" not in extract_tickers_from_text(text)
+
+
+def test_genuine_sol_prose_still_extracted():
+    # "(SOL)" standalone is fine; bare SOL with no preceding asset-name token is fine
+    text = "SOL @ $68 .. we warned for weeks at that flagging"
+    assert "SOL" in extract_tickers_from_text(text)
+
+
+def test_genuine_sol_in_long_form_still_extracted():
+    text = "long SOL into FOMC"
+    assert "SOL" in extract_tickers_from_text(text)
+
+
+def test_chain_tag_parenthetical_alone_still_matches():
+    # Regression for the existing punctuation test — "(BTC)" with no
+    # immediate preceding asset-name token must still be picked up.
+    text = "URA, GLD; (BTC) and 'NVDA'."
+    found = extract_tickers_from_text(text)
+    assert found >= {"URA", "GLD", "BTC", "NVDA"}
+
+
+def test_chain_tag_strips_only_paren_keeps_other_tickers_in_doc():
+    # If the same doc has a memecoin chain-tag AND a real ticker
+    # elsewhere, the real one survives.
+    text = "TripleT (SOL) is dying. Separately, accumulating BTC down here."
+    found = extract_tickers_from_text(text)
+    assert "BTC" in found
+    assert "SOL" not in found
+
+
+# ---------------------------------------------------------------------------
 # count_mentions across documents
 # ---------------------------------------------------------------------------
 

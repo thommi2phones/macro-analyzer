@@ -100,6 +100,11 @@ class ManualInputPayload(BaseModel):
     # attachment_path to attachment_paths[0].
     attachment_path: Optional[str] = None
     attachment_paths: list[str] = Field(default_factory=list)
+    # When True, the operator marked this as their own chart. The
+    # processor runs signal extraction inline before returning so the
+    # confirmation panel can show what was extracted. Other drops go
+    # through the batched morning_run extraction stage.
+    is_self_authored: bool = False
 
 
 # ── Extracted-features schema (Piece 2 fills this) ───────────────────────────
@@ -198,3 +203,11 @@ class IngestResponse(BaseModel):
     detected_tickers: list[str]
     tags: list[str]
     pending_vision: bool
+    # Populated only when the request was is_self_authored=True. Contains
+    # a flat preview of every Signal extracted inline (one entry per
+    # signal row written). Empty for batched/deferred drops.
+    signals: list[dict] = Field(default_factory=list)
+    # When inline extraction was attempted but failed (LLM error, etc),
+    # holds a short reason. Surfaced in the SPA's confirmation panel so
+    # the operator knows the chart was saved but extraction is pending.
+    inline_extraction_error: Optional[str] = None

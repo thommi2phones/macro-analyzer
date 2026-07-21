@@ -44,8 +44,22 @@ data/*.zip
 # in Piece 2. See DECISIONS 2026-05-09 entry.
 manual_entry/
 
+# User-staged screenshot folders the bulk-import script reads from.
+# Hundreds of binary PNGs; not source code.
+manual_inputs/
+
 # Manual-input chart uploads (user-generated runtime content, not source)
 uploads/
+
+# DB backups created during merges/migrations. The `*.db` rule above does not
+# match these — the suffix comes after the extension (macro_positioning.db.pre-redrain).
+# ~600MB across the .pre-* set; snapshots on disk, never source.
+*.db.pre-merge-backup
+*.db.backup
+*.db.pre-*
+
+# HTTP response cache (EDGAR filings etc) — 80MB of binary blobs, regenerable.
+cache/
 
 # N8N / runtime logs
 *.log
@@ -61,3 +75,7 @@ src/macro_brain/models/*.bin
 src/macro_brain/models/*.pt
 src/macro_brain/models/*.safetensors
 src/macro_brain/models/*.gguf
+
+# Telegram session file — credentials artefact, never commit
+data/telegram.session*
+*.session-journal

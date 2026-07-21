@@ -1,0 +1,15 @@
+{
+  "_comment": "Curated managers we follow for 13F position changes. CIKs are zero-padded to 10 digits per EDGAR convention. Add/remove freely; the scraper iterates this list each quarter.",
+  "managers": [
+    {"cik": "0001067983", "name": "Berkshire Hathaway Inc"},
+    {"cik": "0001649339", "name": "Scion Asset Management LLC (Michael Burry)"},
+    {"cik": "0001336528", "name": "Pershing Square Capital Management LP"},
+    {"cik": "0001423053", "name": "Bridgewater Associates"},
+    {"cik": "0001603466", "name": "Greenlight Capital Re"},
+    {"cik": "0001067983", "name": "Berkshire Hathaway"},
+    {"cik": "0001745214", "name": "Renaissance Technologies LLC"},
+    {"cik": "0001167483", "name": "Citadel Advisors LLC"},
+    {"cik": "0001364742", "name": "BlackRock Inc"},
+    {"cik": "0001029160", "name": "Two Sigma Investments LP"}
+  ]
+}

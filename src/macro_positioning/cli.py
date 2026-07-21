@@ -262,6 +262,157 @@ def cmd_fred_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_score_bootstrap(args: argparse.Namespace) -> int:
+    """One-shot orchestrator: prices fetch → FRED backfill/refresh → score run.
+
+    Designed for the very first run on a fresh DB or to manually
+    repopulate the positioning desk without waiting for tomorrow's
+    morning_run. Each step is independently skippable and partial
+    failures don't abort downstream steps.
+    """
+    import sqlite3
+    import time as _time
+
+    from macro_positioning.core.settings import settings
+    from macro_positioning.db.schema import initialize_database
+    from macro_positioning.prices.fetcher import fetch_and_persist as fetch_prices_persist
+    from macro_positioning.scoring.runner import run_scoring_pass
+    from macro_positioning.scoring.watchlist_resolver import resolve_watchlist
+
+    initialize_database(settings.sqlite_path)
+    t_total = _time.time()
+    summary: dict = {"steps": {}}
+
+    # ── Step 1: prices ──────────────────────────────────────────────────
+    if not args.skip_prices:
+        t0 = _time.time()
+        try:
+            resolved = resolve_watchlist(framework_regime="commodity_led_inflation")
+            tickers = [e.ticker for e in resolved.entries]
+            if args.anchors_only:
+                # Limit to anchors-only for first-pass speed (~50 tickers).
+                anchors = {
+                    e.ticker for e in resolved.entries
+                    if any(o.startswith("anchor") for o in (e.origins or []))
+                }
+                tickers = [t for t in tickers if t in anchors]
+            if not tickers:
+                summary["steps"]["prices"] = {"status": "skipped",
+                                              "reason": "no tickers resolved"}
+            else:
+                r = fetch_prices_persist(tickers, days=200)
+                summary["steps"]["prices"] = {
+                    "status": "ok",
+                    "tickers_requested": r.tickers_requested,
+                    "tickers_with_data": r.tickers_with_data,
+                    "bars_persisted": r.bars_persisted,
+                    "failures": len(r.failures or []),
+                    "elapsed_s": round(_time.time() - t0, 1),
+                }
+                if args.verbose:
+                    print(f"[prices] {r.bars_persisted} bars across "
+                          f"{r.tickers_with_data}/{r.tickers_requested} tickers "
+                          f"({summary['steps']['prices']['elapsed_s']}s)")
+        except Exception as e:
+            summary["steps"]["prices"] = {
+                "status": "error", "error": f"{type(e).__name__}: {e}",
+            }
+            print(f"[prices] ERROR: {e}", file=sys.stderr)
+    else:
+        summary["steps"]["prices"] = {"status": "skipped", "reason": "--skip-prices"}
+
+    # ── Step 2: FRED ────────────────────────────────────────────────────
+    if not args.skip_fred:
+        t0 = _time.time()
+        try:
+            if not settings.fred_api_key:
+                summary["steps"]["fred"] = {
+                    "status": "skipped",
+                    "reason": "MPA_FRED_API_KEY not configured",
+                }
+            else:
+                from macro_positioning.market.fred_history import (
+                    backfill_series, incremental_refresh,
+                )
+                from macro_positioning.market.fred_provider import (
+                    ALL_SERIES, FREDMarketDataProvider,
+                )
+                provider = FREDMarketDataProvider()
+                with sqlite3.connect(settings.sqlite_path) as conn:
+                    n_existing = conn.execute(
+                        "SELECT COUNT(*) FROM fred_observations"
+                    ).fetchone()[0]
+                    if n_existing == 0:
+                        total = 0
+                        for sid in ALL_SERIES.keys():
+                            try:
+                                total += backfill_series(
+                                    provider, conn, sid, start="2021-01-01"
+                                )
+                            except Exception:
+                                pass
+                        summary["steps"]["fred"] = {
+                            "status": "ok", "mode": "backfill",
+                            "rows_persisted": total,
+                            "elapsed_s": round(_time.time() - t0, 1),
+                        }
+                    else:
+                        counts = incremental_refresh(
+                            provider, conn, ALL_SERIES.keys(), window_days=14,
+                        )
+                        summary["steps"]["fred"] = {
+                            "status": "ok", "mode": "incremental",
+                            "rows_upserted": sum(counts.values()),
+                            "series": len(counts),
+                            "elapsed_s": round(_time.time() - t0, 1),
+                        }
+                if args.verbose:
+                    print(f"[fred] {summary['steps']['fred']}")
+        except Exception as e:
+            summary["steps"]["fred"] = {
+                "status": "error", "error": f"{type(e).__name__}: {e}",
+            }
+            print(f"[fred] ERROR: {e}", file=sys.stderr)
+    else:
+        summary["steps"]["fred"] = {"status": "skipped", "reason": "--skip-fred"}
+
+    # ── Step 3: scoring pass ────────────────────────────────────────────
+    if not args.skip_score:
+        t0 = _time.time()
+        try:
+            s = run_scoring_pass()
+            summary["steps"]["scoring"] = {
+                "status": "ok",
+                "run_id": s.run_id,
+                "framework_regime": s.framework_regime,
+                "watchlist_size": s.watchlist_size,
+                "scored": s.scored,
+                "persisted": s.persisted,
+                "errors": len(s.errors or []),
+                "elapsed_s": round(_time.time() - t0, 1),
+            }
+            if args.verbose:
+                print(f"[scoring] {summary['steps']['scoring']}")
+        except Exception as e:
+            summary["steps"]["scoring"] = {
+                "status": "error", "error": f"{type(e).__name__}: {e}",
+            }
+            print(f"[scoring] ERROR: {e}", file=sys.stderr)
+    else:
+        summary["steps"]["scoring"] = {"status": "skipped", "reason": "--skip-score"}
+
+    summary["total_elapsed_s"] = round(_time.time() - t_total, 1)
+
+    import json as _json
+    print(_json.dumps(summary, indent=2))
+
+    # Non-zero only if every step failed.
+    statuses = [v.get("status") for v in summary["steps"].values()]
+    if all(s == "error" for s in statuses):
+        return 1
+    return 0
+
+
 def cmd_score_run(args: argparse.Namespace) -> int:
     """Run a scoring pass: resolve watchlist (anchors + themes + mentions),
     score each ticker via macro_brain orchestrator, persist to trade_scores.
@@ -778,6 +929,93 @@ def cmd_rules_adherence(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_insiders_pull(args: argparse.Namespace) -> int:
+    from macro_positioning.insiders import cli as insiders_cli
+
+    if args.source == "all":
+        summary = insiders_cli.pull_all(since=args.since)
+    else:
+        summary = insiders_cli.pull_one(args.source, since=args.since, year=args.year)
+    print(summary)
+    return 0
+
+
+def cmd_signals_extract(args: argparse.Namespace) -> int:
+    """Run pending signal extraction over recent documents."""
+    import json as _json
+
+    from macro_positioning.signals.runner import extract_pending
+
+    summary = extract_pending(
+        limit=args.limit,
+        since_days=args.since_days,
+        extractor_filter=args.extractor,
+        dry_run=args.dry_run,
+    )
+    print(_json.dumps(summary.to_dict(), indent=2))
+    return 0
+
+
+def cmd_signals_show(args: argparse.Namespace) -> int:
+    """Print recent signals or signals for a specific ticker."""
+    import json as _json
+
+    from macro_positioning.signals import repository
+
+    if args.ticker:
+        rows = repository.load_active_signals_for_ticker(
+            args.ticker, since_days=args.since_days
+        )
+    else:
+        rows = repository.load_recent_signals(limit=args.limit)
+    print(_json.dumps(rows, indent=2, default=str))
+    return 0
+
+
+def cmd_signals_status(_: argparse.Namespace) -> int:
+    """Per-extractor counts + most recent extraction time."""
+    import json as _json
+
+    from macro_positioning.signals import repository
+
+    print(_json.dumps(repository.signal_counts_by_extractor(), indent=2))
+    return 0
+
+
+def cmd_learning_recompute_trust(args: argparse.Namespace) -> int:
+    """Run one pass of trust-weight calibration over closed trades."""
+    import json as _json
+
+    from macro_positioning.learning.signal_calibration import recompute_trust_weights
+
+    run = recompute_trust_weights(
+        link_window_days=args.link_window_days,
+        neutral_band=args.neutral_band,
+        alpha=args.alpha,
+        min_signals_for_update=args.min_signals,
+        dry_run=args.dry_run,
+    )
+    print(_json.dumps(run.summary(), indent=2))
+    return 0
+
+
+def cmd_insiders_status(_: argparse.Namespace) -> int:
+    from macro_positioning.insiders import cli as insiders_cli
+
+    rows = insiders_cli.status()
+    if not rows:
+        print("(no insiders_cursor rows yet — run `insiders pull` first)")
+        return 0
+    for row in rows:
+        print(
+            f"{row['source_slug']:<12} "
+            f"last_id={row['last_external_id']!s:<24} "
+            f"at={row['last_run_at']} "
+            f"status={row['last_run_status']}"
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="macro-positioning",
@@ -881,6 +1119,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--dry-run", action="store_true", help="compute but don't persist to trade_scores")
     p_run.add_argument("--window", type=int, default=90, help="document lookback days for mention extraction")
     p_run.set_defaults(func=cmd_score_run)
+
+    p_boot = score_sub.add_parser(
+        "bootstrap",
+        help="one-shot orchestrator: prices fetch → FRED backfill/refresh → score run",
+    )
+    p_boot.add_argument("--skip-prices", action="store_true",
+                        help="skip the yfinance price fetch step")
+    p_boot.add_argument("--skip-fred", action="store_true",
+                        help="skip the FRED refresh/backfill step")
+    p_boot.add_argument("--skip-score", action="store_true",
+                        help="skip the final scoring pass")
+    p_boot.add_argument("--anchors-only", action="store_true",
+                        help="limit price fetch to config/watchlist.json anchors (faster first pass)")
+    p_boot.add_argument("--verbose", action="store_true",
+                        help="print each step's status as it completes")
+    p_boot.set_defaults(func=cmd_score_bootstrap)
 
     # ---- learning -----------------------------------------------------------
     p_learn = sub.add_parser("learning", help="read-side analytics over the data flywheel")
@@ -991,6 +1245,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_qual_bf.set_defaults(func=cmd_learning_quality_backfill)
     p_qual_sum = qual_sub.add_parser("summary", help="avg quality per agent + per (agent, model_version)")
     p_qual_sum.set_defaults(func=cmd_learning_quality_summary)
+
+    # ---- learning > recompute-trust (signal calibration loop) --------------
+    p_trust = learn_sub.add_parser(
+        "recompute-trust",
+        help="recompute author + channel trust weights from closed-trade outcomes",
+    )
+    p_trust.add_argument("--link-window-days", type=int, default=30,
+                         help="max signal age before a trade to count as in-scope")
+    p_trust.add_argument("--neutral-band", type=float, default=0.5,
+                         help="pnl_pct within ±band counts as no-move (no credit)")
+    p_trust.add_argument("--alpha", type=float, default=0.5,
+                         help="aggressiveness of weight update (0..1)")
+    p_trust.add_argument("--min-signals", type=int, default=3,
+                         help="minimum linkable signals required before updating a scope")
+    p_trust.add_argument("--dry-run", action="store_true",
+                         help="compute but don't persist updates")
+    p_trust.set_defaults(func=cmd_learning_recompute_trust)
 
     # ---- learning > regime-accuracy (item 5) -------------------------------
     p_ra = learn_sub.add_parser(
@@ -1107,6 +1378,71 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ra.add_argument("trade_id")
     p_ra.set_defaults(func=cmd_rules_adherence)
+
+    # ── insiders: free public-disclosure scrapers ─────────────────────────
+    p_ins = sub.add_parser(
+        "insiders",
+        help="ingest free public disclosures (House PTRs, etc.) into the manual pipeline",
+    )
+    ins_sub = p_ins.add_subparsers(dest="insiders_command", required=True)
+
+    p_ins_pull = ins_sub.add_parser("pull", help="pull one or all insider sources")
+    p_ins_pull.add_argument(
+        "--source",
+        default="all",
+        help="source slug: 'house' (Piece 1), 'all' to fan out across registered sources",
+    )
+    p_ins_pull.add_argument(
+        "--since",
+        default=None,
+        help="ISO date YYYY-MM-DD — only ingest filings on/after this date",
+    )
+    p_ins_pull.add_argument(
+        "--year",
+        type=int,
+        default=None,
+        help="calendar year of the source index (defaults to current year)",
+    )
+    p_ins_pull.set_defaults(func=cmd_insiders_pull)
+
+    p_ins_status = ins_sub.add_parser("status", help="print the insiders_cursor table")
+    p_ins_status.set_defaults(func=cmd_insiders_status)
+
+    # ── signals: structured signal extraction from documents ──────────────
+    p_sig = sub.add_parser(
+        "signals",
+        help="extract / inspect structured positioning signals from ingested docs",
+    )
+    sig_sub = p_sig.add_subparsers(dest="signals_command", required=True)
+
+    p_sig_ex = sig_sub.add_parser(
+        "extract",
+        help="run pending signal extraction over recent documents",
+    )
+    p_sig_ex.add_argument("--limit", type=int, default=100,
+                          help="max docs to process this run")
+    p_sig_ex.add_argument("--since-days", type=int, default=30,
+                          help="only consider docs ingested within this window")
+    p_sig_ex.add_argument("--extractor", default=None,
+                          help="restrict to one extractor: insider_extractor | llm_extractor")
+    p_sig_ex.add_argument("--dry-run", action="store_true",
+                          help="don't persist signals or attempts (parse-only)")
+    p_sig_ex.set_defaults(func=cmd_signals_extract)
+
+    p_sig_show = sig_sub.add_parser(
+        "show", help="print recent signals (or signals for a ticker)",
+    )
+    p_sig_show.add_argument("--ticker", default=None,
+                            help="filter to one ticker (active signals only)")
+    p_sig_show.add_argument("--limit", type=int, default=50)
+    p_sig_show.add_argument("--since-days", type=int, default=90,
+                            help="lookback when --ticker is set")
+    p_sig_show.set_defaults(func=cmd_signals_show)
+
+    p_sig_status = sig_sub.add_parser(
+        "status", help="per-extractor counts of signals in the DB",
+    )
+    p_sig_status.set_defaults(func=cmd_signals_status)
 
     return parser
 

@@ -211,12 +211,50 @@ def ingest(payload: ManualInputPayload) -> IngestResponse:
         )
         connection.commit()
 
+    # Inline signal extraction for self-authored drops. Other drops go
+    # through the batched morning_run extraction stage. The extraction
+    # itself is wrapped in try/except: if anything fails the document
+    # still persists and falls through to the deferred batch path.
+    inline_signals: list[dict] = []
+    inline_err: str | None = None
+    if payload.is_self_authored:
+        try:
+            from macro_positioning.signals.runner import extract_for_document
+
+            # Rehydrate the doc shape the extractors expect — same field
+            # set the batch path reads from `pending_documents`.
+            doc_for_extract = {
+                "document_id": document_id,
+                "source_id": f"manual:{author_id}",
+                "title": title,
+                "url": None,
+                "published_at": now,
+                "author": payload.author.display_name,
+                "author_id": author_id,
+                "content_type": content_type,
+                "raw_text": payload.text or "",
+                "cleaned_text": text,
+                "tags_json": json.dumps(tags_payload),
+                "user_metadata_json": json.dumps(user_meta_payload),
+                "attachment_path": primary_path,
+                "attachment_paths_json": (
+                    json.dumps(attachment_paths) if attachment_paths else None
+                ),
+            }
+            outcome = extract_for_document(doc_for_extract)
+            inline_signals = outcome.get("signals") or []
+            inline_err = outcome.get("error_message")
+        except Exception as exc:  # noqa: BLE001 — ingest must never fail
+            inline_err = f"{type(exc).__name__}: {exc}"
+
     return IngestResponse(
         document_id=document_id,
         author_id=author_id,
         detected_tickers=tickers,
         tags=sorted(tags),
         pending_vision=pending_vision,
+        signals=inline_signals,
+        inline_extraction_error=inline_err,
     )
 
 
@@ -226,16 +264,40 @@ def ingest(payload: ManualInputPayload) -> IngestResponse:
 def list_recent_inputs(limit: int = 50) -> list[dict]:
     with sqlite3.connect(settings.sqlite_path) as connection:
         connection.row_factory = sqlite3.Row
+        # ALLOWLIST: the "manual:" prefix has been hijacked by many
+        # ingestion pipelines (gov-insider, lobbying, fed-spend, large-
+        # holder SEC filings, social/StockTwits, etc). A blocklist can't
+        # keep up — every new pipeline adds another bucket. Instead we
+        # only return docs whose author_id matches one of the seeded
+        # human namespaces (Feather Hands family, Stock Unlocked,
+        # Forward Guidance, self, WOAS) or the archive baseline.
+        # input_authors is the source of truth: seeded entries have
+        # notes='seeded on first boot' or were upserted via the manual
+        # ingest API.
         rows = connection.execute(
             """
-            SELECT document_id, source_id, title, content_type,
-                   ingested_at, published_at,
-                   author, author_id, raw_text, cleaned_text,
-                   attachment_path, attachment_paths_json,
-                   user_metadata_json, tags_json, extracted_features_json
-            FROM documents
-            WHERE source_id LIKE 'manual:%'
-            ORDER BY COALESCE(published_at, ingested_at) DESC
+            SELECT d.document_id, d.source_id, d.title, d.content_type,
+                   d.ingested_at, d.published_at,
+                   d.author, d.author_id, d.raw_text, d.cleaned_text,
+                   d.attachment_path, d.attachment_paths_json,
+                   d.user_metadata_json, d.tags_json, d.extracted_features_json
+            FROM documents d
+            INNER JOIN input_authors a ON a.author_id = d.author_id
+            WHERE d.content_type IN ('manual_chart', 'manual_note')
+              AND d.source_id LIKE 'manual:%'
+              -- author must be a seeded human OR the archive baseline:
+              AND (
+                a.notes = 'seeded on first boot'
+                OR a.channel = 'archive'
+                OR a.author_id LIKE 'market-traders:%'
+                OR a.author_id LIKE 'feather-hands:%'
+                OR a.author_id LIKE 'stock-unlocked:%'
+                OR a.author_id LIKE 'wolf-of-all-streets:%'
+                OR a.author_id LIKE 'forward-guidance:%'
+                OR a.author_id = 'self:me'
+                OR a.author_id LIKE 'archive:%'
+              )
+            ORDER BY COALESCE(d.published_at, d.ingested_at) DESC
             LIMIT ?
             """,
             (limit,),

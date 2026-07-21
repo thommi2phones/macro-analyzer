@@ -1,0 +1,36 @@
+{
+  "$schema_version": "1.0",
+  "description": "Operator-curated Substack feed list. Each post becomes a documents row with source_id='substack:{slug}'. The LLM extractor produces signals automatically. Add feeds by appending entries; the morning_run picks them up next pass — no code change.",
+  "feeds": [
+    {
+      "slug": "doomberg",
+      "url": "https://doomberg.substack.com/feed",
+      "tags": ["energy", "macro", "commodities"],
+      "rationale": "Energy macro + geopolitics — fits Commodity-Led Inflation thesis"
+    },
+    {
+      "slug": "thelastbearstanding",
+      "url": "https://thelastbearstanding.substack.com/feed",
+      "tags": ["macro", "credit", "rates"],
+      "rationale": "Credit-cycle macro reads"
+    },
+    {
+      "slug": "bobelliottmacro",
+      "url": "https://bobeunlimited.substack.com/feed",
+      "tags": ["macro", "regime"],
+      "rationale": "Regime classification + cross-asset flows"
+    },
+    {
+      "slug": "themarketear",
+      "url": "https://themarketear.substack.com/feed",
+      "tags": ["positioning", "flow"],
+      "rationale": "Sell-side positioning + flow color"
+    },
+    {
+      "slug": "concodanomics",
+      "url": "https://concoda.substack.com/feed",
+      "tags": ["liquidity", "plumbing"],
+      "rationale": "Money-market plumbing + liquidity"
+    }
+  ]
+}

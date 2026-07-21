@@ -146,6 +146,37 @@ def test_mp3_url_extracted_from_enclosure(monkeypatch):
     assert ep.url == "https://example.com/ep1"  # link takes priority over mp3
 
 
+def test_configured_show_attributes_to_author_id(monkeypatch):
+    """A show with a configured author_id stamps it on every episode so
+    pipeline-ingested docs aggregate on the per-author leaderboard."""
+    test_source = podcast_rss.PodcastSource(
+        source_id="test_attributed",
+        name="Attributed Show",
+        rss_url="https://cdn.example.com/feed.xml",
+        priority="core",
+        tags=["test"],
+        author_id="forward-guidance:forward-guidance",
+    )
+    monkeypatch.setattr(
+        podcast_rss, "PODCAST_SOURCES",
+        list(podcast_rss.PODCAST_SOURCES) + [test_source],
+    )
+    monkeypatch.setattr(podcast_rss.httpx, "Client", _FakeClient)
+
+    docs = podcast_rss.fetch_podcast("test_attributed", max_items=5, transcribe=False)
+    assert len(docs) == 2
+    assert all(d.author_id == "forward-guidance:forward-guidance" for d in docs)
+
+
+def test_unconfigured_show_has_no_author_id(monkeypatch):
+    """A show without a configured author_id leaves it None (source_id-only)."""
+    _register_fake_source(monkeypatch)  # test_podcast has no author_id
+    monkeypatch.setattr(podcast_rss.httpx, "Client", _FakeClient)
+
+    docs = podcast_rss.fetch_podcast("test_podcast", max_items=5, transcribe=False)
+    assert docs and all(d.author_id is None for d in docs)
+
+
 def test_mp3_url_none_when_no_audio_enclosure(monkeypatch):
     """Video enclosures or missing enclosures should NOT surface as mp3_url."""
     import xml.etree.ElementTree as ET

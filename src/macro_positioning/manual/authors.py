@@ -32,13 +32,41 @@ _SLUG_NON_ALNUM = re.compile(r"[^a-z0-9]+")
 # broader Feather Hands community. SPA shows this as a breadcrumb so
 # attribution reads "Big_Nuts · Market Traders · Feather Hands".
 SEED_AUTHORS: list[dict] = [
-    {"display_name": "Big_Nuts",            "channel": "Market Traders",      "channel_type": "telegram", "parent_channel": "Feather Hands"},
-    {"display_name": "MadDog31",            "channel": "Market Traders",      "channel_type": "telegram", "parent_channel": "Feather Hands"},
-    {"display_name": "Market Traders",      "channel": "Market Traders",      "channel_type": "telegram", "parent_channel": "Feather Hands"},
-    {"display_name": "Artur Unlocked",      "channel": "Stock Unlocked",      "channel_type": "telegram"},
-    {"display_name": "Stock Unlocked",      "channel": "Stock Unlocked",      "channel_type": "telegram"},
-    {"display_name": "Me",                  "channel": "self",                "channel_type": "self"},
-    {"display_name": "WOAS",                "channel": "Wolf of All Streets", "channel_type": "twitter"},
+    # Feather Hands family — user's top source for direct trades AND
+    # macro sentiment. trust_weight=1.5 means the scoring layer treats
+    # mentions / signals from these authors with 1.5x weight vs an
+    # unknown source. Categories drive theme-extraction grouping.
+    # Big_Nuts, joejoe55, MadDog31 all RUN Feather Hands — they're the
+    # parent-community operators, not Market-Traders-subgroup members.
+    # Market Traders is a separate sub-group whose entity-level posts
+    # (when OCR can't tag a specific person) are attributed below.
+    {"display_name": "Big_Nuts",            "channel": "Feather Hands",       "channel_type": "telegram", "trust_weight": 1.5, "category": "direct_trades"},
+    {"display_name": "MadDog31",            "channel": "Feather Hands",       "channel_type": "telegram", "trust_weight": 1.5, "category": "direct_trades"},
+    {"display_name": "joejoe55",            "channel": "Feather Hands",       "channel_type": "telegram", "trust_weight": 1.5, "category": "both"},
+    {"display_name": "Market Traders",      "channel": "Market Traders",     "channel_type": "telegram", "parent_channel": "Feather Hands", "trust_weight": 1.4, "category": "direct_trades"},
+    # Stock Unlocked — high-trust direct trades source per user.
+    {"display_name": "Artur Unlocked",      "channel": "Stock Unlocked",      "channel_type": "telegram",                                    "trust_weight": 1.5, "category": "direct_trades"},
+    {"display_name": "Stock Unlocked",      "channel": "Stock Unlocked",      "channel_type": "telegram",                                    "trust_weight": 1.5, "category": "direct_trades"},
+    # Self drops — by definition you trust them, but they're not an
+    # external signal so weight stays at 1.0 (no extra amplification).
+    # Highest trust — these are the user's own setups. Per user direction:
+    # tw=2.0 so a self-drop weighs 2x any external signal in scoring.
+    {"display_name": "Me",                  "channel": "self",                "channel_type": "self",                                        "trust_weight": 2.0, "category": "both"},
+    # Macro sentiment sources — Forward Guidance (podcast) + WOAS (Wolf of
+    # All Streets). Per user: Forward Guidance equals Feather Hands as a
+    # top macro source. WOAS more variable.
+    {"display_name": "Forward Guidance",    "channel": "Forward Guidance",    "channel_type": "other",                                       "trust_weight": 1.5, "category": "macro_sentiment"},
+    {"display_name": "WOAS",                "channel": "Wolf of All Streets", "channel_type": "twitter",                                     "trust_weight": 1.1, "category": "macro_sentiment"},
+    # Telegram channel-as-author entries. These are broadcast channels
+    # (single author = the channel itself) fed by the telegram_poller
+    # module. display_name == channel so the picker pill reads cleanly.
+    # Ari Gold is a DM (1-on-1 private), not a channel — same poller
+    # path, just filters to messages from the other side of the DM.
+    {"display_name": "Feather Hands Trading", "channel": "Feather Hands Trading", "channel_type": "telegram", "trust_weight": 1.5, "category": "direct_trades"},
+    {"display_name": "Gem Hunters 💎",         "channel": "Gem Hunters",          "channel_type": "telegram", "trust_weight": 1.5, "category": "direct_trades"},
+    {"display_name": "🐳 OG Whales 🐳",        "channel": "OG Whales",            "channel_type": "telegram", "trust_weight": 1.3, "category": "direct_trades"},
+    {"display_name": "The Wolf Pack",          "channel": "The Wolf Pack",        "channel_type": "telegram", "trust_weight": 1.3, "category": "direct_trades"},
+    {"display_name": "Ari Gold",               "channel": "Ari Gold",             "channel_type": "telegram", "trust_weight": 1.4, "category": "direct_trades"},
 ]
 
 
@@ -67,14 +95,17 @@ def seed_known_authors(*, db_path: Optional[Path] = None) -> int:
             connection.execute(
                 "INSERT INTO input_authors "
                 "(author_id, display_name, channel, channel_type, "
-                " parent_channel, notes, first_seen_at, last_seen_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " parent_channel, trust_weight, category, "
+                " notes, first_seen_at, last_seen_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     author_id,
                     seed["display_name"],
                     seed.get("channel"),
                     seed.get("channel_type"),
                     seed.get("parent_channel"),
+                    seed.get("trust_weight"),
+                    seed.get("category"),
                     "seeded on first boot",
                     now_iso,
                     now_iso,
@@ -83,6 +114,48 @@ def seed_known_authors(*, db_path: Optional[Path] = None) -> int:
             inserted += 1
         connection.commit()
     return inserted
+
+
+# ── Allowlist: "authors the user has explicitly stated" ─────────────────────
+# Single source of truth for which authors count toward conviction /
+# positioning. An input_authors row qualifies only if it was seeded (the
+# SEED_AUTHORS list above) or lives under one of the seeded sub-author
+# namespaces. Everything auto-ingested by the other pipelines — gov-insider,
+# lobbying, social, fed-spend, large-holder, and any future additions — has a
+# 'manual:'-prefixed namespace that matches NONE of these clauses and is
+# therefore excluded. Per user direction: do not take any author except the
+# ones we have explicitly stated into account.
+#
+# Referenced columns (notes, author_id) are unambiguous in any single-table
+# FROM input_authors query; callers that alias the table should use the bare
+# column names (only input_authors is in WHERE scope).
+SEEDED_AUTHOR_WHERE = """
+    notes = 'seeded on first boot'
+    OR author_id LIKE 'market-traders:%'
+    OR author_id LIKE 'feather-hands:%'
+    OR author_id LIKE 'stock-unlocked:%'
+    OR author_id LIKE 'wolf-of-all-streets:%'
+    OR author_id LIKE 'forward-guidance:%'
+    OR author_id = 'self:me'
+"""
+
+
+def seeded_author_ids(conn: sqlite3.Connection) -> set[str]:
+    """The set of author_ids the user has explicitly stated as trusted voices.
+
+    Conviction/positioning aggregation filters to this set so that
+    auto-ingested authors (gov-insider, lobbying, social, fed-spend, unknown)
+    never contribute to a conviction score or directional vote. Returns an
+    empty set on any error so callers degrade to "nothing counts" rather than
+    silently letting everything through.
+    """
+    try:
+        rows = conn.execute(
+            f"SELECT author_id FROM input_authors WHERE {SEEDED_AUTHOR_WHERE}"
+        ).fetchall()
+    except sqlite3.Error:
+        return set()
+    return {r[0] for r in rows}
 
 
 def slugify(text: str) -> str:
@@ -170,14 +243,29 @@ def list_authors(limit: int = 200) -> list[dict]:
     """
     with sqlite3.connect(settings.sqlite_path) as connection:
         connection.row_factory = sqlite3.Row
+        # ALLOWLIST: only return seeded authors (SEEDED_AUTHOR_WHERE — the
+        # single source of truth). Every other ingestion pipeline
+        # (gov-insider, lobbying, fed-spend, large-holder, social, plus any
+        # future additions) is filtered out by NOT matching a seeded
+        # namespace. The WHERE references bare column names because only
+        # input_authors is in scope there (the documents subquery is in
+        # SELECT, not WHERE).
         rows = connection.execute(
-            """
+            f"""
             SELECT a.author_id, a.display_name, a.channel, a.channel_type,
                    a.parent_channel,
                    a.first_seen_at, a.last_seen_at,
-                   (SELECT COUNT(*) FROM documents d WHERE d.author_id=a.author_id) AS submission_count
+                   COALESCE(a.trust_weight, 1.0) AS trust_weight,
+                   a.category,
+                   (SELECT COUNT(*) FROM documents d
+                    WHERE d.author_id=a.author_id
+                      AND d.content_type IN ('manual_chart','manual_note')
+                   ) AS submission_count
             FROM input_authors a
-            ORDER BY a.last_seen_at DESC
+            WHERE {SEEDED_AUTHOR_WHERE}
+            ORDER BY
+              COALESCE(a.trust_weight, 1.0) DESC,
+              a.last_seen_at DESC
             LIMIT ?
             """,
             (limit,),

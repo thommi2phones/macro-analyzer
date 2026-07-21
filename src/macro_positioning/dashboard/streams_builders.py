@@ -32,6 +32,8 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable
 
+from macro_positioning.manual.authors import seeded_author_ids
+
 
 # ---------------------------------------------------------------------------
 # Constants / helpers
@@ -276,6 +278,10 @@ def _load_signals(conn: sqlite3.Connection, window_days: int, now: datetime) -> 
     if not _safe_table_exists(conn, "signals"):
         return []
     cutoff = (now - timedelta(days=window_days)).isoformat()
+    # Only signals from authors the user has explicitly stated count toward
+    # conviction. Auto-ingested authors (gov-insider, lobbying, social, …)
+    # are excluded — see authors.seeded_author_ids.
+    allowed = seeded_author_ids(conn)
     try:
         cur = conn.execute(
             """
@@ -293,6 +299,8 @@ def _load_signals(conn: sqlite3.Connection, window_days: int, now: datetime) -> 
         return []
     out: list[dict] = []
     for r in cur.fetchall():
+        if (r[6] or "") not in allowed:
+            continue
         out.append({
             "signal_id":    r[0],
             "extracted_at": _parse_iso(r[1]),
@@ -518,6 +526,9 @@ def _load_document_mentions(
     if fp is not None and fp in _DOC_MENTION_CACHE:
         return _DOC_MENTION_CACHE[fp]
 
+    # Same allowlist as _load_signals: a document mention only counts toward
+    # the maps if its author is one the user explicitly stated.
+    allowed = seeded_author_ids(conn)
     try:
         cur = conn.execute(
             """
@@ -534,6 +545,8 @@ def _load_document_mentions(
 
     out: list[dict] = []
     for source_id, author_id, ts, text in cur.fetchall():
+        if (author_id or "") not in allowed:
+            continue
         text = text or ""
         tickers = extract_tickers_from_text(text)
         kw_themes = _themes_in_text(text)

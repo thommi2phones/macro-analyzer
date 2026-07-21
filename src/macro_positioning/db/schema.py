@@ -306,6 +306,34 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_prices_ticker_observed_desc
         ON prices (ticker, observed_at DESC)
     """,
+    # ─── Per-call accuracy backtest (learning/call_accuracy.py) ──────────
+    # One row per scored trade-call: the call's ticker/direction/levels and
+    # the resolved outcome vs real price action. Powers per-source accuracy
+    # on the S6 streams cards. Idempotent on document_id.
+    """
+    CREATE TABLE IF NOT EXISTS call_outcomes (
+        document_id   TEXT PRIMARY KEY,
+        author_id     TEXT NOT NULL,
+        raw_ticker    TEXT,
+        ticker        TEXT,
+        symbol        TEXT,
+        direction     TEXT,
+        timeframe     TEXT,
+        entry_px      REAL,
+        stop_px       REAL,
+        target_px     REAL,
+        horizon_days  INTEGER,
+        fwd_return_pct REAL,
+        resolved      TEXT,
+        r_multiple    REAL,
+        call_at       TEXT,
+        scored_at     TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_call_outcomes_author
+        ON call_outcomes (author_id)
+    """,
     # ─── LLM-agent outputs (regime + narrative) ──────────────────────────
     # Persistent record of regime classifications and narrative snapshots.
     # Each row references the agent_call_log row that produced it via call_id
@@ -596,6 +624,226 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_fred_obs_series_date
         ON fred_observations (series_id, observation_date DESC)
     """,
+    # Cursor table for the insiders scraper package. One row per source_slug
+    # tracks the last filing/award ingested so repeat runs are incremental.
+    """
+    CREATE TABLE IF NOT EXISTS insiders_cursor (
+        source_slug      TEXT PRIMARY KEY,
+        last_external_id TEXT,
+        last_run_at      TEXT NOT NULL,
+        last_run_status  TEXT
+    )
+    """,
+    # Typed edges produced by the LDA lobbying scraper. The /05 influence
+    # SPA tab reads from this table directly; node identity is namespaced
+    # by edge endpoint (client:, registrant:, lobbyist:, agency:, issue:,
+    # member:) so the graph stays queryable without a nodes table.
+    """
+    CREATE TABLE IF NOT EXISTS lobbying_edges (
+        edge_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+        filing_id  TEXT NOT NULL,
+        period     TEXT NOT NULL,
+        from_node  TEXT NOT NULL,
+        to_node    TEXT NOT NULL,
+        edge_kind  TEXT NOT NULL,
+        amount_usd REAL,
+        raw_json   TEXT
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_lobbying_edges_period
+        ON lobbying_edges(period)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_lobbying_edges_from
+        ON lobbying_edges(from_node)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_lobbying_edges_to
+        ON lobbying_edges(to_node)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS ix_lobbying_edges_dedupe
+        ON lobbying_edges(filing_id, from_node, to_node, edge_kind)
+    """,
+    # ─── Signal extraction layer ─────────────────────────────────────────
+    # One row per directional signal extracted from a document. A House
+    # PTR with three tickers produces three signals. A manual analyst
+    # note discussing rotation from QQQ → XLE produces two signals
+    # (EXIT QQQ, LONG XLE). Both rule-based (insider_extractor) and
+    # LLM-based (llm_extractor) extractors write into this table.
+    #
+    # Composer reads `signals` and aggregates per asset_ticker to derive
+    # the directional bias + conviction that feeds the scoring pass.
+    # This replaces today's "mention count → watchlist promotion" with
+    # "signal-weighted positioning bias."
+    """
+    CREATE TABLE IF NOT EXISTS signals (
+        signal_id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        extracted_at TEXT NOT NULL,
+        extraction_run_id TEXT,
+
+        -- Asset / instrument
+        asset_ticker TEXT NOT NULL,
+        asset_class TEXT,
+        secondary_tickers_json TEXT,
+        instrument_detail_json TEXT,
+
+        -- Direction / sizing intent
+        side TEXT NOT NULL,                   -- LONG|SHORT|HEDGE|EXIT|TRIM|ADD|WATCH|AVOID
+        conviction REAL NOT NULL,             -- 0..5 normalized
+        conviction_raw TEXT,                  -- source-native form before normalization
+        position_size_hint REAL,
+        position_size_unit TEXT,              -- pct_equity|usd|shares|r
+        horizon TEXT,                         -- intraday|swing|position|strategic
+        horizon_days INTEGER,
+
+        -- Levels
+        entry_zone_low REAL,
+        entry_zone_high REAL,
+        stop_loss REAL,
+        target_1 REAL,
+        target_2 REAL,
+        invalidation TEXT,
+
+        -- Thesis context
+        thesis_summary TEXT,
+        thesis_tags_json TEXT,
+        macro_regime_tags_json TEXT,
+        catalyst_type TEXT,                   -- earnings|macro_print|political|technical|flow|other
+        catalyst_date TEXT,
+        catalyst_summary TEXT,
+
+        -- Provenance
+        source_slug TEXT NOT NULL,
+        source_channel TEXT,
+        author_id TEXT,
+        author_trust_weight REAL,
+        source_trust_weight REAL,
+
+        -- Extractor metadata
+        extractor_name TEXT NOT NULL,
+        extractor_version TEXT NOT NULL,
+        extractor_confidence REAL,
+        model_provider TEXT,
+        model_name TEXT,
+        raw_excerpt TEXT,
+        extraction_call_id TEXT,
+
+        -- Lifecycle
+        status TEXT NOT NULL DEFAULT 'active', -- active|superseded|expired|invalidated
+        expires_at TEXT,
+        superseded_by TEXT,
+
+        -- Composite weighting (snapshotted at extract time)
+        weighted_score REAL,
+
+        -- Audit
+        latency_ms REAL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        cost_usd REAL,
+        error_message TEXT,
+
+        FOREIGN KEY (document_id) REFERENCES documents (document_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signals_document
+        ON signals (document_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signals_ticker_active
+        ON signals (asset_ticker, status, extracted_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signals_source
+        ON signals (source_slug, extracted_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signals_run
+        ON signals (extraction_run_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signals_expires
+        ON signals (status, expires_at)
+        WHERE expires_at IS NOT NULL
+    """,
+    # Per-document extraction attempt log. Lets the runner answer
+    # "which docs still need extraction?" without re-running successful
+    # extractions or pounding the LLM on docs that erroneously produce
+    # zero signals. Also gives us a forensic trail when an extractor
+    # changes behaviour between versions.
+    """
+    CREATE TABLE IF NOT EXISTS signal_extraction_attempts (
+        attempt_id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL,
+        attempted_at TEXT NOT NULL,
+        extractor_name TEXT NOT NULL,
+        extractor_version TEXT NOT NULL,
+        status TEXT NOT NULL,                 -- success|no_signal|error|skipped
+        error_message TEXT,
+        signals_produced INTEGER NOT NULL DEFAULT 0,
+        latency_ms REAL,
+        FOREIGN KEY (document_id) REFERENCES documents (document_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signal_attempts_doc
+        ON signal_extraction_attempts (document_id, attempted_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_signal_attempts_status
+        ON signal_extraction_attempts (status, attempted_at DESC)
+    """,
+    # ─── Learning loop: source / channel trust weights ────────────────────
+    # Per-channel trust weight maintained by the calibration loop. Replaces
+    # the hard-coded `_CHANNEL_TRUST` dict in insider_extractor.py: the
+    # extractor reads from this table first, falls back to the hard-coded
+    # default if the row is missing. Snapshotted onto each Signal at
+    # extract time so old signals stay reproducible.
+    """
+    CREATE TABLE IF NOT EXISTS source_trust_weights (
+        source_channel  TEXT PRIMARY KEY,
+        trust_weight    REAL NOT NULL,
+        n_signals       INTEGER NOT NULL DEFAULT 0,
+        n_trades_linked INTEGER NOT NULL DEFAULT 0,
+        n_hits          INTEGER NOT NULL DEFAULT 0,
+        precision       REAL,                  -- hits / trades_linked
+        avg_pnl_pct     REAL,
+        last_updated_at TEXT NOT NULL,
+        baseline_weight REAL NOT NULL DEFAULT 1.0
+    )
+    """,
+    # One row per calibration pass — both per-author and per-channel.
+    # Append-only audit log so we can debug "why did this author's
+    # trust_weight jump from 1.2 to 1.6 last Tuesday?".
+    """
+    CREATE TABLE IF NOT EXISTS signal_calibration_history (
+        history_id      TEXT PRIMARY KEY,
+        run_id          TEXT NOT NULL,
+        recorded_at     TEXT NOT NULL,
+        scope_kind      TEXT NOT NULL,         -- 'author' | 'channel'
+        scope_key       TEXT NOT NULL,         -- author_id or source_channel
+        trust_weight_before REAL,
+        trust_weight_after  REAL NOT NULL,
+        n_signals       INTEGER NOT NULL,
+        n_trades_linked INTEGER NOT NULL,
+        n_hits          INTEGER NOT NULL,
+        precision       REAL,
+        avg_pnl_pct     REAL,
+        notes           TEXT
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_calibration_history_run
+        ON signal_calibration_history (run_id, recorded_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_calibration_history_scope
+        ON signal_calibration_history (scope_kind, scope_key, recorded_at DESC)
+    """,
 ]
 
 
@@ -620,6 +868,16 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # community ("Feather Hands"). Nullable; rendered as a breadcrumb in
     # the SPA so attribution reads "Big_Nuts · Market Traders · Feather Hands".
     ("input_authors", "parent_channel", "TEXT"),
+    # Trust multiplier the scoring layer applies to mentions / signals
+    # from this author. 1.0 = baseline; >1 means "trust more, weight
+    # heavier"; <1 means "trust less". Per user: Feather Hands family
+    # (Big_Nuts, MadDog31, joejoe55) and Stock Unlocked = 1.5; Forward
+    # Guidance = 1.5 for macro sentiment; defaults 1.0 for everyone else.
+    ("input_authors", "trust_weight", "REAL"),
+    # Notes the user wants to remember about this author (high-vol
+    # short-term scalper, macro/swing only, prone to revenge trades, etc.)
+    # Free-form, surfaced in the SPA tooltip.
+    ("input_authors", "category", "TEXT"),  # "direct_trades" | "macro_sentiment" | "both"
     # Trade-close review status. Drives the /journal pending-reviews
     # queue: "closed_pending_review" rows pop up the framework
     # questionnaire; "closed_reviewed" rows are done. NULL = legacy /
@@ -639,6 +897,14 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     ("trades", "correlated_bucket", "TEXT"),
     ("trades", "entry_followed_retest", "INTEGER"),
     ("trades", "rule_adherence_score", "INTEGER"),
+    # ─── Signal-layer integration into trade_scores ──────────────────
+    # Set by scoring/runner.py after compose() — captures the
+    # signal-aggregation read for each scored ticker. Composer itself
+    # stays untouched; this column is an augmentation surface so
+    # learning loop and dashboards can see what the signals layer
+    # contributed without re-running aggregation.
+    ("trade_scores", "signal_alignment_score", "INTEGER"),
+    ("trade_scores", "signal_aggregate_json", "TEXT"),
 ]
 
 

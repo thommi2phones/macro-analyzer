@@ -46,6 +46,7 @@ from macro_positioning.dashboard.checklist import load_checklist
 from macro_positioning.dashboard.mgmt_data import _git_recent_commits, _load_decisions
 from macro_positioning.ingestion.freshness import freshness_label
 from macro_positioning.ingestion.source_lifecycle import load_sources
+from macro_positioning.manual.authors import SEEDED_AUTHOR_WHERE
 
 from macro_brain.agents.regime_classifier.classifier import classify_regime_stub
 
@@ -1142,15 +1143,36 @@ def build_source_health_section() -> list[dict]:
         except Exception:
             pass
 
+    # Map source_id → display name so member/group references render nicely.
+    name_by_id = {s.source_id: s.name for s in sources}
+
     rows = []
     for s in sources:
         # TODO: pull last_fetched from real fetch-tracking tables
         sla = s.freshness_sla_hours or 0
         score = 1.0 if sla else 1.0  # placeholder until fetch tracking
+        # Operator-assigned conviction tier (T0..T4) or infra/self bucket.
+        tier = getattr(s, "tier", None) or ""
+        # Group structure: a group source lists its member source_ids
+        # (group_members); a member lists its parent group(s)
+        # (group_membership). Both preserved from sources.json via the
+        # extra="allow" SourceRecord model. Emit for tier-then-group nesting.
+        group_members = list(getattr(s, "group_members", None) or [])
+        group_membership = list(getattr(s, "group_membership", None) or [])
+        # Serialize channel objects to plain dicts for JSON.
+        channels = []
+        for c in (s.channels or []):
+            if hasattr(c, "model_dump"):
+                channels.append(c.model_dump())
+            elif isinstance(c, dict):
+                channels.append(c)
+            else:
+                channels.append({"channel_type": str(c)})
         rows.append({
             # Core health fields
             "name": s.name,
             "kind": _SOURCE_TYPE_DISPLAY.get(s.source_type, s.source_type),
+            "tier": tier,
             "lastFetch": "—",
             "freshness": round(score, 2),
             "weight": s.trust_weight,
@@ -1163,9 +1185,17 @@ def build_source_health_section() -> list[dict]:
             "research_style": s.research_style or "",
             "fetch_cadence": s.fetch_cadence or "",
             "freshness_sla_hours": s.freshness_sla_hours,
-            "channels": list(s.channels or []),
+            "channels": channels,
             "onboarded_at": s.onboarded_at or "",
+            # Group nesting
+            "is_group": bool(group_members),
+            "group_members": group_members,
+            "group_membership": group_membership,
+            "group_member_names": [name_by_id.get(m, m) for m in group_members],
         })
+    # Sort by conviction tier (T0 first), then by weight desc within tier.
+    _tier_order = {"T0": 0, "T1": 1, "T2": 2, "T3": 3, "T4": 4, "infra": 5, "self": 6, "": 9}
+    rows.sort(key=lambda r: (_tier_order.get(r["tier"], 9), -float(r["weight"] or 0)))
     return rows
 
 
@@ -1284,6 +1314,230 @@ def build_integration_section() -> dict:
 # Top-level snapshot
 # ---------------------------------------------------------------------------
 
+def build_live_signals_section() -> list[dict]:
+    """Top 8 freshest signals from the signals table.
+
+    Reads directly from the signals layer — this is what makes
+    extraction output visible on the dashboard BEFORE a scoring pass
+    rolls it into trade_scores. Order: weighted_score DESC, falling
+    back to extracted_at DESC. Time window: last 72h.
+
+    Each row carries enough for the SPA panel: ticker, side, conviction,
+    weighted score, author, source channel, extracted_at, and a thesis
+    summary if the extractor produced one.
+    """
+    if not settings.sqlite_path.exists():
+        return []
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            conn.row_factory = sqlite3.Row
+            # Hero signals only surface authors the user has explicitly
+            # stated — the seeded allowlist (SEEDED_AUTHOR_WHERE). Filtering
+            # in-query so LIMIT 8 applies to the eligible set, not the raw one.
+            rows = conn.execute(
+                f"""
+                SELECT
+                    signal_id, asset_ticker, side, conviction, weighted_score,
+                    source_slug, source_channel, author_id,
+                    horizon, catalyst_type, thesis_summary,
+                    extractor_name, extractor_confidence,
+                    stop_loss, target_1, target_2,
+                    extracted_at, status
+                FROM signals
+                WHERE status = 'active'
+                  AND datetime(extracted_at) >= datetime('now', '-72 hours')
+                  AND author_id IN (
+                      SELECT author_id FROM input_authors WHERE {SEEDED_AUTHOR_WHERE}
+                  )
+                ORDER BY weighted_score DESC NULLS LAST, extracted_at DESC
+                LIMIT 8
+                """
+            ).fetchall()
+    except sqlite3.OperationalError:
+        # signals table not yet created (pre-migration DB)
+        return []
+    out: list[dict] = []
+    for r in rows:
+        out.append({
+            "signal_id": r["signal_id"],
+            "ticker": r["asset_ticker"],
+            "side": r["side"],
+            "conviction": float(r["conviction"]) if r["conviction"] is not None else None,
+            "weighted_score": (
+                round(float(r["weighted_score"]), 3)
+                if r["weighted_score"] is not None else None
+            ),
+            "source_slug": r["source_slug"],
+            "source_channel": r["source_channel"],
+            "author_id": r["author_id"],
+            "horizon": r["horizon"],
+            "catalyst_type": r["catalyst_type"],
+            "thesis_summary": (
+                str(r["thesis_summary"])[:160]
+                if r["thesis_summary"] else None
+            ),
+            "extractor_name": r["extractor_name"],
+            "extractor_confidence": (
+                float(r["extractor_confidence"])
+                if r["extractor_confidence"] is not None else None
+            ),
+            "stop_loss": r["stop_loss"],
+            "target_1": r["target_1"],
+            "target_2": r["target_2"],
+            "extracted_at": r["extracted_at"],
+        })
+    return out
+
+
+def build_data_health_section() -> dict:
+    """Per-source freshness so the operator can spot stalled pipelines.
+
+    Each entry: {label, last_ts, minutes_since, docs_today, status}.
+    `status` ∈ green/yellow/red based on:
+      - missing → red
+      - >24h stale → red
+      - 6-24h stale → yellow
+      - <6h stale → green
+
+    Covers every input prefix the design promised (manual, gmail, news,
+    podcasts, substack, insiders) PLUS the downstream stages (prices,
+    fred, trade_scores, signals) so the operator sees the entire
+    pipeline at a glance.
+    """
+    from datetime import UTC, datetime as _dt
+
+    if not settings.sqlite_path.exists():
+        return {"sources": [], "as_of": _dt.now(UTC).isoformat()}
+
+    now = _dt.now(UTC)
+
+    def _classify(last_ts: str | None) -> tuple[float | None, str]:
+        if not last_ts:
+            return None, "red"
+        try:
+            ts = _dt.fromisoformat(last_ts.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None, "red"
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        minutes = (now - ts).total_seconds() / 60.0
+        if minutes > 24 * 60:
+            return minutes, "red"
+        if minutes > 6 * 60:
+            return minutes, "yellow"
+        return minutes, "green"
+
+    def _doc_source(*patterns: str) -> dict:
+        """Aggregate freshness for any source_id matching one of the
+        provided LIKE patterns. Patterns can be exact (`'google_news'`)
+        or wildcarded (`'substack:%'`). Multiple patterns OR-ed.
+        """
+        if not patterns:
+            return {"last_ts": None, "minutes_since": None,
+                    "docs_today": 0, "status": "red"}
+        clauses = " OR ".join("source_id LIKE ?" for _ in patterns)
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            row = conn.execute(
+                f"""
+                SELECT MAX(ingested_at) AS last_ts,
+                       SUM(CASE WHEN DATE(ingested_at) = DATE('now')
+                                THEN 1 ELSE 0 END) AS today
+                FROM documents
+                WHERE {clauses}
+                """,
+                tuple(patterns),
+            ).fetchone()
+        last_ts = row[0] if row else None
+        docs_today = int(row[1] or 0) if row else 0
+        minutes, status = _classify(last_ts)
+        return {
+            "last_ts": last_ts, "minutes_since": minutes,
+            "docs_today": docs_today, "status": status,
+        }
+
+    def _table_source(sql: str) -> dict:
+        try:
+            with sqlite3.connect(settings.sqlite_path) as conn:
+                row = conn.execute(sql).fetchone()
+        except sqlite3.OperationalError:
+            return {"last_ts": None, "minutes_since": None,
+                    "docs_today": 0, "status": "red"}
+        last_ts = row[0] if row else None
+        docs_today = int(row[1] or 0) if row and len(row) > 1 else 0
+        minutes, status = _classify(last_ts)
+        return {
+            "last_ts": last_ts, "minutes_since": minutes,
+            "docs_today": docs_today, "status": status,
+        }
+
+    # Gmail-ingested newsletters land under their bare newsletter slug
+    # (e.g. 'finimize', 'kaoboy_musings'), NOT a 'gmail:' prefix — so the
+    # Gmail tile must match those source_ids explicitly or it stays red even
+    # when ingestion is healthy. Source of truth: gmail_connector. Substack
+    # versions of the same publication carry a 'substack:' prefix, so the
+    # bare slug is unambiguously the Gmail path (no double-counting).
+    try:
+        from macro_positioning.ingestion.gmail_connector import NEWSLETTER_SOURCES
+        _gmail_patterns = ["gmail:%", "personal_gmail:%", "personal_gmail"]
+        _gmail_patterns += [s.source_id for s in NEWSLETTER_SOURCES]
+    except Exception:
+        _gmail_patterns = ["gmail:%", "personal_gmail:%", "personal_gmail"]
+
+    sources = [
+        {"key": "manual", "label": "Manual drops",
+         **_doc_source("manual:%")},
+        {"key": "gmail", "label": "Gmail",
+         **_doc_source(*_gmail_patterns)},
+        {"key": "news", "label": "Google News",
+         **_doc_source("google_news", "google_news:%",
+                       "news:%", "googlenews:%")},
+        {"key": "podcasts", "label": "Podcasts",
+         **_doc_source("podcast:%", "podcast_%",
+                       "forward_guidance", "wolf_of_all_streets",
+                       "real_vision_journeyman", "moonshots_diamandis")},
+        {"key": "substack", "label": "Substack",
+         **_doc_source("substack:%")},
+        {"key": "insiders", "label": "Insider scrapers",
+         **_table_source(
+             "SELECT MAX(last_run_at) AS last_ts, COUNT(*) "
+             "FROM insiders_cursor "
+             "WHERE last_run_at >= DATE('now')"
+         )},
+        {"key": "signals", "label": "Signal extraction",
+         **_table_source(
+             "SELECT MAX(extracted_at) AS last_ts, "
+             "       SUM(CASE WHEN DATE(extracted_at) = DATE('now') "
+             "                THEN 1 ELSE 0 END) "
+             "FROM signals"
+         )},
+        {"key": "prices", "label": "Prices (yfinance)",
+         **_table_source(
+             "SELECT MAX(fetched_at) AS last_ts, "
+             "       SUM(CASE WHEN DATE(fetched_at) = DATE('now') "
+             "                THEN 1 ELSE 0 END) "
+             "FROM prices"
+         )},
+        {"key": "fred", "label": "FRED",
+         **_table_source(
+             "SELECT MAX(fetched_at) AS last_ts, "
+             "       SUM(CASE WHEN DATE(fetched_at) = DATE('now') "
+             "                THEN 1 ELSE 0 END) "
+             "FROM fred_observations"
+         )},
+        {"key": "trade_scores", "label": "Scoring pass",
+         **_table_source(
+             "SELECT MAX(scored_at) AS last_ts, "
+             "       SUM(CASE WHEN DATE(scored_at) = DATE('now') "
+             "                THEN 1 ELSE 0 END) "
+             "FROM trade_scores"
+         )},
+    ]
+    return {
+        "sources": sources,
+        "as_of": now.isoformat(),
+    }
+
+
 def build_desk_snapshot() -> dict:
     """Assemble the full MA_DATA dict the SPA expects.
 
@@ -1294,6 +1548,8 @@ def build_desk_snapshot() -> dict:
         ("regime", build_regime_section, _empty_regime),
         ("kpis", build_kpis_section, build_kpis_section),
         ("heroSignals", build_hero_signals_section, list),
+        ("liveSignals", build_live_signals_section, list),
+        ("dataHealth", build_data_health_section, lambda: {"sources": [], "as_of": None}),
         ("watchlist", build_watchlist_section, list),
         ("activeTrades", build_active_trades_section, list),
         ("reasoning", build_reasoning_section, dict),

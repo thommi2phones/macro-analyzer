@@ -184,6 +184,13 @@ _AUTHOR_ALIASES: dict[str, str] = {
     "ig_Nuts": "Big_Nuts",
     "big_nuts": "Big_Nuts",
     "BigNuts": "Big_Nuts",
+    # joejoe55 — common tesseract misreads of the leading "j" or "5" digits.
+    "joejoe": "joejoe55",
+    "joejoes5": "joejoe55",
+    "ioejoe55": "joejoe55",
+    "joe_joe55": "joejoe55",
+    "Joejoe55": "joejoe55",
+    "JoeJoe55": "joejoe55",
 }
 
 

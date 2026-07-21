@@ -86,6 +86,10 @@ class RawDocument(BaseModel):
     url: str | None = None
     published_at: datetime = Field(default_factory=utc_now)
     author: str | None = None
+    # Optional attribution to an `input_authors` row (e.g. a podcast/newsletter
+    # that maps to a seeded author). Lets pipeline-ingested docs aggregate on
+    # the per-author leaderboard + source graph, same as manual drops.
+    author_id: str | None = None
     content_type: Literal["article", "post", "transcript", "report", "note"] = "article"
     raw_text: str
     tags: list[str] = Field(default_factory=list)
@@ -98,6 +102,7 @@ class NormalizedDocument(BaseModel):
     url: str | None = None
     published_at: datetime
     author: str | None = None
+    author_id: str | None = None
     content_type: str
     raw_text: str
     cleaned_text: str

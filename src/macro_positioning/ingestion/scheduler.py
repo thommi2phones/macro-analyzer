@@ -338,7 +338,15 @@ def run_cron(timezone_name: str = "America/Los_Angeles") -> None:
             "apscheduler not installed. Install optional deps: pip install .[stream-a]"
         ) from e
 
-    sched = BlockingScheduler(timezone=timezone_name)
+    # job_defaults make the scheduler resilient to laptop sleep: if the Mac is
+    # asleep at a job's scheduled time, the fire is "missed". misfire_grace_time
+    # =None tells APScheduler to run it anyway whenever the process next wakes
+    # (no lateness limit), and coalesce=True collapses several missed fires
+    # (e.g. asleep across two mornings) into a single catch-up run.
+    sched = BlockingScheduler(
+        timezone=timezone_name,
+        job_defaults={"misfire_grace_time": None, "coalesce": True},
+    )
     sched.add_job(_safe(morning_run), "cron", hour=7, minute=0, id="morning_run")
     sched.add_job(_safe(midday_refresh), "cron", hour=12, minute=0, id="midday_refresh")
     sched.add_job(_safe(post_close_recap), "cron", hour=16, minute=30, id="post_close_recap")

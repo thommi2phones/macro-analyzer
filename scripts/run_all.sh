@@ -36,15 +36,19 @@ start_if_absent() {
   fi
 }
 
-# 1. Telegram listener
+# NOTE ON AUTOMATION: the collectors are managed by launchd, not this script:
+#   - com.macro-analyzer.tg-listener  (KeepAlive listener)
+#   - com.macro.free-ingest           (06:00 + 13:00 free ingest/scoring, no paid LLM)
+# Both run `.venv/bin/python` directly (the interpreter granted Full Disk Access),
+# so they survive reboot/sleep on their own. This script only ensures the
+# listener is up (in case launchd is unloaded) and starts the dashboard server,
+# which is NOT a launchd job. Paid LLM extraction stays a manual, budgeted step.
+
+# 1. Telegram listener (launchd normally owns this; ensure it's up regardless)
 start_if_absent "listener" "start_telegram_listener.py" \
   "$UV run python scripts/start_telegram_listener.py --channels $CHANNELS"
 
-# 2. Ingest scheduler (cron loop)
-start_if_absent "scheduler" "ingestion.scheduler --cron" \
-  "$UV run python -m macro_positioning.ingestion.scheduler --cron"
-
-# 3. API server + dashboard (guard on the port, not just the pattern)
+# 2. API server + dashboard (guard on the port, not just the pattern)
 if lsof -ti ":$PORT" >/dev/null 2>&1; then
   skipped="$skipped api-server"
 else

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.macro.free-ingest</string>
+
+    <!-- Use the venv python DIRECTLY (not `uv run`): this interpreter has been
+         granted Full Disk Access, so launchd can reach the repo under
+         ~/Documents. `uv`/`bash` lack that grant and get TCC "Operation not
+         permitted". Same pattern as the working com.macro-analyzer.tg-listener. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/thom/Documents/Personal/Code Projects/Macro Analyzer/.venv/bin/python</string>
+        <string>scripts/daily_free_ingest.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/thom/Documents/Personal/Code Projects/Macro Analyzer</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/thom/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Run twice a day: 06:00 (overnight catch-up) and 13:00 (mid-day). -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key><integer>6</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>13</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+    </array>
+
+    <!-- One-shot batch job: exits when done, so no KeepAlive. If the Mac was
+         asleep at the scheduled time, launchd runs it once on next wake. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/thom/Library/Logs/macro-free-ingest.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/thom/Library/Logs/macro-free-ingest.err.log</string>
+</dict>
+</plist>

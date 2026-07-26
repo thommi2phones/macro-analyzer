@@ -1370,3 +1370,20 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
   padding: 0; display: inline-flex; align-items: center; gap: 6px;
 }
 .tb-status-btn:hover { color: var(--accent, #e0c060); }
+
+.streams-banner {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; margin: 10px 0 0;
+  padding: 8px 14px;
+  background: var(--bg-card); border: 1px solid var(--line);
+  border-left: 2px solid var(--green);
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+  color: var(--text-mute); text-align: left;
+  cursor: pointer;
+}
+.streams-banner:hover { color: var(--text); border-color: var(--line-2); }
+.streams-banner .dot-live { box-shadow: 0 0 0 3px rgba(111,179,122,0.18); }
+.streams-banner-label { color: var(--green); font-weight: 600; }
+.streams-banner-text { color: var(--text-mute-2); text-transform: none; letter-spacing: 0.04em; }
+.streams-banner-arrow { margin-left: auto; color: var(--text-mute-3); }
+.streams-banner:hover .streams-banner-arrow { color: var(--accent); }

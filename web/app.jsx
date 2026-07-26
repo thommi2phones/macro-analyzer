@@ -48,9 +48,6 @@ function App() {
         </nav>
         <div className="topbar-spacer"></div>
         <div className="topbar-right">
-          <button className="tb-status tb-status-btn" onClick={() => nav("streams")} title="View source streams">
-            <span className="dot-live"></span> LIVE · 26 sources →
-          </button>
           <span className="tb-status">
             <span className="rb-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold)", display: "inline-block" }}></span>
             {D.regime.framework.label.toUpperCase()} · {Math.round(D.regime.framework.confidence * 100)}%
@@ -61,6 +58,13 @@ function App() {
           </div>
         </div>
       </header>
+
+      <button className="streams-banner" onClick={() => nav("streams")} title="View source streams">
+        <span className="dot-live"></span>
+        <span className="streams-banner-label">LIVE</span>
+        <span className="streams-banner-text">26 sources streaming · click to view</span>
+        <span className="streams-banner-arrow">→</span>
+      </button>
 
       <FunnelRail view={view} onNav={nav} />
 

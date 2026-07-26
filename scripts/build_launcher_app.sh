@@ -24,6 +24,17 @@ EOF
 rm -rf "$APP"
 osacompile -o "$APP" "$SCPT"
 rm -f "$SCPT"
+
+# Apply the on-brand icon (osacompile ships a blank white default). Rebuild the
+# .icns from source with: python assets/branding/make_icon.py + iconutil.
+ICNS="/Users/thom/Documents/Personal/Code Projects/Macro Analyzer/assets/branding/macro_analyzer.icns"
+if [ -f "$ICNS" ]; then
+  cp "$ICNS" "$APP/Contents/Resources/applet.icns"
+  touch "$APP"
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" 2>/dev/null || true
+  killall Finder Dock 2>/dev/null || true
+fi
+
 echo "built: $APP"
 echo "First launch: approve the Documents/Files access prompt (or grant the app"
 echo "Full Disk Access in System Settings > Privacy & Security if it fails silently)."

@@ -44,6 +44,17 @@ PROMPT_PATH = Path("config/manual_chart_framework.md")
 # ── Image preprocessing ──────────────────────────────────────────────────────
 
 
+# Extension → media type as the Anthropic API expects it. Must match the
+# actual bytes: the API sniffs the payload and 400s on a mismatch.
+_MIME_BY_EXT = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+}
+
+
 def _resize_if_large(image_bytes: bytes, mime: str) -> tuple[bytes, str]:
     """Downscale wide images to `vision_resize_target_width` keeping aspect
     ratio. No-op if width <= `vision_max_image_width` or if Pillow isn't
@@ -191,7 +202,11 @@ def analyze_manual_chart(
 
     backend = settings.vision_backend or "cli"
     ext = p.suffix.lower().lstrip(".") or "png"
-    mime_in = "image/jpeg" if ext in ("jpg", "jpeg") else "image/png"
+    # Declare the REAL media type. Defaulting non-jpg to image/png made the
+    # API reject every .webp/.gif with a 400 ("appears to be a image/webp
+    # image") — and that error isn't in the drainer's transient list, so
+    # those docs got permanently cleared instead of retried.
+    mime_in = _MIME_BY_EXT.get(ext, "image/png")
     image_bytes, mime = _resize_if_large(raw_bytes, mime_in)
 
     system_prompt = _load_prompt()

@@ -844,6 +844,123 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
 
 
 # ---------------------------------------------------------------------------
+# Breakouts — the "CHECK THIS OUT" feed (velocity + acceleration ranked)
+# ---------------------------------------------------------------------------
+
+_WINDOW_MOMENTUM_DAYS = 42   # 6 weekly buckets for slope / acceleration
+_MOMENTUM_WEEKS = 6
+_BREAKOUTS_CAP = 30
+
+
+def _weekly_buckets(sigs: list[dict], now: datetime, n_weeks: int) -> tuple[list[int], datetime | None, set[str]]:
+    """Bucket a signal list into n_weeks weekly counts (oldest -> newest)."""
+    buckets = [0] * n_weeks
+    first_seen: datetime | None = None
+    sources: set[str] = set()
+    for s in sigs:
+        dt = s.get("extracted_at")
+        if dt is None:
+            continue
+        wk = int((now - dt).total_seconds() / 86400.0 // 7)  # 0 = current week
+        if 0 <= wk < n_weeks:
+            buckets[n_weeks - 1 - wk] += 1
+        if first_seen is None or dt < first_seen:
+            first_seen = dt
+        slug = s.get("source_slug") or s.get("author_id")
+        if slug:
+            sources.add(slug)
+    return buckets, first_seen, sources
+
+
+def _vote_direction(sigs: list[dict]) -> str:
+    """Trust*conviction-weighted bull/bear vote; mention-only rows abstain."""
+    score = 0.0
+    total_w = 0.0
+    for s in sigs:
+        if s.get("mention_only"):
+            continue
+        w = max(0.01, s.get("trust", 0.0)) * max(0.0, s.get("conviction", 0.0))
+        if w <= 0:
+            w = max(0.01, s.get("trust", 0.0))
+        total_w += w
+        if s.get("side") in _BULL_SIDES:
+            score += w
+        elif s.get("side") in _BEAR_SIDES:
+            score -= w
+    if total_w > 0 and abs(score) / total_w > 0.4:
+        return "bullish" if score > 0 else "bearish"
+    return "mixed"
+
+
+def build_breakouts(conn: sqlite3.Connection, *, now: datetime | None = None) -> list[dict]:
+    """Ranked feed of tickers + themes whose mention-rate is accelerating.
+
+    This is the culmination signal: it says "CHECK THIS OUT" so the operator
+    can verify. Momentum math lives in learning.theme_momentum; here we bucket
+    the corpus by ticker and by theme over 6 weeks, score each, attach the
+    context needed to verify (direction, who's calling it, weekly shape), and
+    rank by breakout_score.
+    """
+    from macro_positioning.learning.theme_momentum import compute_momentum
+
+    now = _now(now)
+    signals = _load_signals(conn, _WINDOW_MOMENTUM_DAYS, now)
+    mentions = _load_document_mentions(conn, _WINDOW_MOMENTUM_DAYS, now)
+    corpus = [s for s in (signals + mentions) if s.get("extracted_at") is not None]
+    if not corpus:
+        return []
+
+    ticker_idx = _ticker_theme_index()
+    _JUNK = {"", "N/A", "NA", "NONE", "NULL", "?", "TBD", "UNKNOWN"}
+
+    by_ticker: dict[str, list[dict]] = defaultdict(list)
+    by_theme: dict[str, list[dict]] = defaultdict(list)
+    for s in corpus:
+        tk = (s.get("asset_ticker") or "").strip().upper()
+        if tk and tk not in _JUNK:
+            by_ticker[tk].append(s)
+        for theme in _signal_themes(s, ticker_idx):
+            by_theme[theme].append(s)
+
+    out: list[dict] = []
+
+    def _emit(kind: str, key: str, label: str, sigs: list[dict]) -> None:
+        buckets, first_seen, sources = _weekly_buckets(sigs, now, _MOMENTUM_WEEKS)
+        if sum(buckets) < 3:
+            return
+        mom = compute_momentum(buckets)
+        # Only surface things actually worth a look; quiet/fading fall away.
+        if mom.status in ("quiet", "fading"):
+            return
+        # Breadth: single-source spikes are demoted (one loud voice != a trend).
+        n_sources = len(sources)
+        breadth = min(1.0, 0.5 + 0.25 * n_sources)  # 1 src ->0.75, >=2 ->1.0
+        adj_score = mom.breakout_score * breadth
+        out.append({
+            "kind": kind,
+            "id": key,
+            "label": label,
+            "direction": _vote_direction(sigs),
+            "n_sources": n_sources,
+            "sources": sorted(sources)[:8],
+            "mentions_by_week": buckets,
+            "age_days": int((now - first_seen).total_seconds() / 86400.0) if first_seen else 0,
+            "score": round(adj_score, 1),
+            **mom.to_dict(),
+        })
+
+    for tk, sigs in by_ticker.items():
+        _emit("asset", tk, tk, sigs)
+    for theme_id, sigs in by_theme.items():
+        _emit("theme", theme_id, _title_label(theme_id), sigs)
+
+    # Rank: breakouts first, then by adjusted score.
+    _rank = {"breakout": 0, "building": 1, "peaking": 2}
+    out.sort(key=lambda x: (_rank.get(x["status"], 9), -x["score"]))
+    return out[:_BREAKOUTS_CAP]
+
+
+# ---------------------------------------------------------------------------
 # S2 — concepts
 # ---------------------------------------------------------------------------
 
@@ -1125,9 +1242,14 @@ def build_streams_section(conn: sqlite3.Connection, *, now: datetime | None = No
         source_graph = build_source_graph(conn, now=now)
     except Exception:
         source_graph = {"nodes": [], "links": []}
+    try:
+        breakouts = build_breakouts(conn, now=now)
+    except Exception:
+        breakouts = []
     return {
         "themeMap":    theme_map,
         "assetMap":    asset_map,
         "concepts":    concepts,
         "sourceGraph": source_graph,
+        "breakouts":   breakouts,
     }

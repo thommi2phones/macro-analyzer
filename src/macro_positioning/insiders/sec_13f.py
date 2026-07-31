@@ -84,14 +84,27 @@ def _recent_13f_filings(cik: str) -> list[dict]:
 
 
 def _info_table_for(cik: str, accession: str) -> Optional[bytes]:
-    """Fetch the info-table XML inside a 13F-HR accession."""
+    """Fetch the info-table XML inside a 13F-HR accession.
+
+    Recent filings name the info table with an opaque numeric slug
+    (e.g. `53405.xml`) rather than the old `*infotable*.xml`, so the
+    name-based regex no longer matches. Instead take any `.xml` in the
+    accession dir that isn't `primary_doc.xml` (the cover page) or an
+    XSLT-rendered view (`/xsl…/`).
+    """
     acc_dir = accession.replace("-", "")
     index_url = f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/{acc_dir}/"
     body = edgar_client.get_text(index_url)
-    m = _INFO_TABLE_HREF.search(body)
-    if not m:
+    hrefs = re.findall(
+        r'href="(/Archives/edgar/data/\d+/\d+/[^"]+\.xml)"', body, re.IGNORECASE
+    )
+    info = [
+        h for h in hrefs
+        if "primary_doc" not in h.lower() and "/xsl" not in h.lower()
+    ]
+    if not info:
         return None
-    return edgar_client.get("https://www.sec.gov" + m.group(1))
+    return edgar_client.get("https://www.sec.gov" + info[0])
 
 
 def _parse_info_table(xml_bytes: bytes) -> dict[str, dict]:
@@ -99,7 +112,11 @@ def _parse_info_table(xml_bytes: bytes) -> dict[str, dict]:
     # 13F info tables use a namespace.
     text = xml_bytes.decode("utf-8", errors="replace")
     # Strip namespaces — easier than juggling them across XSD versions.
+    # Remove both the xmlns declarations AND the `prefix:` on element tags;
+    # dropping only the declaration leaves prefixed tags like `<ns1:infoTable>`
+    # that ElementTree then rejects with "unbound prefix".
     text = re.sub(r"\sxmlns(:\w+)?=\"[^\"]+\"", "", text)
+    text = re.sub(r"(</?)\w+:", r"\1", text)
     root = ET.fromstring(text)
     out: dict[str, dict] = {}
     for entry in root.findall(".//infoTable"):
@@ -152,9 +169,10 @@ def _resolve_cusips(cusips: list[str]) -> dict[str, str]:
 
     import httpx  # type: ignore
 
-    # Batch 100 at a time, polite spacing.
-    for i in range(0, len(todo), 100):
-        chunk = todo[i:i + 100]
+    # OpenFIGI caps *keyless* requests at 10 jobs each (100 needs an API
+    # key); sending 100 returns 413 Payload Too Large. Batch 10 at a time.
+    for i in range(0, len(todo), 10):
+        chunk = todo[i:i + 10]
         payload = [{"idType": "ID_CUSIP", "idValue": c} for c in chunk]
         try:
             with httpx.Client(timeout=20.0, headers={"User-Agent": "macro-analyzer/0.1"}) as client:

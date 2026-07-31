@@ -217,12 +217,19 @@ def _atom_entries(form_type: str = "4", count: int = _DEFAULT_COUNT) -> list[dic
 
 
 def _form_xml_url_from_index(index_url: str) -> Optional[str]:
-    """Pull the form4/form5 XML href out of an accession index page."""
+    """Pull the form4/form5 XML href out of an accession index page.
+
+    EDGAR index pages link the XSLT-*rendered* HTML view of the ownership
+    doc (path segment `/xslF345X0N/…`), which parses as HTML, not the raw
+    `<ownershipDocument>` XML our parser expects. The machine-readable XML
+    is the sibling URL with that segment removed, so strip any `/xsl…/`.
+    """
     body = edgar_client.get_text(index_url)
     m = _FORM_XML_HREF.search(body)
     if not m:
         return None
-    return "https://www.sec.gov" + m.group(1)
+    href = re.sub(r"/xsl[^/]+/", "/", m.group(1))
+    return "https://www.sec.gov" + href
 
 
 def fetch_since(

@@ -1444,7 +1444,7 @@ def build_data_health_section() -> dict:
             row = conn.execute(
                 f"""
                 SELECT MAX(ingested_at) AS last_ts,
-                       SUM(CASE WHEN DATE(ingested_at) = DATE('now')
+                       SUM(CASE WHEN DATE(ingested_at, 'localtime') = DATE('now', 'localtime')
                                 THEN 1 ELSE 0 END) AS today
                 FROM documents
                 WHERE {clauses}
@@ -1505,33 +1505,33 @@ def build_data_health_section() -> dict:
          **_table_source(
              "SELECT MAX(last_run_at) AS last_ts, COUNT(*) "
              "FROM insiders_cursor "
-             "WHERE last_run_at >= DATE('now')"
+             "WHERE DATE(last_run_at, 'localtime') = DATE('now', 'localtime')"
          )},
         {"key": "signals", "label": "Signal extraction",
          **_table_source(
              "SELECT MAX(extracted_at) AS last_ts, "
-             "       SUM(CASE WHEN DATE(extracted_at) = DATE('now') "
+             "       SUM(CASE WHEN DATE(extracted_at, 'localtime') = DATE('now', 'localtime') "
              "                THEN 1 ELSE 0 END) "
              "FROM signals"
          )},
         {"key": "prices", "label": "Prices (yfinance)",
          **_table_source(
              "SELECT MAX(fetched_at) AS last_ts, "
-             "       SUM(CASE WHEN DATE(fetched_at) = DATE('now') "
+             "       SUM(CASE WHEN DATE(fetched_at, 'localtime') = DATE('now', 'localtime') "
              "                THEN 1 ELSE 0 END) "
              "FROM prices"
          )},
         {"key": "fred", "label": "FRED",
          **_table_source(
              "SELECT MAX(fetched_at) AS last_ts, "
-             "       SUM(CASE WHEN DATE(fetched_at) = DATE('now') "
+             "       SUM(CASE WHEN DATE(fetched_at, 'localtime') = DATE('now', 'localtime') "
              "                THEN 1 ELSE 0 END) "
              "FROM fred_observations"
          )},
         {"key": "trade_scores", "label": "Scoring pass",
          **_table_source(
              "SELECT MAX(scored_at) AS last_ts, "
-             "       SUM(CASE WHEN DATE(scored_at) = DATE('now') "
+             "       SUM(CASE WHEN DATE(scored_at, 'localtime') = DATE('now', 'localtime') "
              "                THEN 1 ELSE 0 END) "
              "FROM trade_scores"
          )},

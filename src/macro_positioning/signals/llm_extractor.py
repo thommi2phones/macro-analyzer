@@ -129,7 +129,10 @@ def _build_user_prompt(document: dict) -> str:
     if tags_json:
         try:
             tags = json.loads(tags_json)
-            hint_tickers = tags.get("tickers") or []
+            # Legacy docs store tags_json as a bare list (["archive","chart"]);
+            # only the dict form carries a "tickers" hint. Guard so a list
+            # doesn't crash the whole extraction with AttributeError.
+            hint_tickers = tags.get("tickers") or [] if isinstance(tags, dict) else []
             if hint_tickers:
                 parts.append(f"PRE_DETECTED_TICKERS: {', '.join(hint_tickers)}")
         except (TypeError, ValueError):
@@ -140,10 +143,10 @@ def _build_user_prompt(document: dict) -> str:
     if meta_json:
         try:
             meta = json.loads(meta_json)
-            user = meta.get("user") or {}
-            if any(user.values()):
+            user = (meta.get("user") or {}) if isinstance(meta, dict) else {}
+            if user and any(user.values()):
                 parts.append(f"USER_METADATA: {json.dumps(user)}")
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError):
             pass
 
     body = document.get("cleaned_text") or document.get("raw_text") or ""

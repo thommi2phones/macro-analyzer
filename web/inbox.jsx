@@ -44,6 +44,67 @@ function _levelClassify(l) {
   return _classifyLevel(l);
 }
 
+// Human label for a non-directional call_type — shown in place of a bias
+// badge for drops the vision layer flagged as carrying no actionable call
+// (a price-ticker screenshot, a chart with no setup, a recap, …).
+const _CALL_TYPE_LABEL = {
+  no_trade: "no trade",
+  not_a_chart: "not a chart",
+  retrospective: "recap",
+  bidirectional: "both ways",
+};
+function _callTypeLabel(ct) {
+  return _CALL_TYPE_LABEL[(ct || "").toLowerCase()] || null;
+}
+
+// Per-ticker summary shown in the collapsed section header: how fresh the
+// setup is (newest drop age + decay status) and where sentiment sits (bull
+// vs bear counts across the loaded drops).
+function _summarizeDrops(drops) {
+  if (!Array.isArray(drops) || drops.length === 0) return null;
+  let bull = 0, bear = 0, neut = 0;
+  let latestTs = 0, latestDrop = null;
+  let freshestDecay = "unknown";
+  const decayRank = { active: 3, aging: 2, stale: 1, unknown: 0 };
+  for (const d of drops) {
+    const b = (d.bias || "").toLowerCase();
+    if (b.startsWith("bull")) bull++;
+    else if (b.startsWith("bear")) bear++;
+    else neut++;
+    const ts = Date.parse(d.published_at || "") || 0;
+    if (ts > latestTs) { latestTs = ts; latestDrop = d; }
+    const ds = d.decay?.signal_status || "unknown";
+    if ((decayRank[ds] || 0) > (decayRank[freshestDecay] || 0)) freshestDecay = ds;
+  }
+  const total = bull + bear + neut;
+  const bullPct = Math.round((bull / total) * 100);
+  const bearPct = Math.round((bear / total) * 100);
+  const neutPct = Math.max(0, 100 - bullPct - bearPct);
+  let dominant = "neutral", sentimentLabel = "";
+  if (bull > bear && bull > neut) { dominant = "bull"; sentimentLabel = `${bullPct}% bullish`; }
+  else if (bear > bull && bear > neut) { dominant = "bear"; sentimentLabel = `${bearPct}% bearish`; }
+  else if (bull === bear && bull > 0) { dominant = "mixed"; sentimentLabel = "mixed"; }
+  else { dominant = "neutral"; sentimentLabel = `${neutPct}% neutral`; }
+
+  let ageLabel = "";
+  if (latestTs) {
+    const days = Math.max(0, Math.floor((Date.now() - latestTs) / 86400000));
+    if (days === 0) ageLabel = "today";
+    else if (days === 1) ageLabel = "1d ago";
+    else if (days < 30) ageLabel = `${days}d ago`;
+    else if (days < 365) ageLabel = `${Math.round(days / 30)}mo ago`;
+    else ageLabel = `${Math.round(days / 365)}y ago`;
+  }
+  return {
+    latest: latestDrop,
+    ageLabel,
+    freshness: freshestDecay,
+    bull, bear, neut, bullPct, bearPct, neutPct,
+    dominant, sentimentLabel,
+    hasSentiment: total > 0,
+  };
+}
+
 // ── Attribution card with inline reassign ──
 // Renders the document's current FROM line as a clickable chip. Click
 // → fetches the seeded author picklist → user selects → PATCH the
@@ -204,7 +265,13 @@ function ChartDropDetail({ historyRow, attachmentPaths = [], onJumpToAsset }) {
         </button>
         {tf && <span className="cd-tf">{tf}</span>}
         {meta.side && <span className={`cd-badge cd-side-${meta.side.toLowerCase()}`}>{meta.side}</span>}
-        {aiBias && <span className={`cd-badge bias-${String(aiBias).toLowerCase()}`}>● AI: {aiBias}</span>}
+        {aiBias && !["no_trade", "not_a_chart", "retrospective"].includes(String(features?.call_type || "").toLowerCase())
+          ? <span className={`cd-badge bias-${String(aiBias).toLowerCase()}`}>● AI: {aiBias}</span>
+          : _callTypeLabel(features?.call_type) && (
+              <span className="cd-badge dim" title="non-directional — no actionable call">
+                AI: {_callTypeLabel(features?.call_type)}
+              </span>
+            )}
         {synth.alignment === "agree" && <span className="cd-badge cd-agree">↔ aligned</span>}
         {synth.alignment === "disagree" && <span className="cd-badge cd-disagree">⚡ split view</span>}
       </div>
@@ -1588,6 +1655,7 @@ function TrustedSourceThemes() {
   const [windowDays, setWindowDays] = useIS(90);
   const [accuracy, setAccuracy] = useIS({});
   const [activeId, setActiveId] = useIS(null);
+  const [sortBy, setSortBy] = useIS("trust"); // trust | drops | analyzed | name
 
   useIE(() => {
     let cancelled = false;
@@ -1613,7 +1681,17 @@ function TrustedSourceThemes() {
     return () => { cancelled = true; window.removeEventListener("macro:author-reassigned", onReassign); };
   }, [windowDays]);
 
-  const authors = (data && data.authors) || [];
+  const rawAuthors = (data && data.authors) || [];
+  const authors = React.useMemo(() => {
+    const list = rawAuthors.slice();
+    list.sort((a, b) => {
+      if (sortBy === "name")     return String(a.display_name).localeCompare(String(b.display_name));
+      if (sortBy === "drops")    return (b.n_drops || 0) - (a.n_drops || 0);
+      if (sortBy === "analyzed") return (b.n_with_vision || 0) - (a.n_with_vision || 0);
+      return (b.trust_weight || 0) - (a.trust_weight || 0); // default: trust
+    });
+    return list;
+  }, [rawAuthors, sortBy]);
   const active = authors.find(a => a.author_id === activeId) || authors[0] || null;
 
   return (
@@ -1642,22 +1720,32 @@ function TrustedSourceThemes() {
         <div className="inbox-empty">No analyzed drops yet from trusted sources in this window.</div>
       ) : (
         <>
-          <div className="ts-author-tabs" role="tablist">
-            {authors.map(a => {
-              const on = active && active.author_id === a.author_id;
-              return (
-                <button key={a.author_id}
-                  role="tab"
-                  aria-selected={!!on}
-                  className={`ts-author-tab ${on ? "on" : ""}`}
-                  onClick={() => setActiveId(a.author_id)}
-                  title={`${a.display_name}${a.channel ? " · " + a.channel : ""} · ${a.n_drops} drops`}>
-                  <span className="ts-author-tab-name">{a.display_name}</span>
-                  <span className="ts-author-tab-meta mono dim">{a.n_with_vision}/{a.n_drops}</span>
-                  <span className="ts-trust mono">{a.trust_weight.toFixed(1)}x</span>
-                </button>
-              );
-            })}
+          <div className="ts-author-picker">
+            <label className="ts-picker-lbl mono small muted">Source</label>
+            <select
+              className="ts-picker-select"
+              value={active?.author_id || ""}
+              onChange={(e) => setActiveId(e.target.value)}>
+              {authors.map(a => (
+                <option key={a.author_id} value={a.author_id}>
+                  {a.display_name}
+                  {a.channel ? ` · ${a.channel}` : ""}
+                  {"  —  "}
+                  {a.trust_weight.toFixed(1)}x trust · {a.n_with_vision}/{a.n_drops} analyzed
+                </option>
+              ))}
+            </select>
+            <span className="ts-picker-count mono small muted">
+              {authors.length} source{authors.length === 1 ? "" : "s"}
+            </span>
+            <div className="ts-picker-sort">
+              <span className="mono small muted">sort:</span>
+              {[["trust","trust"],["drops","drops"],["analyzed","analyzed"],["name","A→Z"]].map(([k, lbl]) => (
+                <button key={k}
+                  className={`filter-pill ${sortBy === k ? "on" : ""}`}
+                  onClick={() => setSortBy(k)}>{lbl}</button>
+              ))}
+            </div>
           </div>
           {active && (
             <TrustedAuthorDetail
@@ -1715,7 +1803,13 @@ function TickerDrillDown({ authorId, ticker, onClose }) {
               )}
               <div className="ts-drill-body">
                 <div className="ts-drill-row-head">
-                  {d.bias && <span className={`cd-badge ${biasCls}`}>● {d.bias}</span>}
+                  {d.bias
+                    ? <span className={`cd-badge ${biasCls}`}>● {d.bias}</span>
+                    : _callTypeLabel(d.call_type) && (
+                        <span className="cd-badge dim" title="non-directional — no actionable call">
+                          {_callTypeLabel(d.call_type)}
+                        </span>
+                      )}
                   {d.timeframe && <span className="cd-tf">{d.timeframe}</span>}
                   <span className="dim mono">{(d.published_at || "").slice(0, 10)}</span>
                   {/* Freshness badge — active (green) / aging (gold) /
@@ -1803,11 +1897,14 @@ function TrustedAuthorDetail({ a, acc, windowDays }) {
   // dropsByTicker: { TICKER: {loading, drops:[]} }
   const [dropsByTicker, setDropsByTicker] = useIS({});
   const [dropDetail, setDropDetail] = useIS(null); // full-view drop for modal
-  const [openTicker, setOpenTicker] = useIS(null); // scroll target on chip click
+  // Which section is expanded. Collapsed by default so the gallery reads as
+  // a scannable table of contents (ticker + freshness + sentiment per row).
+  const [expanded, setExpanded] = useIS(() => new Set());
 
   useIE(() => {
     // Reset when author or window changes.
     setDropsByTicker({});
+    setExpanded(new Set());
     let cancelled = false;
     galleryTickers.order.forEach(t => {
       const url = `/api/manual/themes/author/${encodeURIComponent(a.author_id)}/ticker/${encodeURIComponent(t)}?window_days=${windowDays}`;
@@ -1822,11 +1919,28 @@ function TrustedAuthorDetail({ a, acc, windowDays }) {
     return () => { cancelled = true; };
   }, [a.author_id, windowDays, galleryTickers.order.join(",")]);
 
-  function jumpTo(t) {
-    setOpenTicker(t);
-    const el = document.getElementById(`ts-gallery-${a.author_id}-${t}`);
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  function toggleExpand(t) {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t); else next.add(t);
+      return next;
+    });
   }
+
+  function jumpTo(t) {
+    setExpanded(prev => {
+      if (prev.has(t)) return prev;
+      const next = new Set(prev); next.add(t); return next;
+    });
+    // Wait a tick for the section to expand before scrolling.
+    setTimeout(() => {
+      const el = document.getElementById(`ts-gallery-${a.author_id}-${t}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 40);
+  }
+
+  function expandAll() { setExpanded(new Set(galleryTickers.order)); }
+  function collapseAll() { setExpanded(new Set()); }
 
   return (
     <div className="ts-detail">
@@ -1877,7 +1991,7 @@ function TrustedAuthorDetail({ a, acc, windowDays }) {
               ].filter(Boolean).join(" · ");
               return (
                 <button key={hc.ticker}
-                  className={`ts-chip ts-chip-${hc.bias} ts-chip-button ${convClass} ${openTicker === hc.ticker ? "on" : ""} ${allStale ? "ts-chip-faded" : ""}`}
+                  className={`ts-chip ts-chip-${hc.bias} ts-chip-button ${convClass} ${expanded.has(hc.ticker) ? "on" : ""} ${allStale ? "ts-chip-faded" : ""}`}
                   title={tt}
                   onClick={() => jumpTo(hc.ticker)}>
                   <strong>{hc.ticker}</strong>
@@ -1909,7 +2023,13 @@ function TrustedAuthorDetail({ a, acc, windowDays }) {
 
       {/* ── Chart gallery grouped by ticker ─────────────────────────── */}
       <div className="ts-section">
-        <div className="ts-section-title">Chart gallery · click any chart for full detail</div>
+        <div className="ts-gallery-toolbar">
+          <div className="ts-section-title" style={{ marginRight: "auto" }}>
+            Chart gallery · click a row to expand · click a chart for full detail
+          </div>
+          <button className="filter-pill" onClick={expandAll}>expand all</button>
+          <button className="filter-pill" onClick={collapseAll}>collapse all</button>
+        </div>
         {galleryTickers.order.length === 0 && (
           <div className="dim cd-text">No mentioned tickers in this window.</div>
         )}
@@ -1917,27 +2037,58 @@ function TrustedAuthorDetail({ a, acc, windowDays }) {
           const m = galleryTickers.meta[t];
           const bucket = dropsByTicker[t];
           const drops = bucket ? bucket.drops : null;
+          const isOpen = expanded.has(t);
+          const summary = _summarizeDrops(drops);
           return (
-            <div key={t} id={`ts-gallery-${a.author_id}-${t}`} className="ts-gallery-section">
-              <div className="ts-gallery-head">
+            <div key={t} id={`ts-gallery-${a.author_id}-${t}`}
+                 className={`ts-gallery-section ${isOpen ? "on" : ""}`}>
+              <button className="ts-gallery-head" onClick={() => toggleExpand(t)}
+                      aria-expanded={isOpen}>
+                <span className="ts-gallery-caret mono">{isOpen ? "▾" : "▸"}</span>
                 <strong className="ts-gallery-ticker">{t}</strong>
                 {m.conv != null && (
                   <span className={`ts-gallery-conv mono ${m.conv >= 75 ? "ts-conv-strong" : m.conv >= 50 ? "ts-conv-mid" : "ts-conv-soft"}`}>
                     <span className="ts-conv-score mono">{m.conv}</span>
                   </span>
                 )}
-                <span className="dim mono">
+                <span className="dim mono ts-gallery-count">
                   {drops == null ? "loading…" : `${drops.length} drop${drops.length === 1 ? "" : "s"}`}
                 </span>
-              </div>
-              {drops == null ? (
-                <div className="ts-gallery-loading dim mono">Loading charts…</div>
-              ) : drops.length === 0 ? (
-                <div className="dim cd-text">No drops in this window.</div>
-              ) : (
-                <div className="ts-gallery-grid">
-                  {drops.map(d => <ChartGalleryCard key={d.document_id} d={d} onOpen={() => setDropDetail(d)} />)}
-                </div>
+                {summary && (
+                  <>
+                    {summary.latest && (
+                      <span className={`ts-freshness ts-decay-${summary.freshness}`}
+                            title={`${summary.freshness} · latest drop ${summary.ageLabel}`}>
+                        {summary.freshness.toUpperCase()} · {summary.ageLabel}
+                      </span>
+                    )}
+                    {summary.sentimentLabel && (
+                      <span className={`ts-sentiment ts-sent-${summary.dominant}`}
+                            title={`${summary.bullPct}% bull · ${summary.neutPct}% neutral · ${summary.bearPct}% bear`}>
+                        {summary.sentimentLabel}
+                      </span>
+                    )}
+                    {summary.hasSentiment && (
+                      <span className="ts-bias-bar ts-bias-bar-mini"
+                            title={`${summary.bullPct}% bull · ${summary.neutPct}% neutral · ${summary.bearPct}% bear`}>
+                        <span className="ts-bias-seg ts-bias-bull" style={{ width: `${summary.bullPct}%` }} />
+                        <span className="ts-bias-seg ts-bias-neut" style={{ width: `${summary.neutPct}%` }} />
+                        <span className="ts-bias-seg ts-bias-bear" style={{ width: `${summary.bearPct}%` }} />
+                      </span>
+                    )}
+                  </>
+                )}
+              </button>
+              {isOpen && (
+                drops == null ? (
+                  <div className="ts-gallery-loading dim mono">Loading charts…</div>
+                ) : drops.length === 0 ? (
+                  <div className="dim cd-text">No drops in this window.</div>
+                ) : (
+                  <div className="ts-gallery-grid">
+                    {drops.map(d => <ChartGalleryCard key={d.document_id} d={d} onOpen={() => setDropDetail(d)} />)}
+                  </div>
+                )
               )}
             </div>
           );
@@ -2074,7 +2225,13 @@ function DropDetailModal({ d, onClose }) {
           )}
           <div className="ts-modal-text">
             <div className="ts-drill-row-head">
-              {d.bias && <span className={`cd-badge ${biasCls}`}>● {d.bias}</span>}
+              {d.bias
+                ? <span className={`cd-badge ${biasCls}`}>● {d.bias}</span>
+                : _callTypeLabel(d.call_type) && (
+                    <span className="cd-badge dim" title="non-directional — no actionable call">
+                      {_callTypeLabel(d.call_type)}
+                    </span>
+                  )}
               {typeof d.timeframe === "string" && d.timeframe && <span className="cd-tf">{d.timeframe}</span>}
               <span className="dim mono">{(d.published_at || "").slice(0, 10)}</span>
               {d.decay && (

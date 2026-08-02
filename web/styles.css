@@ -4602,3 +4602,64 @@ body { font-size: 15.5px; }
 :root:not([data-theme="dark"]) .streams-tab { font-size: 13px; }
 :root:not([data-theme="dark"]) .streams-tab-sub { font-size: 12px; }
 :root:not([data-theme="dark"]) .streams-banner { font-size: 12.5px; }
+
+/* Trusted-source picker (replaces the author-tab pill grid) */
+.ts-author-picker {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 12px 20px 6px;
+  border-bottom: 1px solid var(--line-soft, var(--line));
+}
+.ts-picker-lbl { text-transform: uppercase; letter-spacing: 0.12em; }
+.ts-picker-select {
+  min-width: 320px;
+  padding: 10px 32px 10px 14px;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--line-2, var(--line));
+  border-radius: 8px;
+  font-family: inherit; font-size: 13.5px; font-weight: 500;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' stroke='%23576274' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+.ts-picker-select:focus {
+  outline: none;
+  border-color: var(--accent, #b0862f);
+  box-shadow: 0 0 0 3px rgba(176,134,47,0.15);
+}
+.ts-picker-count { margin-left: 2px; }
+.ts-picker-sort {
+  display: flex; align-items: center; gap: 6px;
+  margin-left: auto;
+}
+
+/* Conviction-pick chips need visible outlines on paper theme */
+:root:not([data-theme="dark"]) .ts-chip {
+  background: var(--bg-card);
+  border: 1px solid var(--line-2, #b9b3a2);
+  color: var(--text);
+  padding: 4px 10px;
+  font-size: 12.5px;
+}
+:root:not([data-theme="dark"]) .ts-chip-bullish {
+  background: color-mix(in srgb, var(--green, #25915d) 8%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--green, #25915d) 45%, var(--line-2));
+}
+:root:not([data-theme="dark"]) .ts-chip-bullish strong { color: var(--green, #25915d); }
+:root:not([data-theme="dark"]) .ts-chip-bearish {
+  background: color-mix(in srgb, var(--red, #cf5346) 8%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--red, #cf5346) 45%, var(--line-2));
+}
+:root:not([data-theme="dark"]) .ts-chip-bearish strong { color: var(--red, #cf5346); }
+:root:not([data-theme="dark"]) .ts-chip-neutral {
+  background: color-mix(in srgb, var(--gold, #b0862f) 8%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--gold, #b0862f) 45%, var(--line-2));
+}
+:root:not([data-theme="dark"]) .ts-chip-neutral strong { color: var(--gold, #b0862f); }
+:root:not([data-theme="dark"]) .ts-conv-score {
+  border: 1px solid var(--line-2, #b9b3a2);
+  background: var(--bg-card-2);
+  padding: 2px 7px;
+}

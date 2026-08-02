@@ -1,8 +1,8 @@
-// App shell + routing.
+// App shell + routing — sidebar rail + calm canvas (design-folder shell).
 
 const { useState: useS, useMemo: useM, useEffect: useE } = React;
 
-// Live wall-clock for the topbar. Updates every 30s; uses ET (America/New_York)
+// Live wall-clock for the page head. Updates every 30s; uses ET (America/New_York)
 // since that's the trading session reference. Falls back to local tz if Intl
 // can't resolve the zone (older browsers/restrictive environments).
 function useLiveClock() {
@@ -31,9 +31,66 @@ function useLiveClock() {
   return { timeStr, dayStr };
 }
 
+// Side-panel nav: top-level groups; the funnel + discovery groups expand
+// into subsections when active (or when a child view is active).
+const NAV = [
+  {
+    id: "positioning", label: "Positioning",
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/><circle cx="12" cy="12" r="2.3"/></svg>,
+    children: [
+      { id: "positioning", label: "Desk",      num: "P" },
+      { id: "concepts",    label: "Concepts",  num: "C" },
+      { id: "identify",    label: "Identify",  num: "I" },
+      { id: "live",        label: "Live",      num: "L" },
+    ],
+  },
+  {
+    id: "journal", label: "Journal",
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M6 4.5h10a2 2 0 0 1 2 2v13H8a2 2 0 0 1-2-2Z"/><path d="M6 17.5h12"/><path d="M9.5 9h5M9.5 12.5h5"/></svg>,
+  },
+  {
+    id: "streams", label: "Streams",
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="12" r="2.3"/><circle cx="18" cy="6" r="2.3"/><circle cx="18" cy="18" r="2.3"/><path d="M8.1 10.9 15.9 7.1M8.1 13.1 15.9 16.9"/></svg>,
+    children: [
+      { id: "streams",   label: "Theme trends", num: "U1" },
+      { id: "sources",   label: "Sources",      num: "U2" },
+      { id: "influence", label: "Influence",    num: "U2b" },
+      { id: "inbox",     label: "Manual input", num: "U3" },
+    ],
+  },
+  {
+    id: "dev", label: "Dev",
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M8.5 8 5 12l3.5 4M15.5 8 19 12l-3.5 4"/></svg>,
+  },
+];
+
+// Which top-level group owns each view (for highlighting + expansion).
+const GROUP_OF = {
+  positioning: "positioning", concepts: "positioning", identify: "positioning", live: "positioning",
+  journal: "journal",
+  streams: "streams", sources: "streams", influence: "streams", inbox: "streams",
+  dev: "dev",
+};
+
+// Page-head eyebrow + title per view.
+const SECTIONS = {
+  positioning: ["Live desk", "Positioning"],
+  concepts:    ["Funnel", "Concepts"],
+  identify:    ["Funnel", "Identify"],
+  live:        ["Funnel", "Live trades"],
+  journal:     ["Review", "Journal"],
+  streams:     ["Discovery", "Streams"],
+  sources:     ["Discovery", "Sources"],
+  influence:   ["Discovery", "Influence"],
+  inbox:       ["Input", "Manual input"],
+  dev:         ["System", "Dev"],
+};
+
 function App() {
   const [view, setView] = useS("positioning");
-  const [openSig, setOpenSig] = useS(null);
+  const [assetSig, setAssetSig] = useS(null);
+  // remember which top-level view to return to from an asset page
+  const [returnTo, setReturnTo] = useS("positioning");
   const clock = useLiveClock();
 
   // Cross-page focus: when /concepts promotes a concept, /identify
@@ -41,20 +98,30 @@ function App() {
   // jumps to the newly opened trade. Cleared on the next manual nav.
   const [focusPlanId, setFocusPlanId] = useS(null);
   const [focusTradeId, setFocusTradeId] = useS(null);
-  const nav = (v) => { setFocusPlanId(null); setFocusTradeId(null); setView(v); };
+  const nav = (v) => { setFocusPlanId(null); setFocusTradeId(null); setAssetSig(null); setView(v); };
+
+  const goAsset = (sig) => {
+    setReturnTo(view === "asset" ? returnTo : view);
+    setAssetSig(sig);
+    setView("asset");
+    window.scrollTo({ top: 0, behavior: "instant" });
+  };
+  const goBack = () => {
+    setView(returnTo || "positioning");
+    setAssetSig(null);
+  };
 
   // Cross-view nav from /manual input: when a user clicks a chart's
   // ticker in the analyzed extraction, we dispatch macro:open-asset
-  // → switch to /positioning → open the reasoning trail if MA_DATA
-  // has a matching signal.
+  // → open the asset detail page if MA_DATA has a matching signal.
   useE(() => {
     function onOpenAsset(e) {
       const wanted = String(e.detail?.ticker || "").toUpperCase().split("/")[0];
-      nav("positioning");
       try {
         const D = window.MA_DATA || {};
         const pools = [
           ...(D.signals || []),
+          ...(D.heroSignals || []),
           ...(D.watchlist?.tickers || []),
           ...(D.watchlist || []),
         ];
@@ -63,120 +130,159 @@ function App() {
             .toString().toUpperCase().split("/")[0] === wanted
         );
         if (match && (match.id || match.asset)) {
-          setOpenSig(match);
+          goAsset(match);
+          return;
         }
       } catch (_) { /* best-effort */ }
+      nav("positioning");
     }
     window.addEventListener("macro:open-asset", onOpenAsset);
     return () => window.removeEventListener("macro:open-asset", onOpenAsset);
-  }, []);
+  }, [view, returnTo]);
 
   // Tweaks
   const [tw, setTweak] = useTweaks(/*EDITMODE-BEGIN*/{
-    "accent": "gold",
-    "density": "default"
+    "accent": "blue",
+    "density": "default",
+    "theme": "light"
   }/*EDITMODE-END*/);
 
   useE(() => {
     document.documentElement.setAttribute("data-accent", tw.accent);
     document.documentElement.setAttribute("data-density", tw.density);
-  }, [tw.accent, tw.density]);
+    document.documentElement.setAttribute("data-theme", tw.theme);
+  }, [tw.accent, tw.density, tw.theme]);
 
   const D = window.MA_DATA;
+  const group = view === "asset" ? GROUP_OF[returnTo] : GROUP_OF[view];
+  const sec = view === "asset"
+    ? ["Signal", assetSig ? assetSig.asset : "Asset"]
+    : (SECTIONS[view] || ["", ""]);
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
+    <div className="app">
+      <aside className="rail">
+        <div className="rail-brand">
           <div className="brand-mark">M</div>
-          <div>
+          <div className="rail-brand-text">
             <div className="brand-name">Macro Analyzer</div>
-            <div className="brand-sub">Positioning desk · v3 thesis <span className="brand-version">build 2026.05.23-r4</span></div>
+            <div className="brand-sub">Positioning desk</div>
           </div>
         </div>
-        <nav className="nav nav-utility">
-          <button className={`nav-tab ${view === "streams" ? "on" : ""}`} onClick={() => nav("streams")}>
-            <span className="tab-num">/U1</span>theme trends
-          </button>
-          <button className={`nav-tab ${(view === "sources" || view === "influence") ? "on" : ""}`} onClick={() => nav("sources")}>
-            <span className="tab-num">/U2</span>sources
-          </button>
-          <button className={`nav-tab ${view === "inbox" ? "on" : ""}`} onClick={() => nav("inbox")}>
-            <span className="tab-num">/U3</span>manual input
-          </button>
-          <button className={`nav-tab ${view === "dev" ? "on" : ""}`} onClick={() => nav("dev")}>
-            <span className="tab-num">/U4</span>dev
-          </button>
+        <nav className="rail-nav">
+          {NAV.map((n) => (
+            <React.Fragment key={n.id}>
+              <button className={group === n.id ? "on" : ""} onClick={() => nav(n.id)}>
+                {n.icon}<span>{n.label}</span>
+              </button>
+              {n.children && group === n.id && (
+                <div className="rail-sub">
+                  {n.children.map((c) => (
+                    <button key={c.id} className={view === c.id ? "on" : ""} onClick={() => nav(c.id)}>
+                      <span className="rail-sub-num">{c.num}</span>
+                      <span>{c.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </React.Fragment>
+          ))}
         </nav>
-        <div className="topbar-spacer"></div>
-        <div className="topbar-right">
-          <span className="tb-status">
-            <span className="rb-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--gold)", display: "inline-block" }}></span>
-            {D.regime.framework.label.toUpperCase()} · {Math.round(D.regime.framework.confidence * 100)}%
-          </span>
-          <div className="tb-clock">
-            <span className="tb-clock-time">{clock.timeStr}</span>
-            <span className="tb-clock-day">{clock.dayStr}</span>
+        <div className="rail-spacer"></div>
+        <div className="rail-foot">
+          <div className="rail-regime">
+            <span className="rail-regime-dot"></span>
+            <div>
+              <div className="rail-regime-label">{D.regime.framework.label}</div>
+              <div className="rail-regime-conf">{Math.round(D.regime.framework.confidence * 100)}% confidence · {D.regime.framework.sinceDays}d</div>
+            </div>
+          </div>
+          <div className="rail-foot-row">
+            <button
+              className="theme-toggle"
+              onClick={() => setTweak("theme", tw.theme === "light" ? "dark" : "light")}
+              title="Toggle light / dark"
+              aria-label="Toggle light or dark theme"
+            >
+              {tw.theme === "light" ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.9A9 9 0 1 1 11.1 3a7 7 0 0 0 9.9 9.9Z"/></svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"/></svg>
+              )}
+            </button>
+            <span className="rail-status"><span className="dot-live"></span> LIVE · {(D.sourceHealth || []).length || 26} sources</span>
           </div>
         </div>
-      </header>
+      </aside>
 
-      <button className="streams-banner" onClick={() => nav("streams")} title="View source streams">
-        <span className="dot-live"></span>
-        <span className="streams-banner-label">LIVE</span>
-        <span className="streams-banner-text">{(D.sourceHealth || []).length || 26} sources streaming · click to view</span>
-        <span className="streams-banner-arrow">→</span>
-      </button>
+      <main className="canvas">
+        <header className="page-head">
+          <div>
+            <div className="page-eyebrow">{sec[0]}</div>
+            <h1 className="page-title">{sec[1]}</h1>
+          </div>
+          <div className="page-head-right">
+            <div className="tb-clock">
+              <span className="tb-clock-time">{clock.timeStr}</span>
+              <span className="tb-clock-day">{clock.dayStr}</span>
+            </div>
+          </div>
+        </header>
 
-      <FunnelRail view={view} onNav={nav} />
+        {view !== "asset" && group === "positioning" && (
+          <FunnelRail view={view} onNav={nav} />
+        )}
 
-      {view === "positioning" && <KpiStrip />}
-      {view === "positioning" && (
-        <Positioning
-          onOpenReasoning={(s) => setOpenSig(s)}
-          onOpenTradeForm={() => {}}
-          onAdvanceToConcept={() => nav("concepts")}
-        />
-      )}
-      {view === "concepts" && (
-        <Concepts
-          onPromote={(planId) => { setFocusPlanId(planId); setView("identify"); }}
-        />
-      )}
-      {view === "identify" && (
-        <Identify
-          focusPlanId={focusPlanId}
-          onActivated={(tradeId) => { setFocusTradeId(tradeId); setView("live"); }}
-        />
-      )}
-      {view === "live" && <Live focusTradeId={focusTradeId} />}
-      {view === "journal" && <Journal />}
-      {view === "sources" && <Sources />}
-      {view === "streams" && <Streams />}
-      {view === "dev" && <Dev />}
-      {view === "inbox" && <Inbox />}
-      {view === "influence" && <Influence />}
+        {view === "positioning" && <KpiStrip />}
+        {view === "positioning" && (
+          <Positioning
+            onOpenReasoning={goAsset}
+            onOpenTradeForm={() => {}}
+            onAdvanceToConcept={() => nav("concepts")}
+          />
+        )}
+        {view === "concepts" && (
+          <Concepts
+            onPromote={(planId) => { setFocusPlanId(planId); setView("identify"); }}
+          />
+        )}
+        {view === "identify" && (
+          <Identify
+            focusPlanId={focusPlanId}
+            onActivated={(tradeId) => { setFocusTradeId(tradeId); setView("live"); }}
+          />
+        )}
+        {view === "live" && <Live focusTradeId={focusTradeId} />}
+        {view === "journal" && <Journal />}
+        {view === "sources" && <Sources />}
+        {view === "streams" && <Streams />}
+        {view === "dev" && <Dev />}
+        {view === "inbox" && <Inbox />}
+        {view === "influence" && <Influence />}
+        {view === "asset" && assetSig && (
+          <AssetPage signal={assetSig} onBack={goBack} returnTo={returnTo} />
+        )}
 
-      <DrillSheet
-        open={!!openSig}
-        onClose={() => setOpenSig(null)}
-        title={openSig ? `Reasoning trail · ${openSig.asset}` : ""}
-        subtitle="Why this · why now · whose voice"
-      >
-        {openSig && <ReasoningTrail signal={openSig} />}
-      </DrillSheet>
-
-      <footer className="app-foot">
-        <span>MACRO ANALYZER · INTERNAL · L. PIROLA</span>
-        <span><a href="#">git@macro:hl-research</a> · 5 agents online</span>
-      </footer>
+        <footer className="app-foot">
+          <span>Macro Analyzer · Internal · L. Pirola</span>
+          <span>git@macro:hl-research · 5 agents online</span>
+        </footer>
+      </main>
 
       <TweaksPanel title="Tweaks">
+        <TweakSection label="Theme">
+          <TweakRadio
+            label="Appearance"
+            value={tw.theme}
+            options={["light", "dark"]}
+            onChange={(v) => setTweak("theme", v)}
+          />
+        </TweakSection>
         <TweakSection label="Accent">
           <TweakRadio
             label="Accent color"
             value={tw.accent}
-            options={["gold", "amber", "green", "violet", "blue"]}
+            options={["blue", "gold", "green", "violet", "amber"]}
             onChange={(v) => setTweak("accent", v)}
           />
         </TweakSection>

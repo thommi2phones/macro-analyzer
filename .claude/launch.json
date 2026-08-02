@@ -12,9 +12,13 @@
     },
     {
       "name": "web-static",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8088", "--directory", "web"],
-      "port": 8088
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/thom/Documents/Personal/Code Projects/Macro Analyzer' && exec python3 -m http.server ${PORT:-8088} --directory web"
+      ],
+      "port": 8088,
+      "autoPort": true
     },
     {
       "name": "macro-api-verify",

@@ -525,10 +525,89 @@ function MultiPicker({ values, onChange, options }) {
   );
 }
 
+// ─── Price chart — line + entry/stop/target rails ──────────────
+function PriceChart({ series, entry, stop, target, side = "LONG", height = 220 }) {
+  if (!series || !series.length) return null;
+  const W = 100, H = 100; // viewbox; svg scales to container
+  const pad = { t: 6, r: 12, b: 14, l: 0 };
+  const innerW = W - pad.l - pad.r;
+  const innerH = H - pad.t - pad.b;
+
+  const lo = Math.min(...series, stop, entry, target);
+  const hi = Math.max(...series, stop, entry, target);
+  const range = hi - lo || 1;
+  const yOf = (v) => pad.t + innerH - ((v - lo) / range) * innerH;
+  const xOf = (i) => pad.l + (i / (series.length - 1 || 1)) * innerW;
+
+  const line = "M " + series.map((v, i) => `${xOf(i).toFixed(2)},${yOf(v).toFixed(2)}`).join(" L ");
+  const area = line + ` L ${xOf(series.length - 1).toFixed(2)},${pad.t + innerH} L ${pad.l},${pad.t + innerH} Z`;
+
+  const last = series[series.length - 1];
+  const first = series[0];
+  const chgPct = ((last - first) / first) * 100;
+  const chgUp = chgPct >= 0;
+
+  const Rail = ({ y, label, color, val, dashed }) => (
+    <g>
+      <line x1={pad.l} x2={W - pad.r} y1={y} y2={y}
+            stroke={color} strokeWidth="0.4"
+            strokeDasharray={dashed ? "1.2 1.2" : ""} opacity="0.85" />
+      <rect x={W - pad.r + 0.5} y={y - 2.4} width={pad.r - 0.5} height="4.8" fill={color} opacity="0.18" />
+      <text x={W - pad.r + 1.2} y={y + 1.5} fontSize="2.6" fill={color}
+            fontFamily="var(--mono)" letterSpacing="0.04em">{label}</text>
+    </g>
+  );
+
+  const fmt = (v) => v < 1000 ? v.toFixed(2) : v.toLocaleString();
+
+  return (
+    <div className="price-chart">
+      <div className="pc-head">
+        <div className="pc-last mono">{fmt(last)}</div>
+        <div className={`pc-chg mono ${chgUp ? "pos" : "neg"}`}>
+          {chgUp ? "+" : ""}{chgPct.toFixed(2)}% <span className="muted">90d</span>
+        </div>
+        <div className="pc-legend">
+          <span className="pc-leg"><i className="pc-sw entry"></i>entry</span>
+          <span className="pc-leg"><i className="pc-sw stop"></i>stop</span>
+          <span className="pc-leg"><i className="pc-sw target"></i>target</span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+           width="100%" style={{ height, display: "block" }}>
+        <defs>
+          <linearGradient id="pc-area" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%"  stopColor="var(--accent)" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.00" />
+          </linearGradient>
+        </defs>
+        {/* gridlines */}
+        {[0.25, 0.5, 0.75].map(p => (
+          <line key={p} x1={pad.l} x2={W - pad.r}
+                y1={pad.t + innerH * p} y2={pad.t + innerH * p}
+                stroke="var(--line-soft)" strokeWidth="0.25" />
+        ))}
+        <path d={area} fill="url(#pc-area)" />
+        <path d={line} stroke="var(--accent)" strokeWidth="0.7" fill="none"
+              strokeLinejoin="round" strokeLinecap="round" />
+        <Rail y={yOf(target)} label={`TGT ${fmt(target)}`} color="var(--green)" dashed />
+        <Rail y={yOf(entry)}  label={`ENT ${fmt(entry)}`}  color="var(--accent)" />
+        <Rail y={yOf(stop)}   label={`STP ${fmt(stop)}`}   color="var(--red)"   dashed />
+        {/* current price marker */}
+        <circle cx={xOf(series.length - 1)} cy={yOf(last)} r="0.9" fill="var(--accent)" />
+        <circle cx={xOf(series.length - 1)} cy={yOf(last)} r="1.8" fill="var(--accent)" opacity="0.25" />
+      </svg>
+      <div className="pc-axis mono">
+        <span>−90d</span><span>−60d</span><span>−30d</span><span>now</span>
+      </div>
+    </div>
+  );
+}
+
 // Export
 Object.assign(window, {
   ScoreChip, TierIndicator, RegimeBadge, SubScoreBar, SourcePill,
   Sparkline, PnL, DrillSheet, SetupCard, SideLabel, ConvictionStripe,
-  SourceDetailPanel,
+  SourceDetailPanel, PriceChart,
   Likert, EnumPicker, MultiPicker,
 });

@@ -1757,13 +1757,13 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 /* ============== Macro Indicator Strip ============== */
 .indicator-strip {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 8px;
   margin-bottom: var(--gap-block);
 }
-@media (max-width: 720px) {
-  .indicator-strip { grid-template-columns: 1fr; }
-}
+/* Only 4-across or 2×2 — 4 tiles never split as 3+1 */
+@media (max-width: 1200px) { .indicator-strip { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px)  { .indicator-strip { grid-template-columns: 1fr; } }
 .ind-tile {
   background: var(--bg-card);
   border: 1px solid var(--line);

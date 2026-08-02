@@ -5,13 +5,99 @@
       "title": "SPY at 7,437: The 1998 Question",
       "date": "2026-07-30",
       "updated": "2026-07-31",
-      "verdict": "Phase band late-1998 → early-2000, lean late · correction-first 30% · melt-up 28% · bust 17%",
-      "summary": "Full-stack SPY dossier: dot-com bull-cycle overlay with like-for-like shape-match scan (Jan-2000 placement 0.948), Big_Nuts cross-asset board (HYG arc, 10Y cup-and-handle 4.94–5.05, MOVE tripwire 130, NQ diamond, SPY wave count), composition vs March 2000, VIX-implied expected moves with dated horizons, and a probability-weighted 12-month scenario map with the barbell trade.",
+      "verdict": "Phase band late-1998 → early-2000, lean late",
+      "summary": "Full-stack SPY dossier: dot-com bull-cycle overlay with like-for-like shape-match scan, Big_Nuts cross-asset board, composition vs March 2000, VIX-implied expected moves, probability-weighted 12-month scenario map.",
       "tags": ["SPY", "SPX", "dot-com overlay", "Big_Nuts", "probabilities", "scenario map"],
       "link": "https://claude.ai/code/artifact/eeaafa59-6466-43f8-8b80-d711a265cea6",
       "link_label": "Live artifact (latest rev)",
       "pdf": "SPY-Deep-Analysis-Jul-2026.pdf",
-      "pdf_note": "PDF is the Jul-31 dark edition (one table-format rev behind the live artifact)"
+      "pdf_note": "Jul-31 dark edition (one table-format rev behind the live artifact)",
+      "projections": [
+        { "name": "Tradeable correction first (the C-leg)", "prob": "30%", "target": "6,900–7,170, then recover", "why": "A-B-C completes at C=A (~7,170) or 1.618×A (~6,920), holds the 200dma shelf, melt-up case gets one more leg. Wolf Pack's 6,500 flush into November is the deep version." },
+        { "name": "Melt-up resumes (1999 analog)", "prob": "28%", "target": "8,300–8,700", "why": "Fed stays paused, AI earnings deliver, rotation broadens past 7,610 with RSP/SPY rising. Analog pays +16%; conditional median +12.5%. The upside scenario, not the default." },
+        { "name": "Choppy range", "prob": "22%", "target": "7,000–7,700", "why": "Long end pins the multiple; distribution-vs-consolidation stays unresolved under a flat index. The 1994-inside-a-bull outcome." },
+        { "name": "Bust begins (Big_Nuts roadmap)", "prob": "17%", "target": "<6,400 → ~5,680 (2027)", "why": "Wave-5 top at 760.40 SPY confirmed: 10Y through 4.94–5.05, OAS >340bp, breadth rolls, AI capex guides down. Shelves 6,841 → 6,391 → 5,680 (−25% from ATH)." },
+        { "name": "Right-tail mania", "prob": "3%", "target": ">9,000", "why": "1999-Q4-style blowoff, +20% in months. Hasn't happened from a negative-ERP start." }
+      ],
+      "tables": [
+        {
+          "title": "Bull-cycle milestones — dot-com vs current",
+          "headers": ["Milestone", "Dot-com cycle", "Current cycle"],
+          "rows": [
+            ["Cycle low", "459.11 · Dec 8, 1994", "3,577.03 · Oct 12, 2022"],
+            ["Gain to this point (same # trading days)", "+133%", "+108%"],
+            ["Mid-cycle shakeout", "Jul–Aug 1998 · −19.3% (LTCM/Russia)", "Jan–Mar 2026 · −9.1% (rate scare)"],
+            ["What followed the shakeout", "+16% in 12m → Mar 2000 top", "recovered to −2.3% off ATH · open"],
+            ["The bust, when it came", "−49% peak-to-trough, 30 months", "—"]
+          ]
+        },
+        {
+          "title": "Placement scan — where are we in the analog",
+          "headers": ["Placement candidate", "Like-for-like 500d corr.", "Own-metric corr.", "How it was found"],
+          "rows": [
+            ["Jan 20, 2000", "0.948", "0.948", "500-day scan winner — best of ~1,600 candidate windows"],
+            ["Aug 19, 1997", "0.910", "0.937 (250d scan)", "1-year-shape scan winner; scores lower on the 2-year shape"],
+            ["Sep 15, 1998", "0.847", "0.954 (full path)", "Duration anchor — alignment imposed at the cycle lows, not found by scanning"]
+          ]
+        },
+        {
+          "title": "Today vs. March 2000 — the fragility scoreboard",
+          "headers": ["Metric", "Jul 2026", "Mar 2000", "Read"],
+          "rows": [
+            ["Top-10 weight", "36.3%", "~25.5%", "Worse than 2000"],
+            ["Tech sector weight", "38.5%", "~34.8%", "Worse than 2000"],
+            ["Index trailing P/E", "26.7×", "~29.7×", "Rich, below 2000"],
+            ["Top-10 weighted P/E", "42.3×", "~60×+", "Rich, below 2000"],
+            ["Equity risk premium", "−0.9%", "~−2.9%", "Negative, less extreme"],
+            ["Leader economics", "NVDA 63% margin, 15× fwd", "CSCO ~130× fwd", "Much better than 2000"],
+            ["10Y Treasury", "4.67%", "6.26%", "Less restrictive"]
+          ]
+        },
+        {
+          "title": "Stream intelligence — what every feed is saying",
+          "note": "Index-level signal, last 60 days: 15 LONG · 5 SHORT · 19 WATCH · 1 AVOID. SPX-complex mention momentum fading (breakout score 11.6) after the early-June spike — attention rotated to single names and small caps, itself a late-cycle tell.",
+          "headers": ["Stream / source", "Date", "Call", "Conv.", "Thesis"],
+          "rows": [
+            ["Wolf Pack (Telegram KOL)", "Jul 27", "SHORT SPX → 6,500", "3.0", "Mid-term-year seasonality: 10–20% correction into November; DXY holding 101 pressures equities."],
+            ["Big_Nuts", "Jul 27", "WATCH", "2.0", "1997–2000 fractal — \"potential for deeper drawdown.\" Same model, bearish tilt."],
+            ["Forward Guidance (newsletter)", "Jul 26", "SHORT QQQ + LONG IWM", "3.0", "\"AI unwind forcing a historic rotation\" — most crowded trade cracking; value/small-cap revival."],
+            ["Finimize", "Jul 26", "LONG IWM", "3.0", "Small caps +24% H1 — best start in decades; leadership rotating off Mag-7."],
+            ["Concoda (Substack, plumbing)", "Jul 26", "WATCH SPX", "2.0", "Equity repo +150bp over SOFR — dealers charging up for stock leverage; massive levered-long demand."],
+            ["Ari's Relays (aggregator)", "Jun 5 → Jul 27", "JUN RELAY PLAYED OUT ✓", "2.5", "Jun 5 profit-taking relay verified: NQ −12%, BTC −20% to 62.5K. Current relayed flow is dollar-long FX, gold/oil watch — no fresh index short circulating. Consensus-flow gauge, not independent conviction."],
+            ["Feather Hands", "Jun 5 → Jul 27", "DEFENSIVE TURN · LONG TLT", "3.0", "Jun melt-up long stale — book rotated defensive: BTC/ETH stopped out, MSTR short (3.0), TLT long (2.5) on the Warsh front-end-monetization thesis, silver long ~$50. Live SPX line is the Big_Nuts fractal watch."],
+            ["Gov-insider (Senate disclosures)", "Jun 1 (filed)", "NET BUYING · STALE", "3.0", "Perdue SPY purchases $500K–$5M alongside partial sales; Carper spouse adding. STOCK Act lag ~45 days — trades executed Apr–May; positioning context, not current signal."],
+            ["Social (WSB / StockTwits)", "Jul 21", "WATCH SPY·QQQ·ES", "1.0", "Mention-rank spikes on index tickers — retail attention elevated but not manic."]
+          ]
+        }
+      ],
+      "watchlists": [
+        {
+          "title": "Turns the melt-up into the top (2000 triggers, 2026 form)",
+          "tone": "bear",
+          "items": [
+            "Fed re-hikes (2Y already at 4.22 vs 3.63 funds; a July/Sep hike = 2000's tightening-into-strength)",
+            "10Y through 4.94–5.05 (cup-and-handle target) or 30Y > 5.5% — the multiple's ceiling; every 2026 air-pocket has been a long-end event",
+            "HY OAS > ~340bp — converts the HYG rounding top from a rates story into a credit story",
+            "Breadth divergence at a new high — RSP/SPY rolling over while SPX prints ATH (the Mar-2000 signature; today it's doing the opposite)",
+            "AI capex guide-downs — MU is now 2% of SPY; hyperscaler capex is the earnings transmission line for 40% of the fund",
+            "SPY loses the C=A shelf (~715) and NQ fails to reclaim ~29,500 (diamond apex) — the wave count's confirmation",
+            "Disorderly yen strength off the 164 zone (carry unwind) or equity-repo spread widening past +150bp over SOFR — the two forced-deleveraging channels"
+          ]
+        },
+        {
+          "title": "Confirms the 1999 leg (adds to melt-up odds)",
+          "tone": "bull",
+          "items": [
+            "SPX closes above 7,610 with RSP/SPY still rising — broad-participation breakout",
+            "Wolf Pack's 6,800 line: their model flips bullish above it \"sustainably\" — already reclaimed; a Q3 hold converts a bear",
+            "VIX back under 16 while realized stays low — hedge premium unwinds into fuel",
+            "Fed cuts resume (UMich 49.8 gives them the consumer cover)",
+            "IWM/value leg keeps absorbing rotation without index damage — 1998-Q4 signature",
+            "MOVE spikes through 130 then reverses — Treasury seizure forces Fed liquidity; historically the rescue, not the top (crash-then-rip)",
+            "The C-leg completes at 7,170/6,920 SPX on quiet credit (OAS still <320) — correction proven technical, add zone triggers"
+          ]
+        }
+      ]
     }
   ]
 }

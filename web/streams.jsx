@@ -167,7 +167,7 @@ const _FADED_OPACITY = 0.40;
 // unreadable. Cluster expands on click just like the fading one.
 const _MAX_PER_BAND = 5;
 
-// Read a themes's weekly mention count at a fractional week position (0..3),
+// Read a theme's weekly mention count at a fractional week position,
 // linearly interpolating between the two bracketing integer weeks. Lets the
 // scrubber slide smoothly between the discrete weekly buckets instead of
 // snapping. Out-of-range positions clamp to the endpoints.
@@ -181,6 +181,42 @@ function _weekVal(t, wi) {
   return (buckets[lo] || 0) * (1 - frac) + (buckets[hi] || 0) * frac;
 }
 
+// Mirror of the backend _compute_lifecycle but evaluated at an ARBITRARY
+// week position wi — i.e. "if week wi were NOW, how extended is this
+// theme?" This is what makes bubbles glide horizontally as the scrubber
+// moves: at wi = 5, we ask "as of week 5 what was recent vs trailing peak?"
+// Constants match the Python side.
+const _LC_RECENT   = 2;
+const _LC_TRAILING = 12;
+const _LC_CURVE    = 1.7;
+function _lifecycleAt(t, wi) {
+  const buckets = t.mentions_by_week || [];
+  if (buckets.length === 0) return t.lifecycle ?? 0.5;
+  // If the frame is a cluster pseudo-bubble (e.g. fading rollup at 0.95),
+  // its lifecycle is a fixed position anchor — don't recompute.
+  if (t._cluster) return t.lifecycle;
+  // Sample lifecycle at floor(wi) and ceil(wi), then lerp so the X drift
+  // is as smooth as the R drift.
+  const evalAt = (idx) => {
+    const end = Math.max(1, idx + 1);           // exclusive end (integer)
+    const recentStart   = Math.max(0, end - _LC_RECENT);
+    const trailingStart = Math.max(0, end - _LC_TRAILING);
+    let rSum = 0, rN = 0;
+    for (let i = recentStart; i < end; i++) { rSum += buckets[i] || 0; rN++; }
+    let peak = 1;
+    for (let i = trailingStart; i < end; i++) peak = Math.max(peak, buckets[i] || 0);
+    const recentMean = rN ? rSum / rN : 0;
+    const ratio = Math.min(1, recentMean / peak);
+    const raw = 1 - ratio;
+    return Math.max(0, Math.min(1, Math.pow(raw, _LC_CURVE)));
+  };
+  const clamped = Math.max(0, Math.min(buckets.length - 1, wi));
+  const lo = Math.floor(clamped);
+  const hi = Math.min(buckets.length - 1, lo + 1);
+  const frac = clamped - lo;
+  return evalAt(lo) * (1 - frac) + evalAt(hi) * frac;
+}
+
 // Window presets for the narrative-drift scrubber. Each is capped by the
 // actual bucket length the payload carries (backend emits up to 26 weeks).
 const _WINDOW_PRESETS = [
@@ -189,11 +225,16 @@ const _WINDOW_PRESETS = [
   { key: "26w", label: "6M",  weeks: 26 },
 ];
 const _SPEED_PRESETS = [
+  { key: "0.1", label: "0.1×", mult: 0.1 },
+  { key: "0.25",label: "0.25×",mult: 0.25},
   { key: "0.5", label: "0.5×", mult: 0.5 },
   { key: "1",   label: "1×",   mult: 1   },
   { key: "2",   label: "2×",   mult: 2   },
   { key: "4",   label: "4×",   mult: 4   },
 ];
+
+// 1 day = 1/7 week — step size for the day-nudge buttons.
+const _DAY_STEP = 1 / 7;
 
 function ThemeMap({ themeMap, onThemeClick }) {
   // Full bucket length from the payload. Backend emits up to 26 weekly
@@ -346,15 +387,20 @@ function ThemeMap({ themeMap, onThemeClick }) {
     visibleThemes.forEach(t => (byDir[t.direction] || byDir.mixed).push(t));
     Object.entries(byDir).forEach(([dir, arr]) => {
       const [t0, t1] = BAND_RANGES[dir] || BAND_RANGES.mixed;
-      const sorted = arr.slice().sort((a, b) => a.lifecycle - b.lifecycle);
+      // Lifecycle is evaluated AT the scrubber's current weekIndex so
+      // bubbles drift horizontally as time advances — a name that was
+      // fresh two months ago drifts right as it fades, then may drop off.
+      const lcOf = (t) => _lifecycleAt(t, weekIndex);
+      const sorted = arr.slice().sort((a, b) => lcOf(a) - lcOf(b));
       // First pass — assign raw x from lifecycle + tiny jitter, y from band index.
       const items = sorted.map((t, i) => {
         const frac = sorted.length === 1 ? 0.5 : i / (sorted.length - 1);
         const yFrac = t0 + frac * (t1 - t0);
         const xJitter = (_seed(t.id + ":x") - 0.5) * 0.03;
+        const lc = lcOf(t);
         return {
           theme: t,
-          x: PAD.left + Math.max(0, Math.min(1, t.lifecycle + xJitter)) * innerW,
+          x: PAD.left + Math.max(0, Math.min(1, lc + xJitter)) * innerW,
           y: PAD.top + yFrac * innerH,
           bandIdx: i,
           bandCount: sorted.length,
@@ -503,7 +549,7 @@ function ThemeMap({ themeMap, onThemeClick }) {
         </div>
       </div>
 
-      {/* Replay + scrubber */}
+      {/* Replay + scrubber + day-nudge */}
       <div className="tm-scrub-row">
         <button
           className={`btn-mini tm-play ${playing ? "active" : ""}`}
@@ -511,16 +557,37 @@ function ThemeMap({ themeMap, onThemeClick }) {
         >
           {playing ? "⏸ PAUSE" : "▶ REPLAY"}
         </button>
+        <button
+          className="btn-mini"
+          title="step back 1 day"
+          onClick={() => {
+            cancelAnimationFrame(timerRef.current); setPlaying(false);
+            setWeekIndex(Math.max(scrubStart, weekIndex - _DAY_STEP));
+          }}
+        >◀ 1d</button>
+        <button
+          className="btn-mini"
+          title="step forward 1 day"
+          onClick={() => {
+            cancelAnimationFrame(timerRef.current); setPlaying(false);
+            setWeekIndex(Math.min(scrubEnd, weekIndex + _DAY_STEP));
+          }}
+        >1d ▶</button>
         <div className="tm-scrub-track">
           <span className="tm-scrub-label-left mono small muted">{leftLabel}</span>
           <input
             type="range"
             className="tm-scrubber"
-            min={scrubStart} max={scrubEnd} step={0.02}
+            min={scrubStart} max={scrubEnd} step={_DAY_STEP}
             value={weekIndex}
             onChange={e => { cancelAnimationFrame(timerRef.current); setPlaying(false); setWeekIndex(+e.target.value); }}
           />
-          <span className="tm-scrub-label-mid mono small muted">NARRATIVE DRIFT</span>
+          <span className="tm-scrub-label-mid mono small muted">
+            {(() => {
+              const daysAgo = Math.round((scrubEnd - weekIndex) * 7);
+              return daysAgo <= 0 ? "NOW" : `−${daysAgo}d`;
+            })()}
+          </span>
           <span className="tm-scrub-label-right mono small muted">NOW</span>
         </div>
         <div className="tm-now-pill mono small">
@@ -529,7 +596,7 @@ function ThemeMap({ themeMap, onThemeClick }) {
         </div>
       </div>
       <div className="tm-hint muted small">
-        scrub or press play — emerging themes enter at the left and drift right as they age; the gold ring fades as a narrative matures.
+        scrub, use ◀ 1d / 1d ▶ for day-by-day, or press play — emerging themes enter at the left and drift right as they age; the gold ring fades as a narrative matures.
       </div>
 
       {/* Chart + sidebar */}
@@ -859,6 +926,41 @@ function ThemeDetailPanel({ t }) {
               </div>
             </div>
           )}
+        </>
+      ) : t.primary_data && t.primary_data.market ? (
+        <>
+          <div className="detail-section">
+            <div className="detail-section-head mono">
+              {t.primary_data.market.asset} MARKET · <span className="muted">PRICE · PRIMARY</span>
+            </div>
+            <div className="mono" style={{
+              color: t.primary_data.market.impact === "bullish" ? "var(--green)"
+                   : t.primary_data.market.impact === "bearish" ? "var(--red)" : "var(--amber)",
+              fontSize: 14, letterSpacing: "0.12em", textTransform: "uppercase",
+            }}>
+              → ${Math.round(t.primary_data.market.price).toLocaleString()} · {t.primary_data.market.trend}
+            </div>
+            <div className="mono small muted" style={{ marginTop: 4 }}>
+              {t.primary_data.market.chg_7d != null && `7d ${t.primary_data.market.chg_7d > 0 ? "+" : ""}${t.primary_data.market.chg_7d}%`}
+              {t.primary_data.market.chg_30d != null && ` · 30d ${t.primary_data.market.chg_30d > 0 ? "+" : ""}${t.primary_data.market.chg_30d}%`}
+              {t.primary_data.market.vs_ema50 != null && ` · vs 50d ${t.primary_data.market.vs_ema50 > 0 ? "+" : ""}${t.primary_data.market.vs_ema50}%`}
+              {t.primary_data.market.vs_ema200 != null && ` · vs 200d ${t.primary_data.market.vs_ema200 > 0 ? "+" : ""}${t.primary_data.market.vs_ema200}%`}
+            </div>
+            {t.primary_data.risk_appetite && (
+              <div className="mono small muted" style={{ marginTop: 4 }}>
+                ETH/BTC {t.primary_data.risk_appetite.eth_btc_chg_30d > 0 ? "+" : ""}{t.primary_data.risk_appetite.eth_btc_chg_30d}% 30d · {t.primary_data.risk_appetite.lean}
+              </div>
+            )}
+          </div>
+          <div className="detail-section">
+            <div className="detail-section-head mono">POSITIONING · <span className="muted">KOL sentiment</span></div>
+            <div className="mono" style={{ color: dirColor, fontSize: 14, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+              → {t.direction}
+            </div>
+            <div className="mono small muted" style={{ marginTop: 4 }}>
+              what {(t.sources || []).length} tracked sources lean — opinion vs the tape above
+            </div>
+          </div>
         </>
       ) : (
         <div className="detail-section">
@@ -1422,25 +1524,110 @@ function DeepAnalysis() {
 
   return (
     <div className="deep-grid">
-      {reports.map(r => (
-        <article key={r.id} className="deep-card">
-          <div className="mono muted small">
-            {r.date}{r.updated && r.updated !== r.date ? ` · rev ${r.updated}` : ""}
-          </div>
-          <h3 className="deep-card-title">{r.title}</h3>
-          {r.verdict && <div className="deep-card-verdict mono">{r.verdict}</div>}
-          {r.summary && <p className="deep-card-summary">{r.summary}</p>}
-          <div className="deep-card-tags">
-            {(r.tags || []).map(t => <span key={t} className="deep-tag mono">{t}</span>)}
-          </div>
-          <div className="deep-card-actions">
-            {r.html && <a className="deep-btn" href={`deep/${r.html}`} target="_blank" rel="noopener">Open dossier ↗</a>}
-            {r.link && <a className="deep-btn" href={r.link} target="_blank" rel="noopener">{r.link_label || "Open ↗"}</a>}
-            {r.pdf && <a className="deep-btn deep-btn-ghost" href={`deep/${r.pdf}`} target="_blank" rel="noopener" title={r.pdf_note || ""}>PDF</a>}
-          </div>
-        </article>
-      ))}
+      {reports.map(r => <DeepCard key={r.id} r={r} />)}
     </div>
+  );
+}
+
+function _deepCallClass(call) {
+  const c = (call || "").toUpperCase();
+  if (c.includes("SHORT") || c.includes("BUST")) return "deep-call-bear";
+  if (c.includes("LONG") || c.includes("BUYING") || c.includes("PLAYED OUT")) return "deep-call-bull";
+  return "deep-call-neutral";
+}
+
+function DeepTable({ t }) {
+  return (
+    <div className="deep-tbl-wrap">
+      <div className="deep-tbl-title mono">{t.title}</div>
+      {t.note && <div className="deep-tbl-note muted small">{t.note}</div>}
+      <table className="deep-tbl">
+        <thead><tr>{t.headers.map(h => <th key={h}>{h}</th>)}</tr></thead>
+        <tbody>
+          {t.rows.map((row, i) => (
+            <tr key={i}>
+              {row.map((cell, j) => (
+                <td key={j} className={
+                  j === 0 ? "deep-tbl-lead"
+                  : t.headers[j] === "Call" ? `mono ${_deepCallClass(cell)}`
+                  : t.headers[j] === "Read" ? `mono ${_deepCallClass(cell.includes("Worse") ? "SHORT" : cell.includes("better") || cell.includes("Less restrictive") ? "LONG" : "")}`
+                  : ""
+                }>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DeepCard({ r }) {
+  const [open, setOpen] = useState(false);
+  const hasDetail = (r.tables || []).length || (r.watchlists || []).length;
+
+  return (
+    <article className="deep-card">
+      <div className="mono muted small">
+        {r.date}{r.updated && r.updated !== r.date ? ` · rev ${r.updated}` : ""}
+      </div>
+      <h3 className="deep-card-title">{r.title}</h3>
+      {r.verdict && <div className="deep-card-verdict mono">{r.verdict}</div>}
+      {r.summary && <p className="deep-card-summary">{r.summary}</p>}
+
+      {/* Projections — the headline payload, always visible */}
+      {(r.projections || []).length > 0 && (
+        <div className="deep-tbl-wrap">
+          <div className="deep-tbl-title mono">Projections — 12 months, and why</div>
+          <table className="deep-tbl deep-proj">
+            <thead><tr><th>Prob.</th><th>Scenario</th><th>Target</th><th>Why</th></tr></thead>
+            <tbody>
+              {r.projections.map((p, i) => (
+                <tr key={i}>
+                  <td className="deep-proj-prob mono">{p.prob}</td>
+                  <td className="deep-tbl-lead">{p.name}</td>
+                  <td className="mono">{p.target}</td>
+                  <td className="deep-proj-why">{p.why}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="deep-card-tags">
+        {(r.tags || []).map(t => <span key={t} className="deep-tag mono">{t}</span>)}
+      </div>
+
+      <div className="deep-card-actions">
+        {r.html && <a className="deep-btn" href={`deep/${r.html}`} target="_blank" rel="noopener">Open dossier ↗</a>}
+        {r.link && <a className="deep-btn" href={r.link} target="_blank" rel="noopener">{r.link_label || "Open ↗"}</a>}
+        {r.pdf && <a className="deep-btn deep-btn-ghost" href={`deep/${r.pdf}`} target="_blank" rel="noopener" title={r.pdf_note || ""}>PDF</a>}
+        {hasDetail && (
+          <button className="deep-btn deep-btn-ghost" onClick={() => setOpen(o => !o)}>
+            {open ? "Hide detail ▴" : "Full detail ▾"}
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="deep-detail">
+          {(r.tables || []).map((t, i) => <DeepTable key={i} t={t} />)}
+          {(r.watchlists || []).length > 0 && (
+            <div className="deep-watch-grid">
+              {r.watchlists.map((w, i) => (
+                <div key={i} className={`deep-watch deep-watch-${w.tone || "neutral"}`}>
+                  <div className="deep-tbl-title mono">{w.title}</div>
+                  <ul className="deep-watch-list">
+                    {w.items.map((it, j) => <li key={j}>{it}</li>)}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -1670,6 +1857,8 @@ function Streams() {
         subtitle={openTheme ? `${
           openTheme.primary_data && openTheme.primary_data.current
             ? `${openTheme.primary_data.current.level.toFixed(2)}% · ${openTheme.primary_data.current.action}${openTheme.primary_data.expected_market ? ` · mkt ${openTheme.primary_data.expected_market.market_lean}` : ""}`
+            : openTheme.primary_data && openTheme.primary_data.market
+            ? `${openTheme.primary_data.market.asset} $${Math.round(openTheme.primary_data.market.price).toLocaleString()} · ${openTheme.primary_data.market.trend}`
             : openTheme.theme_kind === "macro_factor"
               ? `${openTheme.factor_state || "neutral"} → ${openTheme.market_impact || "mixed"}`
               : openTheme.direction

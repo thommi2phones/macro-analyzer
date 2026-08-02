@@ -3128,8 +3128,9 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 /* ── S7 Deep Analysis dossier cards ─────────────────────────────────── */
 .deep-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: 1fr;
   gap: 14px;
+  max-width: 1150px;
 }
 .deep-card {
   background: var(--bg-card);
@@ -3171,3 +3172,30 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
   font-weight: 500;
 }
 .deep-btn-ghost:hover { color: var(--text); background: var(--bg-card-2); }
+
+/* S7 deep detail tables + projections + watchlists */
+.deep-tbl-wrap { margin-top: 10px; overflow-x: auto; }
+.deep-tbl-title { font-size: 11px; color: var(--text-mute); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }
+.deep-tbl-note { margin: -2px 0 8px; line-height: 1.45; }
+.deep-tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
+.deep-tbl th {
+  text-align: left; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-mute-2); font-weight: 600; padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+.deep-tbl td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line-soft); color: var(--text-mute); vertical-align: top; line-height: 1.45; }
+.deep-tbl tr:last-child td { border-bottom: none; }
+.deep-tbl-lead { color: var(--text); font-weight: 600; }
+.deep-proj-prob { color: var(--gold); font-weight: 700; white-space: nowrap; }
+.deep-proj-why { min-width: 240px; }
+.deep-call-bear { color: var(--red); }
+.deep-call-bull { color: var(--green); }
+.deep-call-neutral { color: var(--amber); }
+.deep-detail { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; border-top: 1px solid var(--line); padding-top: 14px; }
+.deep-watch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .deep-watch-grid { grid-template-columns: 1fr; } }
+.deep-watch { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--bg-inset); }
+.deep-watch-bear { border-left: 3px solid var(--red-soft); }
+.deep-watch-bull { border-left: 3px solid var(--green-soft); }
+.deep-watch-list { margin: 6px 0 0; padding-left: 18px; }
+.deep-watch-list li { font-size: 12px; color: var(--text-mute); line-height: 1.5; margin: 5px 0; }

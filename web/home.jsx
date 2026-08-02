@@ -12,21 +12,8 @@ function Home({ onNav }) {
 
   return (
     <div className="home-view">
-      {regime && regime.framework && (
-        <div className="home-regime">
-          <div className="home-regime-lbl mono small muted">FRAMEWORK REGIME</div>
-          <div className="home-regime-row">
-            <span className="home-regime-name">{regime.framework.label}</span>
-            <span className="home-regime-conf mono">
-              {Math.round(regime.framework.confidence * 100)}% conf · active {regime.framework.sinceDays}d
-            </span>
-            <span className="home-regime-bias mono muted">
-              bias {String(regime.framework.bias || "").replace(/_/g, " ")} · size ×{regime.framework.sizingModifier.toFixed(2)}
-            </span>
-          </div>
-        </div>
-      )}
-
+      {regime && <RegimeTape regime={regime} />}
+      {regime && <RegimeTimelineChart regime={regime} />}
       {regime && regime.indicators && (
         <MacroIndicatorStrip ind={regime.indicators} />
       )}
@@ -41,6 +28,128 @@ function Home({ onNav }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// Regime timeline chart — horizontal band over the last N days of the
+// confidence trace, with the trace overlaid as a line. Regime periods
+// are inferred from `regime.transitions` (each entry is a change point).
+function RegimeTimelineChart({ regime }) {
+  const trace = regime.confidenceTrace || [];
+  const n = trace.length;
+  if (!n) return null;
+
+  const W = 900, H = 130;
+  const padL = 8, padR = 8, padT = 28, padB = 22;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  // Build regime periods: transitions give change points; treat the
+  // pre-first-transition period as `transitions[0].from` and the tail
+  // as the current framework label.
+  const trans = (regime.transitions || []).slice();
+  const currentLabel = regime.framework?.label || "—";
+  const segments = [];
+  if (!trans.length) {
+    segments.push({ startIdx: 0, endIdx: n - 1, label: currentLabel });
+  } else {
+    // Space transition indices evenly across the trace as a proxy — the
+    // real dates aren't tied to trace indices, so we render "approximate
+    // segmentation" and label it as such in the axis strip.
+    const anchors = trans.map((_, i) => Math.round(((i + 1) / (trans.length + 1)) * n));
+    let cursor = 0;
+    trans.forEach((t, i) => {
+      const end = anchors[i];
+      segments.push({ startIdx: cursor, endIdx: end, label: t.from });
+      cursor = end;
+    });
+    segments.push({ startIdx: cursor, endIdx: n - 1, label: currentLabel });
+  }
+
+  const colorFor = (label) => {
+    const s = (label || "").toLowerCase();
+    if (s.includes("commodity")) return "var(--gold, #b0862f)";
+    if (s.includes("dovish") || s.includes("liquidity")) return "var(--blue, #2b5ce6)";
+    if (s.includes("risk-off") || s.includes("contraction")) return "var(--red, #cf5346)";
+    if (s.includes("transitional") || s.includes("chop")) return "var(--text-mute-2, #8d897c)";
+    return "var(--text-mute, #5f5c52)";
+  };
+
+  const pathD = trace.map((v, i) => {
+    const x = padL + (i / (n - 1)) * plotW;
+    const y = padT + (1 - v) * plotH;
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  // Current confidence — the last data point
+  const currentConf = trace[n - 1];
+
+  return (
+    <section className="block home-timeline">
+      <header className="block-head">
+        <div className="block-title">
+          <span className="block-num mono">RG</span>
+          <span>Regime timeline · last 90d</span>
+          <span className="block-sub">
+            confidence trace overlaid on approximate regime segmentation ·
+            {" "}{segments.length} regime{segments.length === 1 ? "" : "s"} · now
+            {" "}<b>{Math.round(currentConf * 100)}%</b>
+          </span>
+        </div>
+      </header>
+      <div className="home-timeline-wrap">
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="home-timeline-svg">
+          {/* Regime bands (background) */}
+          {segments.map((seg, i) => {
+            const x = padL + (seg.startIdx / (n - 1)) * plotW;
+            const w = ((seg.endIdx - seg.startIdx) / (n - 1)) * plotW;
+            const c = colorFor(seg.label);
+            return (
+              <g key={i}>
+                <rect x={x} y={padT} width={Math.max(1, w)} height={plotH} fill={c} opacity="0.14" />
+                <line x1={x} y1={padT} x2={x} y2={padT + plotH} stroke="var(--line-2)" strokeWidth="1" />
+                <text x={x + 6} y={padT + 14} fontFamily="var(--mono)" fontSize="10.5" fill={c} fontWeight="600" style={{ letterSpacing: "0.04em" }}>
+                  {seg.label.toUpperCase()}
+                </text>
+              </g>
+            );
+          })}
+          {/* Confidence trace */}
+          <path d={pathD} fill="none" stroke="var(--accent, #b0862f)" strokeWidth="1.75" strokeLinejoin="round" />
+          {/* Endpoint dot */}
+          {(() => {
+            const x = padL + plotW;
+            const y = padT + (1 - currentConf) * plotH;
+            return <circle cx={x} cy={y} r="3.5" fill="var(--accent, #b0862f)" />;
+          })()}
+          {/* Y-axis ticks (0 / 50 / 100) */}
+          {[0, 0.5, 1].map(v => {
+            const y = padT + (1 - v) * plotH;
+            return (
+              <g key={v}>
+                <line x1={padL} y1={y} x2={W - padR} y2={y} stroke="var(--line-soft)" strokeDasharray="2 3" />
+                <text x={W - padR - 4} y={y - 3} fontFamily="var(--mono)" fontSize="9" fill="var(--text-mute-2)" textAnchor="end">
+                  {Math.round(v * 100)}%
+                </text>
+              </g>
+            );
+          })}
+          {/* X-axis: start / today */}
+          <text x={padL} y={H - 6} fontFamily="var(--mono)" fontSize="10" fill="var(--text-mute-2)">−90d</text>
+          <text x={W - padR} y={H - 6} fontFamily="var(--mono)" fontSize="10" fill="var(--text-mute-2)" textAnchor="end">now</text>
+        </svg>
+      </div>
+      {regime.transitions && regime.transitions.length > 0 && (
+        <div className="home-timeline-transitions mono small muted">
+          {regime.transitions.map((t, i) => (
+            <span key={i}>
+              <b>{t.date}</b> · {t.from} → {t.to}
+              {i < regime.transitions.length - 1 ? "   ·   " : ""}
+            </span>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

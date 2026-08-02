@@ -4769,23 +4769,17 @@ body { font-size: 15.5px; }
 /* ===================== /home macro dashboard ===================== */
 .home-view { display: flex; flex-direction: column; gap: 20px; }
 
-.home-regime {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 14px 18px;
-  border: 1px solid var(--line-2, var(--line));
-  border-left: 4px solid var(--accent, #b0862f);
-  background: var(--bg-card);
-  border-radius: 8px;
-}
-.home-regime-lbl { letter-spacing: 0.16em; }
-.home-regime-row {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px;
-}
-.home-regime-name { font-family: var(--display, inherit); font-size: 22px; font-weight: 600; letter-spacing: -0.01em; color: var(--text); }
-.home-regime-conf { font-size: 12.5px; color: var(--accent); }
-.home-regime-bias { font-size: 12px; }
-
 .home-meta { padding: 0 2px; letter-spacing: 0.08em; }
+
+/* Regime timeline chart */
+.home-timeline-wrap { padding: 6px 18px 4px; }
+.home-timeline-svg { width: 100%; height: auto; max-height: 160px; display: block; }
+.home-timeline-transitions {
+  padding: 6px 18px 14px;
+  letter-spacing: 0.04em;
+  line-height: 1.55;
+}
+.home-timeline-transitions b { color: var(--text); font-weight: 600; }
 
 .home-cats {
   display: flex; flex-direction: column; gap: 16px;

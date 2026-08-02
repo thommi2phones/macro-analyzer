@@ -402,11 +402,12 @@ button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .hero-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap-block); }
 .hero-grid-4 {
   grid-template-columns: repeat(4, 1fr);
-  gap: 18px;
+  gap: 14px;
   padding: 6px 0 4px;
 }
-@media (max-width: 1400px) { .hero-grid-4 { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 800px)  { .hero-grid-4 { grid-template-columns: 1fr; } }
+/* Only two allowed states: 4-across or 2×2 — never 3+1 with a gap */
+@media (max-width: 1500px) { .hero-grid-4 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px)  { .hero-grid-4 { grid-template-columns: 1fr; } }
 @media (max-width: 1300px) { .hero-grid:not(.hero-grid-4) { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 800px)  { .hero-grid:not(.hero-grid-4) { grid-template-columns: 1fr; } }
 .hero-grid-4 .setup-card {
@@ -4542,3 +4543,62 @@ body { font-size: 15.5px; }
 .fr-sub { font-size: 10px; color: var(--text-mute-2); }
 .fr-chip.on .fr-sub { color: var(--accent); opacity: 0.75; }
 .fr-sep { color: var(--text-mute-3); }
+
+/* ==================================================================
+   FRESH v3 — legibility pass: stronger card borders in the paper
+   theme (bg-card was white on off-white → cards vanished) and
+   larger small-text so meta/labels read at desk viewing distance.
+   ================================================================== */
+:root:not([data-theme="dark"]) {
+  --line: #d7d3c6;
+  --line-2: #b9b3a2;
+  --line-soft: #e5e1d5;
+  --shadow-card: 0 1px 2px rgba(33,31,26,0.06), 0 12px 32px rgba(33,31,26,0.08);
+}
+:root:not([data-theme="dark"]) .block,
+:root:not([data-theme="dark"]) .setup-card,
+:root:not([data-theme="dark"]) .asset-hero {
+  border: 1px solid var(--line);
+}
+:root:not([data-theme="dark"]) .kpi {
+  border-right-color: var(--line-2);
+}
+:root:not([data-theme="dark"]) .fr-chip {
+  border-color: var(--line-2);
+  color: var(--text);
+}
+:root:not([data-theme="dark"]) .fr-chip .fr-sub { color: var(--text-mute); }
+:root:not([data-theme="dark"]) .kpi-lbl,
+:root:not([data-theme="dark"]) .block-sub { color: var(--text-mute); }
+
+/* Text-size bump — dense info areas were reading too small on paper */
+:root:not([data-theme="dark"]) body { font-size: 16px; }
+:root:not([data-theme="dark"]) .block-sub { font-size: 14px; }
+:root:not([data-theme="dark"]) .block-title > span:nth-child(2) { font-size: 22px; }
+:root:not([data-theme="dark"]) .kpi-lbl { font-size: 14px; }
+:root:not([data-theme="dark"]) .kpi-sub { font-size: 13px; }
+:root:not([data-theme="dark"]) .kpi-val { font-size: 30px; }
+:root:not([data-theme="dark"]) .fr-label { font-size: 13.5px; }
+:root:not([data-theme="dark"]) .fr-sub { font-size: 11px; }
+:root:not([data-theme="dark"]) .sc-name { font-size: 13.5px; }
+:root:not([data-theme="dark"]) .sc-l-lbl { font-size: 11.5px; }
+:root:not([data-theme="dark"]) .sc-l-val { font-size: 16px; }
+:root:not([data-theme="dark"]) .sc-why li { font-size: 13.5px; }
+:root:not([data-theme="dark"]) .sc-src-chip { font-size: 12px; }
+:root:not([data-theme="dark"]) .side-label,
+:root:not([data-theme="dark"]) .ah-side-pill,
+:root:not([data-theme="dark"]) .theme-dir { font-size: 11.5px; padding: 5px 12px; }
+:root:not([data-theme="dark"]) .sc-setup { font-size: 13px; }
+:root:not([data-theme="dark"]) .mono.small,
+:root:not([data-theme="dark"]) .small { font-size: 12px; }
+:root:not([data-theme="dark"]) .concept-reason { font-size: 13.5px; }
+:root:not([data-theme="dark"]) .concept-meta { font-size: 12px; }
+:root:not([data-theme="dark"]) .stream-snippet { font-size: 14px; }
+:root:not([data-theme="dark"]) .stream-title { font-size: 14.5px; }
+:root:not([data-theme="dark"]) .wl-table td,
+:root:not([data-theme="dark"]) .wl-table th { font-size: 13px; }
+:root:not([data-theme="dark"]) .ts-author-tab { font-size: 13px; }
+:root:not([data-theme="dark"]) .ts-gallery-ticker { font-size: 15px; }
+:root:not([data-theme="dark"]) .streams-tab { font-size: 13px; }
+:root:not([data-theme="dark"]) .streams-tab-sub { font-size: 12px; }
+:root:not([data-theme="dark"]) .streams-banner { font-size: 12.5px; }

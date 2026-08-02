@@ -67,6 +67,11 @@ SEED_AUTHORS: list[dict] = [
     {"display_name": "🐳 OG Whales 🐳",        "channel": "OG Whales",            "channel_type": "telegram", "trust_weight": 1.3, "category": "direct_trades"},
     {"display_name": "The Wolf Pack",          "channel": "The Wolf Pack",        "channel_type": "telegram", "trust_weight": 1.3, "category": "direct_trades"},
     {"display_name": "Ari Gold",               "channel": "Ari Gold",             "channel_type": "telegram", "trust_weight": 1.4, "category": "direct_trades"},
+    # New 2026-07-31 — active trade-call channel (charts + tickers + levels),
+    # but some promotional/"portfolio" messaging, so it enters UNPROVEN at
+    # tw=1.1 (barely above an unknown source). Raise once its call accuracy
+    # is backtested and holds up. See [[project_conviction_author_allowlist]].
+    {"display_name": "Trading Operation Desk", "channel": "Trading Operation Desk", "channel_type": "telegram", "trust_weight": 1.1, "category": "direct_trades"},
 ]
 
 

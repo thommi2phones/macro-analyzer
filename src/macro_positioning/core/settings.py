@@ -78,6 +78,10 @@ class Settings(BaseSettings):
             "chat_id": 1073329886, "author_display": "Ari Gold", "is_dm": True,
             "known_senders": {},
         },
+        "trading_operation_desk": {
+            "chat_id": -1003855403507, "author_display": "Trading Operation Desk", "is_dm": False,
+            "known_senders": {},
+        },
     })
 
     # LLM Brain — direct APIs (multi-model)

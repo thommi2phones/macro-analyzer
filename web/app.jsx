@@ -45,11 +45,7 @@ const NAV = [
     ],
   },
   {
-    id: "journal", label: "Journal",
-    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M6 4.5h10a2 2 0 0 1 2 2v13H8a2 2 0 0 1-2-2Z"/><path d="M6 17.5h12"/><path d="M9.5 9h5M9.5 12.5h5"/></svg>,
-  },
-  {
-    id: "streams", label: "Streams",
+    id: "streams", label: "Intelligence",
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="12" r="2.3"/><circle cx="18" cy="6" r="2.3"/><circle cx="18" cy="18" r="2.3"/><path d="M8.1 10.9 15.9 7.1M8.1 13.1 15.9 16.9"/></svg>,
     children: [
       { id: "streams",   label: "Theme trends", num: "U1" },
@@ -57,6 +53,10 @@ const NAV = [
       { id: "influence", label: "Influence",    num: "U2b" },
       { id: "inbox",     label: "Manual input", num: "U3" },
     ],
+  },
+  {
+    id: "journal", label: "Journal",
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M6 4.5h10a2 2 0 0 1 2 2v13H8a2 2 0 0 1-2-2Z"/><path d="M6 17.5h12"/><path d="M9.5 9h5M9.5 12.5h5"/></svg>,
   },
   {
     id: "dev", label: "Dev",
@@ -79,10 +79,10 @@ const SECTIONS = {
   identify:    ["Funnel", "Identify"],
   live:        ["Funnel", "Live trades"],
   journal:     ["Review", "Journal"],
-  streams:     ["Discovery", "Streams"],
-  sources:     ["Discovery", "Sources"],
-  influence:   ["Discovery", "Influence"],
-  inbox:       ["Input", "Manual input"],
+  streams:     ["Intelligence", "Theme trends"],
+  sources:     ["Intelligence", "Sources"],
+  influence:   ["Intelligence", "Influence"],
+  inbox:       ["Intelligence", "Manual input"],
   dev:         ["System", "Dev"],
 };
 

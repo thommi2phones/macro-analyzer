@@ -1,0 +1,17 @@
+{
+  "reports": [
+    {
+      "id": "spy-1998-question",
+      "title": "SPY at 7,437: The 1998 Question",
+      "date": "2026-07-30",
+      "updated": "2026-07-31",
+      "verdict": "Phase band late-1998 → early-2000, lean late · correction-first 30% · melt-up 28% · bust 17%",
+      "summary": "Full-stack SPY dossier: dot-com bull-cycle overlay with like-for-like shape-match scan (Jan-2000 placement 0.948), Big_Nuts cross-asset board (HYG arc, 10Y cup-and-handle 4.94–5.05, MOVE tripwire 130, NQ diamond, SPY wave count), composition vs March 2000, VIX-implied expected moves with dated horizons, and a probability-weighted 12-month scenario map with the barbell trade.",
+      "tags": ["SPY", "SPX", "dot-com overlay", "Big_Nuts", "probabilities", "scenario map"],
+      "link": "https://claude.ai/code/artifact/eeaafa59-6466-43f8-8b80-d711a265cea6",
+      "link_label": "Live artifact (latest rev)",
+      "pdf": "SPY-Deep-Analysis-Jul-2026.pdf",
+      "pdf_note": "PDF is the Jul-31 dark edition (one table-format rev behind the live artifact)"
+    }
+  ]
+}

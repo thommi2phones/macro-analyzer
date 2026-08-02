@@ -6,6 +6,7 @@
 //   S3 — Source graph · echo ties (tier rings, co-citation threads)
 //   S4 — Per-source feed (search + sort + DrillSheet)
 //   S5 — Manual drops (latest /api/manual/inputs entries)
+//   S7 — Deep Analysis (long-form dossiers from web/deep/ + manifest.json)
 
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
@@ -166,10 +167,58 @@ const _FADED_OPACITY = 0.40;
 // unreadable. Cluster expands on click just like the fading one.
 const _MAX_PER_BAND = 5;
 
+// Read a themes's weekly mention count at a fractional week position (0..3),
+// linearly interpolating between the two bracketing integer weeks. Lets the
+// scrubber slide smoothly between the discrete weekly buckets instead of
+// snapping. Out-of-range positions clamp to the endpoints.
+function _weekVal(t, wi) {
+  const buckets = t.mentions_by_week || [];
+  if (buckets.length === 0) return 0;
+  const clamped = Math.max(0, Math.min(buckets.length - 1, wi));
+  const lo = Math.floor(clamped);
+  const hi = Math.min(buckets.length - 1, lo + 1);
+  const frac = clamped - lo;
+  return (buckets[lo] || 0) * (1 - frac) + (buckets[hi] || 0) * frac;
+}
+
+// Window presets for the narrative-drift scrubber. Each is capped by the
+// actual bucket length the payload carries (backend emits up to 26 weeks).
+const _WINDOW_PRESETS = [
+  { key: "4w",  label: "4W",  weeks: 4  },
+  { key: "12w", label: "12W", weeks: 12 },
+  { key: "26w", label: "6M",  weeks: 26 },
+];
+const _SPEED_PRESETS = [
+  { key: "0.5", label: "0.5×", mult: 0.5 },
+  { key: "1",   label: "1×",   mult: 1   },
+  { key: "2",   label: "2×",   mult: 2   },
+  { key: "4",   label: "4×",   mult: 4   },
+];
+
 function ThemeMap({ themeMap, onThemeClick }) {
-  const [weekIndex, setWeekIndex] = useState(3);
+  // Full bucket length from the payload. Backend emits up to 26 weekly
+  // buckets (oldest→newest, last = NOW); older data just carries zeros.
+  const totalBuckets = Math.max(
+    1,
+    ...(themeMap || []).map(t => (t.mentions_by_week || []).length)
+  );
+  const [windowWeeks, setWindowWeeks] = useState(4);
+  const [speedMult, setSpeedMult]     = useState(1);
+  // weekIndex is a FLOAT position in [scrubStart, totalBuckets-1] so the
+  // scrubber slides smoothly between weekly buckets instead of snapping.
+  const [weekIndex, setWeekIndex] = useState(totalBuckets - 1);
   const [playing, setPlaying]     = useState(false);
   const [dirFilter, setDirFilter] = useState("all");
+  // Clamp the requested window to what the payload actually has.
+  const effWeeks   = Math.min(windowWeeks, totalBuckets);
+  const scrubStart = totalBuckets - effWeeks;
+  const scrubEnd   = totalBuckets - 1;
+  // If the user shrinks the window past the current scrub position, snap
+  // to the new left edge.
+  useEffect(() => {
+    if (weekIndex < scrubStart) setWeekIndex(scrubStart);
+    if (weekIndex > scrubEnd) setWeekIndex(scrubEnd);
+  }, [scrubStart, scrubEnd]);
   // Per-direction expansion state for the fading-cluster roll-up bubbles.
   const [expanded, setExpanded]   = useState({ bullish: false, mixed: false, bearish: false });
   // Per-direction expansion state for the minor-theme rollup (tail by mentions).
@@ -274,9 +323,9 @@ function ThemeMap({ themeMap, onThemeClick }) {
 
   // Bubble radius first, so layout can use it for collision avoidance.
   const maxMentions = Math.max(1, ...themeMap.flatMap(t => t.mentions_by_week || [0]));
-  const totalNow = (themeMap.reduce((a, t) => a + (t.mentions_by_week?.[weekIndex] || 0), 0)) || 1;
+  const totalNow = (themeMap.reduce((a, t) => a + _weekVal(t, weekIndex), 0)) || 1;
   const bubbleR = t => {
-    const m = t.mentions_by_week?.[weekIndex] || 0;
+    const m = _weekVal(t, weekIndex);
     return 20 + (m / maxMentions) * 30;
   };
 
@@ -343,7 +392,7 @@ function ThemeMap({ themeMap, onThemeClick }) {
     return out;
   }, [visibleThemes, innerW, innerH, weekIndex, maxMentions]);
   const sharePct = t => {
-    const m = t.mentions_by_week?.[weekIndex] || 0;
+    const m = _weekVal(t, weekIndex);
     return Math.round((m / totalNow) * 100);
   };
 
@@ -378,29 +427,38 @@ function ThemeMap({ themeMap, onThemeClick }) {
     return threads.slice(0, _MAX_THREADS);
   };
 
+  // Play sweeps the visible window from left edge → NOW with rAF-driven
+  // fractional steps so bubbles glide between weekly buckets instead of
+  // jumping. Base cadence is ~0.6s per week; speedMult scales it.
   const handlePlay = useCallback(() => {
     if (playing) {
-      clearInterval(timerRef.current);
+      cancelAnimationFrame(timerRef.current);
       setPlaying(false);
       return;
     }
-    setWeekIndex(0);
+    setWeekIndex(scrubStart);
     setPlaying(true);
-    let wi = 0;
-    timerRef.current = setInterval(() => {
-      wi += 1;
+    const start = performance.now();
+    const BASE_MS_PER_WEEK = 600;
+    const duration = Math.max(200, (effWeeks * BASE_MS_PER_WEEK) / speedMult);
+    const tick = (t) => {
+      const p = Math.min(1, (t - start) / duration);
+      const wi = scrubStart + p * (scrubEnd - scrubStart);
       setWeekIndex(wi);
-      if (wi >= 3) { clearInterval(timerRef.current); setPlaying(false); }
-    }, 800);
-  }, [playing]);
+      if (p >= 1) { setPlaying(false); return; }
+      timerRef.current = requestAnimationFrame(tick);
+    };
+    timerRef.current = requestAnimationFrame(tick);
+  }, [playing, scrubStart, scrubEnd, effWeeks, speedMult]);
 
-  useEffect(() => () => clearInterval(timerRef.current), []);
+  useEffect(() => () => cancelAnimationFrame(timerRef.current), []);
 
   if (!themeMap || themeMap.length === 0) {
     return <div className="theme-map-empty mono muted">no recurring themes mapped yet</div>;
   }
 
-  const threads = weekIndex === 3 ? overlapThreads() : [];
+  const threads = weekIndex >= scrubEnd - 0.05 ? overlapThreads() : [];
+  const leftLabel = `−${effWeeks}W`;
 
   return (
     <div className="tm-wrap">
@@ -421,6 +479,30 @@ function ThemeMap({ themeMap, onThemeClick }) {
         </div>
       </div>
 
+      {/* Window + speed selectors */}
+      <div className="tm-header-row" style={{ marginTop: 4 }}>
+        <div className="tm-dir-filter mono small">
+          <span className="muted" style={{ marginRight: 8 }}>window</span>
+          {_WINDOW_PRESETS.filter(w => w.weeks <= totalBuckets).map(w => (
+            <button
+              key={w.key}
+              className={`filter-pill ${windowWeeks === w.weeks ? "on" : ""}`}
+              onClick={() => setWindowWeeks(w.weeks)}
+            >{w.label}</button>
+          ))}
+        </div>
+        <div className="tm-dir-filter mono small">
+          <span className="muted" style={{ marginRight: 8 }}>speed</span>
+          {_SPEED_PRESETS.map(s => (
+            <button
+              key={s.key}
+              className={`filter-pill ${speedMult === s.mult ? "on" : ""}`}
+              onClick={() => setSpeedMult(s.mult)}
+            >{s.label}</button>
+          ))}
+        </div>
+      </div>
+
       {/* Replay + scrubber */}
       <div className="tm-scrub-row">
         <button
@@ -430,13 +512,13 @@ function ThemeMap({ themeMap, onThemeClick }) {
           {playing ? "⏸ PAUSE" : "▶ REPLAY"}
         </button>
         <div className="tm-scrub-track">
-          <span className="tm-scrub-label-left mono small muted">−4W</span>
+          <span className="tm-scrub-label-left mono small muted">{leftLabel}</span>
           <input
             type="range"
             className="tm-scrubber"
-            min={0} max={3} step={1}
+            min={scrubStart} max={scrubEnd} step={0.02}
             value={weekIndex}
-            onChange={e => { clearInterval(timerRef.current); setPlaying(false); setWeekIndex(+e.target.value); }}
+            onChange={e => { cancelAnimationFrame(timerRef.current); setPlaying(false); setWeekIndex(+e.target.value); }}
           />
           <span className="tm-scrub-label-mid mono small muted">NARRATIVE DRIFT</span>
           <span className="tm-scrub-label-right mono small muted">NOW</span>
@@ -548,7 +630,7 @@ function ThemeMap({ themeMap, onThemeClick }) {
             const fillOpacity = isCluster
               ? 0.06
               : (isFading ? 0.06 : 0.14);
-            const m = theme.mentions_by_week?.[weekIndex] || 0;
+            const m = _weekVal(theme, weekIndex);
             const pct = sharePct(theme);
 
             // Alternate label position by band index to guarantee vertical
@@ -693,17 +775,99 @@ function ThemeDetailPanel({ t }) {
   const total = weeks.reduce((a, b) => a + b, 0);
   const max = Math.max(1, ...weeks);
   const weekLabels = ["−4w", "−3w", "−2w", "NOW"];
-  const dirColor = t.direction === "bullish" ? "var(--green)"
-                 : t.direction === "bearish" ? "var(--red)" : "var(--amber)";
+  const impact = t.market_impact || t.direction;
+  const dirColor = impact === "bullish" ? "var(--green)"
+                 : impact === "bearish" ? "var(--red)" : "var(--amber)";
+  const isMacro = t.theme_kind === "macro_factor";
+  // a-pole states (risk-on → bullish impact) vs b-pole (risk-off → bearish).
+  const BULL_STATES = new Set(["dovish", "cooling", "receding", "de-escalating"]);
+  const BEAR_STATES = new Set(["hawkish", "rising", "elevated", "escalating"]);
+  const stateColor = st => BULL_STATES.has(st) ? "var(--green)"
+                         : BEAR_STATES.has(st) ? "var(--red)" : "var(--amber)";
 
   return (
     <div className="source-detail">
-      <div className="detail-section">
-        <div className="detail-section-head mono">DIRECTION</div>
-        <div className="mono" style={{ color: dirColor, fontSize: 14, letterSpacing: "0.12em", textTransform: "uppercase" }}>
-          → {t.direction}
+      {isMacro ? (
+        <>
+          {t.primary_data && t.primary_data.current && (
+            <div className="detail-section">
+              <div className="detail-section-head mono">CURRENT FED POLICY · <span className="muted">FRED · primary</span></div>
+              <div className="mono" style={{ color: "var(--text-primary)", fontSize: 14, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                → {t.primary_data.current.level.toFixed(2)}% TARGET · {t.primary_data.current.action}
+              </div>
+              <div className="mono small muted" style={{ marginTop: 4 }}>
+                last move {t.primary_data.current.last_change_bps > 0 ? "+" : ""}{t.primary_data.current.last_change_bps}bps
+                {t.primary_data.current.last_change_date ? ` on ${t.primary_data.current.last_change_date}` : ""}
+                {" · "}held {t.primary_data.current.days_held}d
+              </div>
+            </div>
+          )}
+          <div className="detail-section">
+            <div className="detail-section-head mono">{t.primary_data ? "EXPECTED FED POLICY" : (t.factor_axis || "stance").toUpperCase()}</div>
+            {t.primary_data && t.primary_data.expected_market && (
+              <div style={{ marginBottom: 10 }}>
+                <div className="mono" style={{ color: stateColor(t.primary_data.expected_market.market_lean), fontSize: 14, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                  → market: {t.primary_data.expected_market.market_lean}
+                </div>
+                <div className="mono small muted" style={{ marginTop: 4 }}>
+                  2Y {t.primary_data.expected_market.two_year.toFixed(2)}% vs {t.primary_data.expected_market.effective.toFixed(2)}% eff
+                  {" · "}{t.primary_data.expected_market.spread_bps > 0 ? "+" : ""}{t.primary_data.expected_market.spread_bps}bps → {t.primary_data.expected_market.market_impact}
+                </div>
+              </div>
+            )}
+            <div className="mono" style={{ color: t.primary_data ? "var(--text-secondary)" : "var(--text-primary)", fontSize: 14, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+              → {t.primary_data ? "commentary: " : ""}{t.factor_state || "neutral"}
+            </div>
+            <div className="mono small muted" style={{ marginTop: 4 }}>
+              {t.primary_data
+                ? `sentiment lean from ${(t.sources || []).length} secondary sources — opinion, not policy`
+                : `implied broad-risk read of a ${t.factor_state || "neutral"} ${t.factor_axis || "factor"} → ${impact}`}
+            </div>
+          </div>
+          {t.factor_tally && (
+            <div className="detail-section">
+              <div className="detail-section-head mono">
+                INPUTS · {Object.values(t.factor_tally).reduce((a, b) => a + b, 0)} reads
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "6px 0 10px" }}>
+                {Object.entries(t.factor_tally).map(([st, n]) => (
+                  <span key={st} className="mono small" style={{
+                    color: stateColor(st), border: "1px solid var(--border)",
+                    borderRadius: 4, padding: "2px 8px", opacity: n ? 1 : 0.4,
+                  }}>{st} · {n}</span>
+                ))}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {(t.factor_inputs || []).length === 0 && (
+                  <div className="mono small muted">no cue-matched documents · read is from balanced/absent signals</div>
+                )}
+                {(t.factor_inputs || []).map((row, i) => (
+                  <div key={i} style={{ borderLeft: `2px solid ${stateColor(row.state)}`, paddingLeft: 8 }}>
+                    <div className="mono small">
+                      <span className="muted">{row.date}</span>
+                      {" · "}<span style={{ color: "var(--text-primary)" }}>{row.source}</span>
+                      {" · "}<span style={{ color: stateColor(row.state), textTransform: "uppercase" }}>{row.state}</span>
+                      {row.cue && <span className="muted"> · “{row.cue}”</span>}
+                    </div>
+                    {row.snippet && (
+                      <div className="mono muted" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.5 }}>
+                        {row.snippet}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="detail-section">
+          <div className="detail-section-head mono">DIRECTION</div>
+          <div className="mono" style={{ color: dirColor, fontSize: 14, letterSpacing: "0.12em", textTransform: "uppercase" }}>
+            → {t.direction}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="detail-section">
         <div className="detail-section-head mono">MENTIONS · LAST 4 WEEKS</div>
@@ -1233,6 +1397,54 @@ function ManualDrops() {
 
 
 // ---------------------------------------------------------------------------
+// S7 — Deep Analysis. Long-form dossiers (self-contained HTML / PDF / links)
+// dropped into web/deep/ and indexed by web/deep/manifest.json. Cards only;
+// the dossier itself opens in a new tab.
+// ---------------------------------------------------------------------------
+function DeepAnalysis() {
+  const [reports, setReports] = useState(null);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    fetch("deep/manifest.json")
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(j => setReports(j.reports || []))
+      .catch(e => setErr(String(e.message || e)));
+  }, []);
+
+  if (err) return <div className="muted small" style={{ padding: 16 }}>deep/manifest.json unavailable — {err}</div>;
+  if (!reports) return <div className="muted small" style={{ padding: 16 }}>loading…</div>;
+  if (!reports.length) return (
+    <div className="muted small" style={{ padding: 16 }}>
+      No dossiers yet. Drop the report file in <span className="mono">web/deep/</span> and add an entry to <span className="mono">manifest.json</span>.
+    </div>
+  );
+
+  return (
+    <div className="deep-grid">
+      {reports.map(r => (
+        <article key={r.id} className="deep-card">
+          <div className="mono muted small">
+            {r.date}{r.updated && r.updated !== r.date ? ` · rev ${r.updated}` : ""}
+          </div>
+          <h3 className="deep-card-title">{r.title}</h3>
+          {r.verdict && <div className="deep-card-verdict mono">{r.verdict}</div>}
+          {r.summary && <p className="deep-card-summary">{r.summary}</p>}
+          <div className="deep-card-tags">
+            {(r.tags || []).map(t => <span key={t} className="deep-tag mono">{t}</span>)}
+          </div>
+          <div className="deep-card-actions">
+            {r.html && <a className="deep-btn" href={`deep/${r.html}`} target="_blank" rel="noopener">Open dossier ↗</a>}
+            {r.link && <a className="deep-btn" href={r.link} target="_blank" rel="noopener">{r.link_label || "Open ↗"}</a>}
+            {r.pdf && <a className="deep-btn deep-btn-ghost" href={`deep/${r.pdf}`} target="_blank" rel="noopener" title={r.pdf_note || ""}>PDF</a>}
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Streams component
 // ---------------------------------------------------------------------------
 
@@ -1263,6 +1475,7 @@ function Streams() {
     { key: "graph",    num: "S3",  label: "Graph",    sub: "source graph · echo ties" },
     { key: "feed",     num: "S4",  label: "Feed",     sub: "per-source feed" },
     { key: "manual",   num: "S5",  label: "Manual",   sub: "KOL captures from /04 inbox" },
+    { key: "deep",     num: "S7",  label: "Deep",     sub: "long-form dossiers · deep-set analysis" },
   ];
   const activeTab = TABS.find(t => t.key === tab) || TABS[0];
 
@@ -1442,10 +1655,25 @@ function Streams() {
         </section>
       )}
 
+      {/* ── S7 Deep Analysis dossiers ───────────────────────────────── */}
+      {tab === "deep" && (
+        <section className="block block-quiet">
+          <div className="block-body" style={{ paddingTop: 12 }}>
+            <DeepAnalysis />
+          </div>
+        </section>
+      )}
+
       {/* S1 theme drilldown */}
       <DrillSheet open={!!openTheme} onClose={() => setOpenTheme(null)}
         title={openTheme ? openTheme.label : ""}
-        subtitle={openTheme ? `${openTheme.direction} · ${openTheme.age_days}d old` : ""}>
+        subtitle={openTheme ? `${
+          openTheme.primary_data && openTheme.primary_data.current
+            ? `${openTheme.primary_data.current.level.toFixed(2)}% · ${openTheme.primary_data.current.action}${openTheme.primary_data.expected_market ? ` · mkt ${openTheme.primary_data.expected_market.market_lean}` : ""}`
+            : openTheme.theme_kind === "macro_factor"
+              ? `${openTheme.factor_state || "neutral"} → ${openTheme.market_impact || "mixed"}`
+              : openTheme.direction
+        } · ${openTheme.age_days}d old` : ""}>
         {openTheme && <ThemeDetailPanel t={openTheme} />}
       </DrillSheet>
 

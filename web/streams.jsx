@@ -1253,6 +1253,18 @@ function Streams() {
   const [sortBy, setSortBy]           = useState("weight");
   const [srcQ, setSrcQ]               = useState("");
   const [openFeedSrc, setOpenFeedSrc] = useState(null);
+  const [tab, setTab]                 = useState("themes");
+
+  const TABS = [
+    { key: "themes",   num: "S1",  label: "Themes",   sub: "sectors · macro narratives · regimes" },
+    { key: "assets",   num: "S1b", label: "Assets",   sub: "per-ticker chatter · same lifecycle × direction frame" },
+    { key: "trusted",  num: "S6",  label: "Trusted",  sub: "conviction picks · T0/T1 authors" },
+    { key: "concepts", num: "S2",  label: "Concepts", sub: "new this week · high velocity · low item count" },
+    { key: "graph",    num: "S3",  label: "Graph",    sub: "source graph · echo ties" },
+    { key: "feed",     num: "S4",  label: "Feed",     sub: "per-source feed" },
+    { key: "manual",   num: "S5",  label: "Manual",   sub: "KOL captures from /04 inbox" },
+  ];
+  const activeTab = TABS.find(t => t.key === tab) || TABS[0];
 
   const allThemes = Array.from(new Set(
     (s.bySource || []).flatMap(x => x.themes || [])
@@ -1282,73 +1294,79 @@ function Streams() {
   return (
     <div className="streams-view">
 
-      {/* ── S1 Theme map ────────────────────────────────────────────── */}
-      <section className="block block-quiet">
-        <header className="block-head">
-          <div className="block-title">
-            <span className="block-num mono">S1</span>
-            <span>Theme map</span>
-            <span className="block-sub">sectors · macro narratives · regimes</span>
-          </div>
-        </header>
-        <div className="block-body" style={{ paddingTop: 6, paddingBottom: 14 }}>
-          <ThemeMap themeMap={s.themeMap || []} onThemeClick={t => setOpenTheme(t)} />
-        </div>
-      </section>
+      {/* ── Tab bar ─────────────────────────────────────────────────── */}
+      <div className="streams-tabs" role="tablist">
+        {TABS.map(t => (
+          <button key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            className={`streams-tab ${tab === t.key ? "on" : ""}`}
+            onClick={() => setTab(t.key)}>
+            <span className="streams-tab-num mono">{t.num}</span>
+            <span className="streams-tab-label">{t.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="streams-tab-sub mono muted small">
+        {activeTab.sub}
+      </div>
 
-      {/* ── S1b Asset map (same shape, per-ticker) ──────────────────── */}
-      <section className="block block-quiet">
-        <header className="block-head">
-          <div className="block-title">
-            <span className="block-num mono">S1b</span>
-            <span>Asset map</span>
-            <span className="block-sub">per-ticker chatter · same lifecycle × direction frame</span>
+      {/* ── S1 Themes ───────────────────────────────────────────────── */}
+      {tab === "themes" && (
+        <section className="block block-quiet">
+          <div className="block-body" style={{ paddingTop: 14, paddingBottom: 14 }}>
+            <ThemeMap themeMap={s.themeMap || []} onThemeClick={t => setOpenTheme(t)} />
           </div>
-        </header>
-        <div className="block-body" style={{ paddingTop: 6, paddingBottom: 14 }}>
-          <ThemeMap themeMap={s.assetMap || []} onThemeClick={t => setOpenTheme(t)} />
-        </div>
-      </section>
+        </section>
+      )}
+
+      {/* ── S1b Assets ──────────────────────────────────────────────── */}
+      {tab === "assets" && (
+        <section className="block block-quiet">
+          <div className="block-body" style={{ paddingTop: 14, paddingBottom: 14 }}>
+            <ThemeMap themeMap={s.assetMap || []} onThemeClick={t => setOpenTheme(t)} />
+          </div>
+        </section>
+      )}
+
+      {/* ── S6 Trusted sources (rendered from inbox.jsx global) ─────── */}
+      {tab === "trusted" && (
+        window.TrustedSourceThemes
+          ? React.createElement(window.TrustedSourceThemes)
+          : <div className="empty-state mono muted" style={{ padding: "1rem" }}>Trusted-sources panel not loaded.</div>
+      )}
 
       {/* ── S2 Emerging concepts ────────────────────────────────────── */}
-      <section className="block block-quiet">
-        <header className="block-head">
-          <div className="block-title">
-            <span className="block-num mono">S2</span>
-            <span>Emerging concepts</span>
-            <span className="block-sub">new this week · high velocity · low item count</span>
+      {tab === "concepts" && (
+        <section className="block block-quiet">
+          <header className="block-head">
+            <div className="cc-header-criteria mono small muted">
+              novelty &gt; 0.7 · velocity &gt; 0.4
+            </div>
+          </header>
+          <div className="block-body" style={{ paddingTop: 14 }}>
+            <ConceptsCards concepts={s.concepts || []} />
           </div>
-          <div className="cc-header-criteria mono small muted">
-            novelty &gt; 0.7 · velocity &gt; 0.4
-          </div>
-        </header>
-        <div className="block-body" style={{ paddingTop: 14 }}>
-          <ConceptsCards concepts={s.concepts || []} />
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* ── S3 Source graph ─────────────────────────────────────────── */}
-      <section className="block block-quiet">
-        <header className="block-head">
-          <div className="block-title">
-            <span className="block-num mono">S3</span>
-            <span>Source graph · echo ties</span>
+      {tab === "graph" && (
+        <section className="block block-quiet">
+          <div className="block-body" style={{ paddingTop: 14, paddingBottom: 14 }}>
+            <SourceGraph
+              sourceGraph={s.sourceGraph || { nodes: [], links: [] }}
+              onNodeClick={n => setOpenSrc(n)}
+            />
           </div>
-        </header>
-        <div className="block-body" style={{ paddingTop: 6, paddingBottom: 14 }}>
-          <SourceGraph
-            sourceGraph={s.sourceGraph || { nodes: [], links: [] }}
-            onNodeClick={n => setOpenSrc(n)}
-          />
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* ── S4 Per-source feed ──────────────────────────────────────── */}
+      {tab === "feed" && (
       <section className="block block-quiet">
         <header className="block-head">
           <div className="block-title">
-            <span className="block-num mono">S4</span>
-            <span>Per-source feed</span>
             <span className="block-sub">
               {sources.length} of {(s.bySource || []).length} · sorted by {sortBy}
               {srcQ.trim() ? ` · filtered "${srcQ}"` : ""}
@@ -1413,34 +1431,16 @@ function Streams() {
           </div>
         )}
       </section>
+      )}
 
       {/* ── S5 Manual drops ─────────────────────────────────────────── */}
-      <section className="block block-quiet">
-        <header className="block-head">
-          <div className="block-title">
-            <span className="block-num mono">S5</span>
-            <span>Manual drops</span>
-            <span className="block-sub">
-              KOL captures from /04 inbox · same weighting as published sources, slightly higher per selectivity
-            </span>
+      {tab === "manual" && (
+        <section className="block block-quiet">
+          <div className="block-body" style={{ paddingTop: 12 }}>
+            <ManualDrops />
           </div>
-        </header>
-        <div className="block-body" style={{ paddingTop: 12 }}>
-          <ManualDrops />
-        </div>
-      </section>
-
-      {/* ── S6 Trusted sources · conviction picks ────────────────────────
-          The I3 panel, relocated from /04 inbox. Cross-source themes +
-          conviction picks for all T0/T1 authors (trust ≥ 1.15), including
-          the Telegram-poller channels (Feather Hands, Gem Hunters, OG
-          Whales, Wolf Pack, Ari Gold) and the seeded macro sources.
-          Component is defined in inbox.jsx and exposed on window; rendered
-          here at runtime (inbox.jsx loads before app mounts). It renders
-          its own <section> with header, so no wrapper needed. */}
-      {window.TrustedSourceThemes
-        ? React.createElement(window.TrustedSourceThemes)
-        : null}
+        </section>
+      )}
 
       {/* S1 theme drilldown */}
       <DrillSheet open={!!openTheme} onClose={() => setOpenTheme(null)}

@@ -1588,6 +1588,53 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 
 /* ── Streams page ─────────────────────────────────────────────────── */
 .streams-view { display: flex; flex-direction: column; gap: 16px; padding: 16px 24px; }
+
+/* /streams tab bar — replaces the stacked S1..S5 sections */
+.streams-tabs {
+  display: flex; align-items: stretch; flex-wrap: wrap; gap: 0;
+  border: 1px solid var(--line);
+  background: var(--bg-card);
+  margin-bottom: -8px;
+}
+.streams-tab {
+  flex: 1 1 auto;
+  display: flex; align-items: baseline; justify-content: center; gap: 8px;
+  padding: 10px 16px;
+  background: transparent; border: 0;
+  border-right: 1px solid var(--line);
+  color: var(--text-mute);
+  font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.streams-tab:last-child { border-right: 0; }
+.streams-tab:hover { color: var(--text); background: rgba(255,255,255,0.02); }
+.streams-tab.on {
+  color: var(--text);
+  background: rgba(224,192,96,0.06);
+  box-shadow: inset 0 -2px 0 var(--accent, #e0c060);
+}
+.streams-tab-num { font-size: 10px; color: var(--text-mute-3); letter-spacing: 0.1em; }
+.streams-tab.on .streams-tab-num { color: var(--accent, #e0c060); }
+.streams-tab-label { letter-spacing: 0.08em; }
+.streams-tab-sub {
+  padding: 2px 6px 4px;
+  letter-spacing: 0.08em;
+}
+
+.concept-row-clickable { cursor: pointer; }
+.concept-row-clickable:hover {
+  border-color: var(--accent, #e0c060);
+  background: rgba(224,192,96,0.03);
+}
+
+.sc-levels-pending {
+  padding: 10px 12px; margin: 6px 0 10px;
+  border: 1px dashed var(--line);
+  border-radius: 3px;
+  text-align: center; letter-spacing: 0.04em;
+}
+
 .streams-summary {
   padding: 12px 16px; line-height: 1.5; font-size: 13px;
   color: var(--text, #ddd);

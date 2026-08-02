@@ -173,8 +173,9 @@ function SideLabel({ side }) {
 
 // ─── Setup card (hero) ───────────────────────────────────────────
 function SetupCard({ s, onOpen, active = false }) {
-  const distToInval = ((s.entry - s.stop) / s.entry) * 100;
-  const upside = ((s.target - s.entry) / s.entry) * 100;
+  const hasLevels = (s.entry || 0) > 0 && (s.stop || 0) > 0 && (s.target || 0) > 0;
+  const distToInval = hasLevels ? ((s.entry - s.stop) / s.entry) * 100 : 0;
+  const upside      = hasLevels ? ((s.target - s.entry) / s.entry) * 100 : 0;
   return (
     <div className={`setup-card tier-${s.tier} ${active ? "active" : ""}`} onClick={() => onOpen(s)}>
       <ConvictionStripe tier={s.tier} />
@@ -190,26 +191,32 @@ function SetupCard({ s, onOpen, active = false }) {
         <span className="sc-setup">{s.setup}</span>
       </div>
 
-      <div className="sc-levels">
-        <div className="sc-level">
-          <div className="sc-l-lbl">ENTRY</div>
-          <div className="sc-l-val mono">{s.entry < 1000 ? s.entry.toFixed(2) : s.entry.toLocaleString()}</div>
+      {hasLevels ? (
+        <div className="sc-levels">
+          <div className="sc-level">
+            <div className="sc-l-lbl">ENTRY</div>
+            <div className="sc-l-val mono">{s.entry < 1000 ? s.entry.toFixed(2) : s.entry.toLocaleString()}</div>
+          </div>
+          <div className="sc-level">
+            <div className="sc-l-lbl">STOP</div>
+            <div className="sc-l-val mono red">{s.stop < 1000 ? s.stop.toFixed(2) : s.stop.toLocaleString()}</div>
+            <div className="sc-l-sub mono">−{distToInval.toFixed(1)}%</div>
+          </div>
+          <div className="sc-level">
+            <div className="sc-l-lbl">TARGET</div>
+            <div className="sc-l-val mono green">{s.target < 1000 ? s.target.toFixed(2) : s.target.toLocaleString()}</div>
+            <div className="sc-l-sub mono">+{upside.toFixed(1)}%</div>
+          </div>
+          <div className="sc-level">
+            <div className="sc-l-lbl">R/R</div>
+            <div className="sc-l-val mono">{(s.rr || 0).toFixed(2)}</div>
+          </div>
         </div>
-        <div className="sc-level">
-          <div className="sc-l-lbl">STOP</div>
-          <div className="sc-l-val mono red">{s.stop < 1000 ? s.stop.toFixed(2) : s.stop.toLocaleString()}</div>
-          <div className="sc-l-sub mono">−{distToInval.toFixed(1)}%</div>
+      ) : (
+        <div className="sc-levels-pending mono small muted">
+          levels pending — awaiting technical agent (live price + ATR + setup detector)
         </div>
-        <div className="sc-level">
-          <div className="sc-l-lbl">TARGET</div>
-          <div className="sc-l-val mono green">{s.target < 1000 ? s.target.toFixed(2) : s.target.toLocaleString()}</div>
-          <div className="sc-l-sub mono">+{upside.toFixed(1)}%</div>
-        </div>
-        <div className="sc-level">
-          <div className="sc-l-lbl">R/R</div>
-          <div className="sc-l-val mono">{s.rr.toFixed(2)}</div>
-        </div>
-      </div>
+      )}
 
       <ul className="sc-why">
         {s.whyNow.slice(0, 3).map((b, i) => <li key={i}>{b}</li>)}

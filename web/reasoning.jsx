@@ -20,25 +20,31 @@ function ReasoningTrail({ signal }) {
       </div>
       <TierIndicator tier={r.tier} />
 
-      {/* Levels recap */}
-      <div className="rt-levels-grid">
-        <div className="rt-l">
-          <div className="rt-l-lbl">ENTRY</div>
-          <div className="rt-l-val mono">{signal.entry < 1000 ? signal.entry.toFixed(2) : signal.entry.toLocaleString()}</div>
+      {/* Levels recap (hidden when technical agent hasn't populated them yet) */}
+      {(signal.entry || 0) > 0 && (signal.stop || 0) > 0 && (signal.target || 0) > 0 ? (
+        <div className="rt-levels-grid">
+          <div className="rt-l">
+            <div className="rt-l-lbl">ENTRY</div>
+            <div className="rt-l-val mono">{signal.entry < 1000 ? signal.entry.toFixed(2) : signal.entry.toLocaleString()}</div>
+          </div>
+          <div className="rt-l">
+            <div className="rt-l-lbl">STOP</div>
+            <div className="rt-l-val mono red">{signal.stop < 1000 ? signal.stop.toFixed(2) : signal.stop.toLocaleString()}</div>
+          </div>
+          <div className="rt-l">
+            <div className="rt-l-lbl">TARGET</div>
+            <div className="rt-l-val mono green">{signal.target < 1000 ? signal.target.toFixed(2) : signal.target.toLocaleString()}</div>
+          </div>
+          <div className="rt-l">
+            <div className="rt-l-lbl">R/R</div>
+            <div className="rt-l-val mono">{(signal.rr || 0).toFixed(2)}</div>
+          </div>
         </div>
-        <div className="rt-l">
-          <div className="rt-l-lbl">STOP</div>
-          <div className="rt-l-val mono red">{signal.stop < 1000 ? signal.stop.toFixed(2) : signal.stop.toLocaleString()}</div>
+      ) : (
+        <div className="sc-levels-pending mono small muted" style={{ marginBottom: 8 }}>
+          levels pending — awaiting technical agent (live price + ATR + setup detector)
         </div>
-        <div className="rt-l">
-          <div className="rt-l-lbl">TARGET</div>
-          <div className="rt-l-val mono green">{signal.target < 1000 ? signal.target.toFixed(2) : signal.target.toLocaleString()}</div>
-        </div>
-        <div className="rt-l">
-          <div className="rt-l-lbl">R/R</div>
-          <div className="rt-l-val mono">{signal.rr.toFixed(2)}</div>
-        </div>
-      </div>
+      )}
 
       {/* Section: composite breakdown */}
       <div className="rt-section">

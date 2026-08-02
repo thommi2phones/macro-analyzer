@@ -11,6 +11,7 @@ function Concepts({ onPromote }) {
   const [, force] = React.useState(0);
   const rerender = () => force(n => n + 1);
   const [showHistory, setShowHistory] = React.useState(false);
+  const [openSug, setOpenSug] = React.useState(null);
 
   const concepts = D.concepts || [];
   const suggestions = D.conceptSuggestions || [];
@@ -99,7 +100,9 @@ function Concepts({ onPromote }) {
         ) : (
           <div className="concepts-list">
             {suggestions.map(s => (
-              <div key={s.asset} className="concept-row suggested">
+              <div key={s.asset} className="concept-row suggested concept-row-clickable"
+                   onClick={() => setOpenSug(s)}
+                   title="Click to see what sources are saying">
                 <div className="concept-asset">
                   <div className="mono asset-cell">{s.asset}</div>
                   <SideLabel side={s.side} />
@@ -112,7 +115,8 @@ function Concepts({ onPromote }) {
                 </div>
                 <div className="concept-reason muted small">{s.reason}</div>
                 <div className="concept-actions">
-                  <button className="btn-primary sm" onClick={() => markConcept(s)}>
+                  <button className="btn-primary sm"
+                    onClick={(e) => { e.stopPropagation(); markConcept(s); }}>
                     mark as concept ↵
                   </button>
                 </div>
@@ -224,6 +228,106 @@ function Concepts({ onPromote }) {
           )
         )}
       </section>
+      <DrillSheet open={!!openSug} onClose={() => setOpenSug(null)}
+        title={openSug ? openSug.asset : ""}
+        subtitle={openSug ? `${openSug.side} · score ${openSug.score} · T${openSug.tier}` : ""}>
+        {openSug && <SuggestionDetailPanel s={openSug} />}
+      </DrillSheet>
+    </div>
+  );
+}
+
+function SuggestionDetailPanel({ s }) {
+  const D = window.MA_DATA;
+  const wlRow = (D.watchlist || []).find(w => w.asset === s.asset);
+  const heroRow = (D.heroSignals || []).find(h => h.asset === s.asset);
+  const themeMentions = ((D.streams && D.streams.themeMap) || [])
+    .filter(t => (t.assets || t.tickers || []).map(x => (x || "").toUpperCase()).includes(s.asset.toUpperCase()))
+    .slice(0, 6);
+  const assetMentions = ((D.streams && D.streams.assetMap) || [])
+    .filter(t => (t.label || "").toUpperCase() === s.asset.toUpperCase())
+    .slice(0, 4);
+  const sources = wlRow?.origins || heroRow?.sources || [];
+
+  return (
+    <div className="rt-content">
+      <div className="rt-card-head">
+        <div className="rt-asset-block">
+          <div className="rt-asset mono">{s.asset}</div>
+          <div className="rt-name">{wlRow?.name || s.asset}</div>
+          <div className="rt-meta-row">
+            <SideLabel side={s.side} />
+            <span className="rt-setup">regime {s.regime}</span>
+          </div>
+        </div>
+        <div className={`wl-score tier-${s.tier}`} style={{ fontSize: 24, padding: "6px 12px" }}>
+          {s.score}
+        </div>
+      </div>
+
+      <div className="rt-section">
+        <div className="rt-section-head">
+          <span className="rt-section-num mono">A</span>
+          <span>Why suggested</span>
+        </div>
+        <p style={{ margin: "6px 0 0 0", lineHeight: 1.5 }}>{s.reason}</p>
+        <div className="mono small muted" style={{ marginTop: 6 }}>
+          score {s.score} · Δ {s.dScore >= 0 ? "+" : ""}{s.dScore} · tier T{s.tier} · regime {s.regime}
+        </div>
+      </div>
+
+      {sources.length > 0 && (
+        <div className="rt-section">
+          <div className="rt-section-head">
+            <span className="rt-section-num mono">B</span>
+            <span>Watchlist origins · sources talking about this</span>
+          </div>
+          <div className="tag-row" style={{ marginTop: 8 }}>
+            {sources.map((src, i) => <span key={i} className="tag-chip">{src}</span>)}
+          </div>
+        </div>
+      )}
+
+      {(themeMentions.length > 0 || assetMentions.length > 0) && (
+        <div className="rt-section">
+          <div className="rt-section-head">
+            <span className="rt-section-num mono">C</span>
+            <span>Live narrative context</span>
+          </div>
+          {assetMentions.map(t => (
+            <div key={"a-" + t.label} className="mono small" style={{ padding: "4px 0" }}>
+              · asset chatter <b>{t.label}</b> · {t.direction} · {t.age_days}d old · {(t.items || []).length || 0} items
+            </div>
+          ))}
+          {themeMentions.map(t => (
+            <div key={"t-" + t.label} className="mono small" style={{ padding: "4px 0" }}>
+              · theme <b>{t.label}</b> · {t.direction} · {t.age_days}d old
+            </div>
+          ))}
+        </div>
+      )}
+
+      {wlRow && (
+        <div className="rt-section">
+          <div className="rt-section-head">
+            <span className="rt-section-num mono">D</span>
+            <span>Watchlist breakdown</span>
+          </div>
+          <div className="rt-modifiers">
+            <div className="rt-mod-row"><span className="rt-mod-lbl">tech</span><span className="rt-mod-val mono">{wlRow.tech}</span></div>
+            <div className="rt-mod-row"><span className="rt-mod-lbl">vol</span><span className="rt-mod-val mono">{wlRow.vol}</span></div>
+            <div className="rt-mod-row"><span className="rt-mod-lbl">R/R</span><span className="rt-mod-val mono">{(wlRow.rr || 0).toFixed(2)}</span></div>
+            <div className="rt-mod-row"><span className="rt-mod-lbl">regime</span><span className="rt-mod-val mono">{wlRow.regime}</span></div>
+            <div className="rt-mod-row"><span className="rt-mod-lbl">last scored</span><span className="rt-mod-val mono">{wlRow.last}</span></div>
+          </div>
+        </div>
+      )}
+
+      {sources.length === 0 && themeMentions.length === 0 && assetMentions.length === 0 && !wlRow && (
+        <div className="empty-state muted small" style={{ padding: "1rem" }}>
+          No additional context available yet — score-only suggestion. Once the ticker shows up in a live theme or has a watchlist origin, more detail will appear here.
+        </div>
+      )}
     </div>
   );
 }

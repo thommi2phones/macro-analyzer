@@ -353,7 +353,7 @@ def main() -> int:
     if not args.analyze and stats["imported"]:
         print()
         print("  Next: drain vision in the background ↓")
-        print('    curl -X POST "http://127.0.0.1:8000/api/manual/vision/drain?limit=200"')
+        print('    curl -X POST "http://127.0.0.1:8001/api/manual/vision/drain?limit=200"')
         print("  Or just hit the `analyze pending` button in /04 manual input.")
     return 0
 

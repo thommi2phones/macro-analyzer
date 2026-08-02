@@ -504,7 +504,7 @@ def main() -> int:
     if not args.analyze:
         print()
         print("  Next: drain vision (each call processes one group at a time):")
-        print('    curl -X POST "http://127.0.0.1:8000/api/manual/vision/drain?limit=50"')
+        print('    curl -X POST "http://127.0.0.1:8001/api/manual/vision/drain?limit=50"')
         print("  Or hit the `analyze pending` button in /04 manual input.")
     return 0
 

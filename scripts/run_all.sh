@@ -16,7 +16,7 @@ ROOT="/Users/thom/Documents/Personal/Code Projects/Macro Analyzer"
 UV="/Users/thom/.local/bin/uv"
 LOGDIR="$HOME/Library/Logs"
 CHANNELS="feather_hands_trading,gem_hunters,og_whales,the_wolf_pack,ari_gold,trading_operation_desk"
-PORT=8002
+PORT=8001   # canonical dashboard port — matches .claude/launch.json; do not change
 
 mkdir -p "$LOGDIR"
 cd "$ROOT" || { echo "FATAL: cannot cd into $ROOT (Documents access?)"; exit 1; }

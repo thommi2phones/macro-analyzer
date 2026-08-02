@@ -28,6 +28,21 @@ function _stripPrice(text) {
   if (m) return { price: m[1], desc: m[2] };
   return { price: null, desc: String(text) };
 }
+// Key-level entries can arrive as strings or as objects like
+// {price, role, ...}. Normalize to {price, desc} for the chip.
+function _levelToChip(l) {
+  if (l && typeof l === "object") {
+    const price = l.price != null ? String(l.price) : null;
+    const desc = l.role || l.desc || l.label || l.note || "";
+    if (price || desc) return { price, desc };
+    return _stripPrice(JSON.stringify(l));
+  }
+  return _stripPrice(l);
+}
+function _levelClassify(l) {
+  if (l && typeof l === "object") return _classifyLevel(l.role || l.desc || "");
+  return _classifyLevel(l);
+}
 
 // ── Attribution card with inline reassign ──
 // Renders the document's current FROM line as a clickable chip. Click
@@ -1562,13 +1577,17 @@ function Inbox() {
 }
 
 // ── Trusted-source themes panel ──
+//
+// Layout: sub-tab bar of authors (one pill per source, ranked by trust), and
+// below it a dedicated per-source page. The per-source page leads with the
+// author's conviction picks, then a chart-first gallery grouped by ticker so
+// setups are scannable at a glance.
 function TrustedSourceThemes() {
   const [data, setData] = useIS(null);
   const [loading, setLoading] = useIS(true);
   const [windowDays, setWindowDays] = useIS(90);
-  // Per-author call-accuracy (win rate / avg return vs real price action),
-  // keyed by author_id. Fetched alongside themes and passed to each card.
   const [accuracy, setAccuracy] = useIS({});
+  const [activeId, setActiveId] = useIS(null);
 
   useIE(() => {
     let cancelled = false;
@@ -1577,7 +1596,6 @@ function TrustedSourceThemes() {
       .then(r => r.json())
       .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
       .catch(() => { if (!cancelled) setLoading(false); });
-    // Accuracy rollup — separate endpoint, joined by author_id in the card.
     fetch(`/api/manual/accuracy/sources?window_days=${windowDays}`)
       .then(r => r.json())
       .then(d => {
@@ -1587,7 +1605,6 @@ function TrustedSourceThemes() {
         setAccuracy(map);
       })
       .catch(() => {});
-    // Refresh on author reassign — performance shifts.
     function onReassign() {
       fetch(`/api/manual/themes/trusted?window_days=${windowDays}`)
         .then(r => r.json()).then(setData);
@@ -1596,14 +1613,17 @@ function TrustedSourceThemes() {
     return () => { cancelled = true; window.removeEventListener("macro:author-reassigned", onReassign); };
   }, [windowDays]);
 
+  const authors = (data && data.authors) || [];
+  const active = authors.find(a => a.author_id === activeId) || authors[0] || null;
+
   return (
     <section className="block">
       <header className="block-head">
         <div className="block-title">
           <span className="block-num mono">I3</span>
-          <span>Trusted sources · themes &amp; conviction picks</span>
+          <span>Trusted sources</span>
           <span className="block-sub">
-            Feather Hands · Stock Unlocked · Forward Guidance — top tickers and bias direction over the last {windowDays}d
+            per-source drilldown · conviction picks + chart gallery over the last {windowDays}d
           </span>
         </div>
         <div className="block-actions">
@@ -1618,12 +1638,35 @@ function TrustedSourceThemes() {
       </header>
       {loading ? (
         <div className="inbox-empty">Loading…</div>
-      ) : !data || !data.authors || data.authors.length === 0 ? (
+      ) : authors.length === 0 ? (
         <div className="inbox-empty">No analyzed drops yet from trusted sources in this window.</div>
       ) : (
-        <div className="ts-grid">
-          {data.authors.map(a => <TrustedAuthorCard key={a.author_id} a={a} acc={accuracy[a.author_id]} />)}
-        </div>
+        <>
+          <div className="ts-author-tabs" role="tablist">
+            {authors.map(a => {
+              const on = active && active.author_id === a.author_id;
+              return (
+                <button key={a.author_id}
+                  role="tab"
+                  aria-selected={!!on}
+                  className={`ts-author-tab ${on ? "on" : ""}`}
+                  onClick={() => setActiveId(a.author_id)}
+                  title={`${a.display_name}${a.channel ? " · " + a.channel : ""} · ${a.n_drops} drops`}>
+                  <span className="ts-author-tab-name">{a.display_name}</span>
+                  <span className="ts-author-tab-meta mono dim">{a.n_with_vision}/{a.n_drops}</span>
+                  <span className="ts-trust mono">{a.trust_weight.toFixed(1)}x</span>
+                </button>
+              );
+            })}
+          </div>
+          {active && (
+            <TrustedAuthorDetail
+              a={active}
+              acc={accuracy[active.author_id]}
+              windowDays={windowDays}
+            />
+          )}
+        </>
       )}
     </section>
   );
@@ -1690,11 +1733,11 @@ function TickerDrillDown({ authorId, ticker, onClose }) {
                     </span>
                   )}
                 </div>
-                {d.setup && <div className="cd-pattern" style={{ fontSize: 14 }}>{d.setup}</div>}
-                {d.next_move && (
+                {_setupText(d.setup) && <div className="cd-pattern" style={{ fontSize: 14 }}>{_setupText(d.setup)}</div>}
+                {_nextMoveText(d.next_move) && (
                   <div className="cd-block-text" style={{ fontSize: 12, marginTop: 4 }}>
                     <span className="cd-block-title" style={{ marginRight: 6 }}>NEXT</span>
-                    {d.next_move}
+                    {_nextMoveText(d.next_move)}
                   </div>
                 )}
                 {d.invalidation && (
@@ -1727,125 +1770,130 @@ function TickerDrillDown({ authorId, ticker, onClose }) {
   );
 }
 
-function TrustedAuthorCard({ a, acc }) {
-  // Drill-down state — which ticker is expanded inline below the chips.
-  const [openTicker, setOpenTicker] = useIS(null);
+// Per-author dedicated page: header stats + conviction pick chips (jump to
+// section), then a chart gallery grouped by ticker. Loads drops for every
+// distinct ticker in this author's conviction picks + top-mentions list in
+// parallel, so the whole gallery renders once fetches settle.
+function TrustedAuthorDetail({ a, acc, windowDays }) {
   const totalBias = Object.values(a.bias_distribution || {}).reduce((s, n) => s + n, 0);
   const pct = (k) => totalBias ? Math.round((a.bias_distribution[k] || 0) / totalBias * 100) : 0;
 
-  // Skip the "UNKNOWN" sentinel — that's Claude's "couldn't read ticker"
-  // marker, not a real symbol. Polluted the panel with bogus chips.
   const realPicks = (a.high_conviction_tickers || []).filter(hc => hc.ticker !== "UNKNOWN");
   const realTopTickers = (a.top_tickers || []).filter(([t]) => t !== "UNKNOWN");
 
-  function toggleTicker(t) {
-    setOpenTicker(prev => prev === t ? null : t);
+  // Union of tickers to render as gallery sections, ordered by conviction
+  // then mention count. Cap for speed — 12 sections is plenty per author.
+  const galleryTickers = React.useMemo(() => {
+    const seen = new Set();
+    const order = [];
+    const meta = {};
+    for (const hc of realPicks) {
+      if (seen.has(hc.ticker)) continue;
+      seen.add(hc.ticker); order.push(hc.ticker);
+      meta[hc.ticker] = { conv: Math.round(hc.conviction_score || 0), bias: hc.bias, mentions: hc.mentions };
+    }
+    for (const [t, c] of realTopTickers) {
+      if (seen.has(t)) { meta[t].mentions = Math.max(meta[t].mentions || 0, c); continue; }
+      seen.add(t); order.push(t);
+      meta[t] = { conv: null, bias: "neutral", mentions: c };
+    }
+    return { order: order.slice(0, 12), meta };
+  }, [a.author_id, a.high_conviction_tickers, a.top_tickers]);
+
+  // dropsByTicker: { TICKER: {loading, drops:[]} }
+  const [dropsByTicker, setDropsByTicker] = useIS({});
+  const [dropDetail, setDropDetail] = useIS(null); // full-view drop for modal
+  const [openTicker, setOpenTicker] = useIS(null); // scroll target on chip click
+
+  useIE(() => {
+    // Reset when author or window changes.
+    setDropsByTicker({});
+    let cancelled = false;
+    galleryTickers.order.forEach(t => {
+      const url = `/api/manual/themes/author/${encodeURIComponent(a.author_id)}/ticker/${encodeURIComponent(t)}?window_days=${windowDays}`;
+      fetch(url).then(r => r.json()).then(d => {
+        if (cancelled) return;
+        setDropsByTicker(prev => ({ ...prev, [t]: { loading: false, drops: d.drops || [] } }));
+      }).catch(() => {
+        if (cancelled) return;
+        setDropsByTicker(prev => ({ ...prev, [t]: { loading: false, drops: [] } }));
+      });
+    });
+    return () => { cancelled = true; };
+  }, [a.author_id, windowDays, galleryTickers.order.join(",")]);
+
+  function jumpTo(t) {
+    setOpenTicker(t);
+    const el = document.getElementById(`ts-gallery-${a.author_id}-${t}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   return (
-    <div className="ts-card">
-      <div className="ts-card-head">
-        <strong>{a.display_name}</strong>
-        {a.channel && <span className="dim"> · {a.channel}</span>}
-        {a.parent_channel && <span className="dim"> · {a.parent_channel}</span>}
-        <span className="ts-trust mono">{a.trust_weight.toFixed(1)}x</span>
-        {a.category && <span className="ts-cat">{a.category.replace("_", " ")}</span>}
-      </div>
-      <div className="ts-card-meta dim mono">
-        {a.n_with_vision}/{a.n_drops} analyzed
-        {a.earliest_chart && a.latest_chart && (
-          <span> · {a.earliest_chart} → {a.latest_chart}</span>
+    <div className="ts-detail">
+      {/* ── Author header ───────────────────────────────────────────── */}
+      <div className="ts-detail-head">
+        <div className="ts-detail-title">
+          <strong>{a.display_name}</strong>
+          {a.channel && <span className="dim"> · {a.channel}</span>}
+          {a.parent_channel && a.parent_channel !== a.channel && (
+            <span className="dim"> · {a.parent_channel}</span>
+          )}
+          {a.category && <span className="ts-cat">{a.category.replace("_", " ")}</span>}
+        </div>
+        <div className="ts-detail-meta dim mono">
+          {a.n_with_vision}/{a.n_drops} analyzed
+          {a.earliest_chart && a.latest_chart && (
+            <span> · {a.earliest_chart} → {a.latest_chart}</span>
+          )}
+        </div>
+        {totalBias > 0 && (
+          <div className="ts-bias-bar"
+               title={`bullish ${pct("bullish")}% · neutral ${pct("neutral")}% · bearish ${pct("bearish")}%`}>
+            <div className="ts-bias-seg ts-bias-bull" style={{ width: `${pct("bullish")}%` }} />
+            <div className="ts-bias-seg ts-bias-neut" style={{ width: `${pct("neutral")}%` }} />
+            <div className="ts-bias-seg ts-bias-bear" style={{ width: `${pct("bearish")}%` }} />
+          </div>
         )}
       </div>
 
-      {/* Accuracy badge HIDDEN — the v1 backtest scored 99% of calls as
-          buy-and-hold (no call_type / targets extracted), so the numbers
-          reflect market beta, not skill. Re-enable after the extraction
-          rebuild (call_type + targets) + re-drain. Backend + endpoint kept;
-          `acc` prop still passed for when this turns back on. */}
-
-      {totalBias > 0 && (
-        <div className="ts-bias-bar" title={`bullish ${pct("bullish")}% · neutral ${pct("neutral")}% · bearish ${pct("bearish")}%`}>
-          <div className="ts-bias-seg ts-bias-bull" style={{ width: `${pct("bullish")}%` }} />
-          <div className="ts-bias-seg ts-bias-neut" style={{ width: `${pct("neutral")}%` }} />
-          <div className="ts-bias-seg ts-bias-bear" style={{ width: `${pct("bearish")}%` }} />
-        </div>
-      )}
-
+      {/* ── Conviction picks · click to jump ────────────────────────── */}
       {realPicks.length > 0 && (
         <div className="ts-section">
-          <div className="ts-section-title">Conviction picks</div>
+          <div className="ts-section-title">Conviction picks · click to jump to charts</div>
           <div className="ts-chips">
-            {realPicks.slice(0, 12).map(hc => {
+            {realPicks.slice(0, 16).map(hc => {
               const allStale = hc.active_mentions === 0 && hc.mentions > 0;
               const conv = Math.round(hc.conviction_score || 0);
-              // Color band: 75+ strong, 50-74 mid, <50 soft.
               const convClass = conv >= 75 ? "ts-conv-strong"
                               : conv >= 50 ? "ts-conv-mid"
                               : "ts-conv-soft";
+              const patternStrong = (hc.pattern_strength_avg || 0) >= 75;
               const tt = [
                 `conviction ${conv}/100`,
                 `${hc.agreement_pct}% bias agreement`,
                 hc.confluence_avg != null ? `Claude confluence avg ${hc.confluence_avg}/5` : null,
-                hc.pattern_strength_avg != null ? `pattern strength ${hc.pattern_strength_avg}/100` : null,
-                hc.n_timeframes ? `${hc.n_timeframes} timeframe${hc.n_timeframes === 1 ? "" : "s"} (${(hc.timeframes || []).join(", ") || "?"})` : null,
-                hc.distinct_days ? `${hc.distinct_days} distinct chart date${hc.distinct_days === 1 ? "" : "s"}` : null,
-                hc.n_distinct_setups ? `${hc.n_distinct_setups} distinct setup pattern${hc.n_distinct_setups === 1 ? "" : "s"}` : null,
+                hc.n_timeframes ? `${hc.n_timeframes} timeframe${hc.n_timeframes === 1 ? "" : "s"}` : null,
                 `${hc.mentions} total mentions · ${hc.active_mentions} active / ${hc.stale_mentions} stale`,
-                "click to see drops",
               ].filter(Boolean).join(" · ");
-              // Pattern-strong tag — for top-tier structures only (cup-and-handle,
-              // breakouts, wave 5). Tunable threshold in source_themes.py.
-              const patternStrong = (hc.pattern_strength_avg || 0) >= 75;
               return (
                 <button key={hc.ticker}
                   className={`ts-chip ts-chip-${hc.bias} ts-chip-button ${convClass} ${openTicker === hc.ticker ? "on" : ""} ${allStale ? "ts-chip-faded" : ""}`}
                   title={tt}
-                  onClick={() => toggleTicker(hc.ticker)}>
+                  onClick={() => jumpTo(hc.ticker)}>
                   <strong>{hc.ticker}</strong>
                   <span className="ts-conv-score mono">{conv}</span>
                   {hc.n_timeframes > 1 && (
-                    <span className="ts-tf-badge mono" title={`${hc.n_timeframes} timeframes confluent`}>
-                      {hc.n_timeframes}TF
-                    </span>
+                    <span className="ts-tf-badge mono">{hc.n_timeframes}TF</span>
                   )}
-                  {patternStrong && (
-                    <span className="ts-pattern-badge mono" title={`pattern strength ${hc.pattern_strength_avg}/100`}>
-                      ◆
-                    </span>
-                  )}
+                  {patternStrong && <span className="ts-pattern-badge mono">◆</span>}
                 </button>
               );
             })}
           </div>
           <div className="ts-conv-legend dim mono">
-            conviction = 30% confluence + 25% pattern + 20% TF coverage + 15% persistence + 10% freshness · ±10% bias-strength · ◆ = high-conviction pattern · hover for breakdown
+            conviction = 30% confluence + 25% pattern + 20% TF coverage + 15% persistence + 10% freshness · ◆ = high-conviction pattern
           </div>
         </div>
-      )}
-
-      {realTopTickers.length > 0 && (
-        <div className="ts-section">
-          <div className="ts-section-title">Top tickers · click to drill down</div>
-          <div className="ts-chips">
-            {realTopTickers.map(([t, c]) => (
-              <button key={t}
-                className={`ts-chip ts-chip-neutral ts-chip-button ${openTicker === t ? "on" : ""}`}
-                title={`click to see Big_Nuts's ${c} drop${c === 1 ? "" : "s"} on ${t}`}
-                onClick={() => toggleTicker(t)}>
-                <strong>{t}</strong><span className="dim mono"> ×{c}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {openTicker && (
-        <TickerDrillDown
-          authorId={a.author_id}
-          ticker={openTicker}
-          onClose={() => setOpenTicker(null)}
-        />
       )}
 
       {a.top_setups && a.top_setups.length > 0 && (
@@ -1858,12 +1906,225 @@ function TrustedAuthorCard({ a, acc }) {
           </ul>
         </div>
       )}
+
+      {/* ── Chart gallery grouped by ticker ─────────────────────────── */}
+      <div className="ts-section">
+        <div className="ts-section-title">Chart gallery · click any chart for full detail</div>
+        {galleryTickers.order.length === 0 && (
+          <div className="dim cd-text">No mentioned tickers in this window.</div>
+        )}
+        {galleryTickers.order.map(t => {
+          const m = galleryTickers.meta[t];
+          const bucket = dropsByTicker[t];
+          const drops = bucket ? bucket.drops : null;
+          return (
+            <div key={t} id={`ts-gallery-${a.author_id}-${t}`} className="ts-gallery-section">
+              <div className="ts-gallery-head">
+                <strong className="ts-gallery-ticker">{t}</strong>
+                {m.conv != null && (
+                  <span className={`ts-gallery-conv mono ${m.conv >= 75 ? "ts-conv-strong" : m.conv >= 50 ? "ts-conv-mid" : "ts-conv-soft"}`}>
+                    <span className="ts-conv-score mono">{m.conv}</span>
+                  </span>
+                )}
+                <span className="dim mono">
+                  {drops == null ? "loading…" : `${drops.length} drop${drops.length === 1 ? "" : "s"}`}
+                </span>
+              </div>
+              {drops == null ? (
+                <div className="ts-gallery-loading dim mono">Loading charts…</div>
+              ) : drops.length === 0 ? (
+                <div className="dim cd-text">No drops in this window.</div>
+              ) : (
+                <div className="ts-gallery-grid">
+                  {drops.map(d => <ChartGalleryCard key={d.document_id} d={d} onOpen={() => setDropDetail(d)} />)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {dropDetail && (
+        <DropDetailModal d={dropDetail} onClose={() => setDropDetail(null)} />
+      )}
     </div>
   );
 }
 
-// TrustedSourceThemes/TrustedAuthorCard/TickerDrillDown render the I3
-// conviction panel — now mounted on the /streams page (S6) rather than
-// here. Exposed on window so streams.jsx can render them; their closures
-// (useIS/useIE aliases) stay intact because they're still defined here.
-Object.assign(window, { Inbox, TrustedSourceThemes, TrustedAuthorCard, TickerDrillDown });
+// Big chart card in the gallery — chart-first, with bias/tf/date and a
+// one-line setup. Click opens the full-detail modal.
+function _setupText(s) {
+  if (!s) return "";
+  if (typeof s === "string") return s;
+  if (typeof s === "object") return s.name || s.pattern || s.setup || JSON.stringify(s);
+  return String(s);
+}
+
+// next_move / invalidation can arrive as objects (LLM extractor v2 shape):
+// {direction, target, secondary_target, timeframe_context, notes}. Render as
+// a readable one-liner. Falls through to string / JSON as needed.
+function _nextMoveText(nm) {
+  if (!nm) return "";
+  if (typeof nm === "string") return nm;
+  if (typeof nm === "object") {
+    if (nm.notes) return nm.notes;
+    const parts = [];
+    if (nm.direction) parts.push(nm.direction);
+    if (nm.target) parts.push(`→ ${nm.target}`);
+    if (nm.secondary_target) parts.push(`(then ${nm.secondary_target})`);
+    if (nm.timeframe_context) parts.push(`· ${nm.timeframe_context}`);
+    if (parts.length) return parts.join(" ");
+    return JSON.stringify(nm);
+  }
+  return String(nm);
+}
+
+function ChartGalleryCard({ d, onOpen }) {
+  const biasFirstWord = (d.bias || "").toLowerCase().split(/[\s—-]/)[0];
+  const biasCls = biasFirstWord ? `bias-${biasFirstWord}` : "";
+  const img = d.attachment_paths?.[0];
+  const setupText = _setupText(d.setup);
+  const tf = typeof d.timeframe === "string" ? d.timeframe : "";
+  const invalText = d.invalidation
+    ? (typeof d.invalidation === "string" ? d.invalidation : JSON.stringify(d.invalidation))
+    : "";
+  return (
+    <div className="ts-gallery-card">
+      {img ? (
+        <img className="ts-gallery-img" src={`/${img}`} alt={d.ticker}
+             loading="lazy"
+             onClick={onOpen}
+             title="click to open full-size"
+             onError={(e) => { e.target.style.display = "none"; }} />
+      ) : (
+        <div className="ts-gallery-img ts-gallery-img-missing dim mono">no chart</div>
+      )}
+      <div className="ts-gallery-card-body">
+        <div className="ts-gallery-card-row">
+          {d.bias && <span className={`cd-badge ${biasCls}`}>● {d.bias}</span>}
+          {tf && <span className="cd-tf">{tf}</span>}
+          <span className="dim mono">{(d.published_at || "").slice(0, 10)}</span>
+          {d.decay && (
+            <span className={`ts-decay ts-decay-${d.decay.signal_status}`}>
+              {d.decay_label || d.decay.signal_status}
+            </span>
+          )}
+          {d.confluence_score && (
+            <span className="ts-trust" style={{ marginLeft: "auto" }}>{d.confluence_score}/5</span>
+          )}
+        </div>
+        {setupText && <div className="ts-gallery-setup">{setupText}</div>}
+        {_nextMoveText(d.next_move) && (
+          <div className="cd-block-text" style={{ fontSize: 12 }}>
+            <span className="cd-block-title" style={{ marginRight: 6 }}>NEXT</span>
+            {_nextMoveText(d.next_move)}
+          </div>
+        )}
+        {invalText && (
+          <div className="cd-block-text dim" style={{ fontSize: 11 }}>
+            <span className="cd-block-title" style={{ marginRight: 6 }}>INVAL</span>
+            {invalText}
+          </div>
+        )}
+        {Array.isArray(d.key_levels) && d.key_levels.length > 0 && (
+          <div className="cd-chips" style={{ marginTop: 4 }}>
+            {d.key_levels.slice(0, 6).map((l, i) => {
+              const cls = _levelClassify(l);
+              const { price, desc } = _levelToChip(l);
+              return (
+                <span key={i} className={`cd-chip cd-chip-${cls}`}>
+                  {price && <span className="cd-chip-price mono">{price}</span>}
+                  <span className="cd-chip-desc">{(desc || "").slice(0, 60)}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Full-detail modal for a single drop — reuses the existing drill-row body
+// layout, just floated over the page.
+function DropDetailModal({ d, onClose }) {
+  useIE(() => {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  const biasFirstWord = (d.bias || "").toLowerCase().split(/[\s—-]/)[0];
+  const biasCls = biasFirstWord ? `bias-${biasFirstWord}` : "";
+  const img = d.attachment_paths?.[0];
+  return (
+    <div className="ts-modal-backdrop" onClick={onClose}>
+      <div className="ts-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="ts-modal-head">
+          <strong>{d.ticker}</strong>
+          <span className="dim mono">
+            {(d.n_charts || 0) || 1} drop
+          </span>
+          <button className="filter-pill" style={{ marginLeft: "auto", fontSize: 10 }}
+                  onClick={onClose}>✕ close</button>
+        </div>
+        <div className="ts-modal-body">
+          {img && (
+            <img className="ts-modal-img" src={`/${img}`} alt={d.ticker}
+                 onError={(e) => { e.target.style.display = "none"; }} />
+          )}
+          <div className="ts-modal-text">
+            <div className="ts-drill-row-head">
+              {d.bias && <span className={`cd-badge ${biasCls}`}>● {d.bias}</span>}
+              {typeof d.timeframe === "string" && d.timeframe && <span className="cd-tf">{d.timeframe}</span>}
+              <span className="dim mono">{(d.published_at || "").slice(0, 10)}</span>
+              {d.decay && (
+                <span className={`ts-decay ts-decay-${d.decay.signal_status}`}>
+                  {d.decay_label || d.decay.signal_status}
+                </span>
+              )}
+              {d.confluence_score && (
+                <span className="ts-trust" style={{ marginLeft: "auto" }}>{d.confluence_score}/5</span>
+              )}
+            </div>
+            {_setupText(d.setup) && <div className="cd-pattern" style={{ fontSize: 16 }}>{_setupText(d.setup)}</div>}
+            {_nextMoveText(d.next_move) && (
+              <div className="cd-block-text" style={{ fontSize: 13, marginTop: 6 }}>
+                <span className="cd-block-title" style={{ marginRight: 6 }}>NEXT</span>
+                {_nextMoveText(d.next_move)}
+              </div>
+            )}
+            {d.invalidation && (
+              <div className="cd-block-text dim" style={{ fontSize: 12 }}>
+                <span className="cd-block-title" style={{ marginRight: 6 }}>INVAL</span>
+                {typeof d.invalidation === "string" ? d.invalidation : JSON.stringify(d.invalidation)}
+              </div>
+            )}
+            {Array.isArray(d.key_levels) && d.key_levels.length > 0 && (
+              <div className="cd-chips" style={{ marginTop: 8 }}>
+                {d.key_levels.slice(0, 8).map((l, i) => {
+                  const cls = _levelClassify(l);
+                  const { price, desc } = _levelToChip(l);
+                  return (
+                    <span key={i} className={`cd-chip cd-chip-${cls}`}>
+                      {price && <span className="cd-chip-price mono">{price}</span>}
+                      <span className="cd-chip-desc">{(desc || "").slice(0, 80)}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// TrustedSourceThemes/TrustedAuthorDetail/TickerDrillDown render the I3
+// conviction panel — mounted on the /streams page (S6). Exposed on window
+// so streams.jsx can pick them up.
+Object.assign(window, {
+  Inbox, TrustedSourceThemes,
+  TrustedAuthorDetail, ChartGalleryCard, DropDetailModal,
+  TickerDrillDown,
+});

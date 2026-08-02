@@ -43,10 +43,55 @@ _WINDOW_THEME_DAYS = 28
 _WINDOW_CONCEPT_DAYS = 14
 _WINDOW_NODE_DAYS = 90
 
+# Weekly buckets emitted in mentions_by_week for the theme + asset maps.
+# 26 weeks (~6 months) lets the frontend scrubber traverse a longer horizon
+# with a user-selectable window (4W / 12W / 26W). The rightmost bucket is
+# always the current week. Novelty stays pegged to the shorter theme window
+# so "fresh" keeps its old meaning (< 28 days).
+_MAP_WEEKS = 26
+_MAP_WINDOW_DAYS = _MAP_WEEKS * 7
+
+# Lifecycle scoring — how far along the fresh→extended arc a theme/asset is.
+# Wider maps (26w) broke the old `1 - last_7d / max(all_buckets)`: a name
+# that spiked once months ago but is still consistently mentioned today
+# would show `ratio = last / early_peak` well below 1 and get slammed to
+# the extended side. Two fixes here:
+#   1. Compare recent activity to a ROLLING RECENT peak (trailing quarter),
+#      not the all-time peak in the window. A name steady at ~10/wk for
+#      four months lands with ratio ≈ 1 (fresh/middle), not 0.3 (extended).
+#   2. Convex `** _LIFECYCLE_CURVE` so the initial part of the decline
+#      pushes the bubble only a little — you have to be well past peak to
+#      slide toward "extended". Keeps the middle populated instead of
+#      everything piling up on the right of the scatter.
+_LIFECYCLE_RECENT_WEEKS   = 2   # mean of these buckets = "how loud right now"
+_LIFECYCLE_TRAILING_WEEKS = 12  # peak of these = "recent normal"
+_LIFECYCLE_CURVE          = 1.7
+
+# A name is a LIVE narrative only if it's been mentioned at all in the last
+# ~4 weeks. Older-only names peaked long ago and shouldn't crowd the
+# "extended" side of the scatter — the map is about what's currently in
+# discourse, not what used to be.
+_LIVE_TAIL_WEEKS   = 4
+_LIVE_TAIL_MIN     = 1
+
+
+def _compute_lifecycle(buckets: list[int]) -> float:
+    """0=fresh/emerging, 1=fading. See constants above."""
+    if not buckets:
+        return 0.5
+    recent = buckets[-_LIFECYCLE_RECENT_WEEKS:] or buckets
+    recent_mean = sum(recent) / max(1, len(recent))
+    trailing = buckets[-_LIFECYCLE_TRAILING_WEEKS:] if len(buckets) >= _LIFECYCLE_TRAILING_WEEKS else buckets
+    peak = max(trailing) or 1
+    ratio = min(1.0, recent_mean / peak)
+    return max(0.0, min(1.0, (1.0 - ratio) ** _LIFECYCLE_CURVE))
+
 # Max tickers returned by build_asset_map. The lifecycle scatter is for the
-# most-discussed names; the long tail is noise and bloats the SPA. The
-# front-end minor-cluster rollup folds the lower portion of this further.
-_ASSET_MAP_CAP = 60
+# most-discussed names; the front-end minor-cluster rollup folds the lower
+# portion into a single "minor" bubble, so a generous cap is safe here — the
+# tail is what makes narrative-drift look sparse otherwise.
+_ASSET_MAP_CAP = 150
+_ASSET_MIN_MENTIONS = 2
 
 _BULL_SIDES = {"LONG", "ADD"}
 _BEAR_SIDES = {"SHORT", "AVOID"}
@@ -411,6 +456,200 @@ _BEAR_CUES = re.compile(
     re.IGNORECASE,
 )
 
+
+# ---------------------------------------------------------------------------
+# Macro-factor themes — bull/bear is a CATEGORY ERROR for these (you can't be
+# "bullish on the Fed"). Each gets a domain axis (e.g. dovish↔hawkish) read
+# from dedicated cues, PLUS the implied broad-risk-market impact. The two
+# poles map: pole_a → one market impact, pole_b → the other. Convention is
+# the standard risk-asset read (dovish/cooling/receding/de-escalating = risk-on
+# = bullish; the opposite = risk-off = bearish). Geopolitics is broad-risk:
+# escalation can help oil/gold/defense specifically but hurts the tape overall.
+_MACRO_FACTOR_AXES: dict[str, dict] = {
+    "fed_policy": {
+        "axis": "policy stance",
+        "a": {"state": "dovish", "impact": "bullish", "cues": re.compile(
+            r"\b(?:rate cuts?|cutting|dovish|easing|ease|pivot|accommodat\w*|"
+            r"quantitative easing|\bQE\b|lower rates|pause|stimul\w*|"
+            r"liquidity injection)\b", re.IGNORECASE)},
+        "b": {"state": "hawkish", "impact": "bearish", "cues": re.compile(
+            r"\b(?:rate hikes?|hiking|hawkish|tighten\w*|restrictive|"
+            r"quantitative tightening|\bQT\b|higher for longer|raise rates?)\b",
+            re.IGNORECASE)},
+    },
+    "inflation": {
+        "axis": "inflation trend",
+        "a": {"state": "cooling", "impact": "bullish", "cues": re.compile(
+            r"\b(?:disinflation|cooling|decelerat\w*|softer|cooler|"
+            r"below expectations|easing prices?|falling inflation)\b",
+            re.IGNORECASE)},
+        "b": {"state": "rising", "impact": "bearish", "cues": re.compile(
+            r"\b(?:rising inflation|hot(?:ter)? inflation|sticky|accelerat\w*|"
+            r"reaccelerat\w*|stagflation|CPI beat|surg\w* prices?|"
+            r"higher prices)\b", re.IGNORECASE)},
+    },
+    "recession_risk": {
+        "axis": "recession risk",
+        "a": {"state": "receding", "impact": "bullish", "cues": re.compile(
+            r"\b(?:soft landing|resilient|no recession|goldilocks|"
+            r"strong labou?r|robust|reaccelerat\w*)\b", re.IGNORECASE)},
+        "b": {"state": "elevated", "impact": "bearish", "cues": re.compile(
+            r"\b(?:recession|hard landing|slowdown|contraction|layoffs?|"
+            r"rising unemployment|downturn|deteriorat\w*)\b", re.IGNORECASE)},
+    },
+    "geopolitics": {
+        "axis": "geopolitical tension",
+        "a": {"state": "de-escalating", "impact": "bullish", "cues": re.compile(
+            r"\b(?:ceasefire|truce|de-?escalat\w*|peace deal|diplomacy|"
+            r"resolution|agreement)\b", re.IGNORECASE)},
+        "b": {"state": "escalating", "impact": "bearish", "cues": re.compile(
+            r"\b(?:\bwar\b|invasion|attack|strike|sanction|escalat\w*|"
+            r"conflict|tension|missile|trade war|tariffs?)\b", re.IGNORECASE)},
+    },
+}
+
+
+def _factor_read(text: str, theme_id: str) -> int:
+    """Signed domain-axis vote for a macro-factor theme from one document.
+
+    +1 = pole 'a' dominates (dovish/cooling/receding/de-escalating → bullish
+    impact), -1 = pole 'b' (hawkish/rising/elevated/escalating → bearish),
+    0 = neutral / not a macro-factor theme. Requires 2x dominance like
+    _doc_lean, so a passing mention of both poles stays neutral.
+    """
+    axis = _MACRO_FACTOR_AXES.get(theme_id)
+    if not axis or not text:
+        return 0
+    a = len(axis["a"]["cues"].findall(text))
+    b = len(axis["b"]["cues"].findall(text))
+    if a == 0 and b == 0:
+        return 0
+    if a >= b * 2 and a >= 1:
+        return 1
+    if b >= a * 2 and b >= 1:
+        return -1
+    return 0
+
+
+def _factor_evidence(text: str, theme_id: str) -> tuple[int, str, str, str]:
+    """Like _factor_read, but also returns the matched cue + a snippet so the
+    UI can show WHY a document was read dovish/hawkish/etc.
+
+    Returns (vote, state_label, matched_cue, snippet). vote/state follow
+    _factor_read; snippet is ~40 chars of context either side of the cue.
+    """
+    axis = _MACRO_FACTOR_AXES.get(theme_id)
+    if not axis or not text:
+        return 0, "neutral", "", ""
+    a = list(axis["a"]["cues"].finditer(text))
+    b = list(axis["b"]["cues"].finditer(text))
+    if not a and not b:
+        return 0, "neutral", "", ""
+    if len(a) >= len(b) * 2 and a:
+        vote, state, m = 1, axis["a"]["state"], a[0]
+    elif len(b) >= len(a) * 2 and b:
+        vote, state, m = -1, axis["b"]["state"], b[0]
+    else:
+        vote, state, m = 0, "neutral", (a or b)[0]
+    lo, hi = max(0, m.start() - 40), min(len(text), m.end() + 40)
+    snippet = ("…" if lo > 0 else "") + re.sub(r"\s+", " ", text[lo:hi]).strip() + ("…" if hi < len(text) else "")
+    return vote, state, m.group(0), snippet
+
+
+def _fred_latest(conn: sqlite3.Connection, series_id: str) -> tuple[str, float] | None:
+    """(observation_date, value) of the most recent obs for a FRED series."""
+    try:
+        row = conn.execute(
+            "SELECT observation_date, MAX(value) FROM fred_observations "
+            "WHERE series_id=? AND value IS NOT NULL "
+            "AND observation_date=(SELECT MAX(observation_date) FROM fred_observations WHERE series_id=? AND value IS NOT NULL)",
+            (series_id, series_id),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row or row[0] is None or row[1] is None:
+        return None
+    return row[0], float(row[1])
+
+
+def build_fed_policy_primary(conn: sqlite3.Connection, *, now: datetime | None = None) -> dict | None:
+    """The Fed's ACTUAL policy from primary data (FRED), independent of any
+    KOL commentary. Two reads:
+      current  — FOMC target level + last move + how long it's been held
+                 (DFEDTARU = Fed Funds upper target, set by the FOMC).
+      expected — market-implied forward lean from the 2Y-vs-effective spread
+                 (2Y above the funds rate ⇒ market prices higher-for-longer /
+                 hikes ⇒ hawkish; below ⇒ cuts priced ⇒ dovish).
+    Returns None if FRED coverage is missing.
+    """
+    if not _safe_table_exists(conn, "fred_observations"):
+        return None
+    now = _now(now)
+    try:
+        rows = conn.execute(
+            "SELECT observation_date, MAX(value) FROM fred_observations "
+            "WHERE series_id='DFEDTARU' AND value IS NOT NULL "
+            "GROUP BY observation_date ORDER BY observation_date"
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    path = [(d, float(v)) for d, v in rows if v is not None]
+    if not path:
+        return None
+
+    latest_date, level = path[-1]
+    # Walk back to the most recent level change.
+    last_change_date = None
+    last_change_bps = 0
+    for i in range(len(path) - 1, 0, -1):
+        if abs(path[i][1] - path[i - 1][1]) > 1e-9:
+            last_change_date = path[i][0]
+            last_change_bps = round((path[i][1] - path[i - 1][1]) * 100)
+            break
+
+    days_held = 0
+    if last_change_date:
+        lc = _parse_iso(last_change_date)
+        if lc:
+            days_held = int((now - lc).total_seconds() / 86400.0)
+    # Recent move (<~50d) reads as an active stance; otherwise "holding".
+    if last_change_date and days_held < 50:
+        action = "cutting" if last_change_bps < 0 else "hiking"
+    else:
+        action = "holding"
+
+    current = {
+        "level": level,
+        "as_of": latest_date,
+        "last_change_bps": last_change_bps,
+        "last_change_date": last_change_date,
+        "days_held": days_held,
+        "action": action,
+    }
+
+    # Expected (market-implied): 2Y vs effective funds.
+    dff = _fred_latest(conn, "DFF")
+    dgs2 = _fred_latest(conn, "DGS2")
+    expected = None
+    if dff and dgs2:
+        spread_bps = round((dgs2[1] - dff[1]) * 100)
+        if spread_bps > 25:
+            lean, impact = "hawkish", "bearish"
+        elif spread_bps < -25:
+            lean, impact = "dovish", "bullish"
+        else:
+            lean, impact = "neutral", "mixed"
+        expected = {
+            "two_year": dgs2[1],
+            "effective": dff[1],
+            "spread_bps": spread_bps,
+            "market_lean": lean,
+            "market_impact": impact,
+        }
+
+    return {"current": current, "expected_market": expected}
+
+
 _THEME_COMBINED_RE: "re.Pattern[str] | None" = None
 
 
@@ -536,9 +775,12 @@ def _load_document_mentions(
     if fp is not None and fp in _DOC_MENTION_CACHE:
         return _DOC_MENTION_CACHE[fp]
 
-    # Same allowlist as _load_signals: a document mention only counts toward
-    # the maps if its author is one the user explicitly stated.
-    allowed = seeded_author_ids(conn)
+    # Document mentions span ALL ingested sources — not just seeded authors.
+    # Mentions are direction-neutral (mention_only=True below), so they add
+    # coverage/volume to the maps without polluting the conviction vote,
+    # which is signal-only and still seeded-gated in _load_signals. This is
+    # what makes the asset/theme scatter reflect the real universe of names
+    # being talked about across the corpus.
     try:
         cur = conn.execute(
             """
@@ -555,8 +797,6 @@ def _load_document_mentions(
 
     out: list[dict] = []
     for source_id, author_id, ts, text in cur.fetchall():
-        if (author_id or "") not in allowed:
-            continue
         text = text or ""
         tickers = extract_tickers_from_text(text)
         kw_themes = _themes_in_text(text)
@@ -594,6 +834,9 @@ def _load_document_mentions(
         if kw_themes:
             lean = _doc_lean(text)
             for theme in kw_themes:
+                # Macro-factor themes also carry the matched domain cue +
+                # snippet so the UI can show the inputs behind the read.
+                f_vote, f_state, f_cue, f_snip = _factor_evidence(text, theme)
                 out.append({
                     "signal_id":      None,
                     "extracted_at":   dt,
@@ -609,6 +852,14 @@ def _load_document_mentions(
                     "thesis_summary": "",
                     "asset_ticker":   "",
                     "forced_theme":   theme,
+                    # Domain-axis vote for macro-factor themes (dovish/hawkish,
+                    # rising/cooling, …); 0 for sector themes. Read from THIS
+                    # doc's text, independent of the generic bull/bear lean.
+                    "factor_vote":    f_vote,
+                    "factor_state_doc": f_state,
+                    "factor_cue":     f_cue,
+                    "factor_snippet": f_snip,
+                    "source_id":      source_id or "",
                     # Counts toward volume + (if lean) the direction vote,
                     # but at low weight. Not mention_only so the vote sees it.
                     "mention_only":   lean == "",
@@ -670,8 +921,8 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
     only; mentions add volume/sources but stay direction-neutral.
     """
     now = _now(now)
-    signals = _load_signals(conn, _WINDOW_THEME_DAYS, now)
-    mentions = _load_document_mentions(conn, _WINDOW_THEME_DAYS, now)
+    signals = _load_signals(conn, _MAP_WINDOW_DAYS, now)
+    mentions = _load_document_mentions(conn, _MAP_WINDOW_DAYS, now)
     corpus = signals + mentions
     if not corpus:
         return []
@@ -689,8 +940,8 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         if len(sigs) < 3:
             continue  # noise filter per brief
 
-        # 4 weekly buckets: w-3, w-2, w-1, now (rightmost = current week)
-        buckets = [0, 0, 0, 0]
+        # _MAP_WEEKS weekly buckets, oldest → newest (rightmost = current week).
+        buckets = [0] * _MAP_WEEKS
         first_seen: datetime | None = None
         sources: set[str] = set()
         for s in sigs:
@@ -699,16 +950,21 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
                 continue
             age_days = (now - dt).total_seconds() / 86400.0
             week_idx_from_now = int(age_days // 7)  # 0 = current week
-            if 0 <= week_idx_from_now <= 3:
-                buckets[3 - week_idx_from_now] += 1
+            if 0 <= week_idx_from_now < _MAP_WEEKS:
+                buckets[_MAP_WEEKS - 1 - week_idx_from_now] += 1
             if first_seen is None or dt < first_seen:
                 first_seen = dt
             slug = s["source_slug"] or s["author_id"]
             if slug:
                 sources.add(slug)
 
-        mentions_last_7d = buckets[3]
-        mentions_prev_7d = buckets[2]
+        # Drop archival names with no recent activity so the extended edge
+        # of the scatter only carries actually-fading live narratives.
+        if sum(buckets[-_LIVE_TAIL_WEEKS:]) < _LIVE_TAIL_MIN:
+            continue
+
+        mentions_last_7d = buckets[-1]
+        mentions_prev_7d = buckets[-2]
         max_window = max(buckets) or 1
         age_days = int((now - first_seen).total_seconds() / 86400.0) if first_seen else 0
 
@@ -733,8 +989,61 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         else:
             direction = "mixed"
 
+        # Macro-factor themes (fed_policy, inflation, …): the bull/bear vote
+        # above is a category error. Replace it with a domain-axis read
+        # (dovish/hawkish, rising/cooling, …) from the factor votes, and
+        # surface the implied broad-market impact separately.
+        axis_cfg = _MACRO_FACTOR_AXES.get(theme_id)
+        theme_kind = "macro_factor" if axis_cfg else "asset"
+        factor_axis = factor_state = market_impact = None
+        factor_tally = None
+        factor_inputs = []
+        if axis_cfg:
+            fscore = sum(s.get("factor_vote", 0) for s in sigs)
+            factor_axis = axis_cfg["axis"]
+            if fscore > 0:
+                factor_state, market_impact = axis_cfg["a"]["state"], axis_cfg["a"]["impact"]
+            elif fscore < 0:
+                factor_state, market_impact = axis_cfg["b"]["state"], axis_cfg["b"]["impact"]
+            else:
+                factor_state, market_impact = "neutral", "mixed"
+            # For scatter positioning, the theme's "direction" band becomes
+            # its market impact (bullish/bearish/mixed) — coherent with the
+            # asset themes it shares the axis with.
+            direction = market_impact
+
+            # Inputs breakdown: per-doc reads that produced the net vote, so
+            # the operator can audit WHY it's neutral/dovish/etc. Tally by
+            # pole; list the evidence rows (source · date · cue · snippet).
+            a_lbl, b_lbl = axis_cfg["a"]["state"], axis_cfg["b"]["state"]
+            factor_tally = {a_lbl: 0, b_lbl: 0, "neutral": 0}
+            for s in sigs:
+                st = s.get("factor_state_doc")
+                if st is None:
+                    continue
+                factor_tally[st] = factor_tally.get(st, 0) + 1
+                if s.get("factor_cue"):
+                    factor_inputs.append({
+                        "source": s.get("source_slug") or s.get("author_id") or "?",
+                        "date": s["post_at"].date().isoformat() if s.get("post_at") else "",
+                        "state": st,
+                        "cue": s.get("factor_cue"),
+                        "snippet": s.get("factor_snippet") or "",
+                    })
+            factor_inputs.sort(key=lambda x: x["date"], reverse=True)
+            factor_inputs = factor_inputs[:12]
+
+        # Primary-source data for themes that have an authoritative feed.
+        # Fed Policy: the FOMC's actual target-rate path from FRED, so the
+        # panel leads with fact (current policy) and market-implied
+        # expectation — the commentary factor read above is downgraded to
+        # "expectation sentiment" in the UI.
+        primary_data = None
+        if theme_id == "fed_policy":
+            primary_data = build_fed_policy_primary(conn, now=now)
+
         # Lifecycle: 1 - recent/max_window (0=emerging, 1=fading)
-        lifecycle = max(0.0, min(1.0, 1.0 - (mentions_last_7d / max_window)))
+        lifecycle = _compute_lifecycle(buckets)
         # Novelty
         novelty = max(0.0, min(1.0, 1.0 - (age_days / _WINDOW_THEME_DAYS)))
         # Velocity: tanh-squashed week-over-week growth
@@ -745,6 +1054,13 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
             "id":               theme_id,
             "label":            _title_label(theme_id),
             "direction":        direction,
+            "theme_kind":       theme_kind,
+            "factor_axis":      factor_axis,
+            "factor_state":     factor_state,
+            "market_impact":    market_impact,
+            "factor_tally":     factor_tally,
+            "factor_inputs":    factor_inputs,
+            "primary_data":     primary_data,
             "lifecycle":        round(lifecycle, 3),
             "novelty":          round(novelty, 3),
             "velocity":         round(velocity, 3),
@@ -767,8 +1083,8 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
     `signals.asset_ticker` instead of theme tag. Lets the UI surface
     'what tickers are being talked about' alongside 'what narratives'."""
     now = _now(now)
-    signals = _load_signals(conn, _WINDOW_THEME_DAYS, now)
-    mentions = _load_document_mentions(conn, _WINDOW_THEME_DAYS, now)
+    signals = _load_signals(conn, _MAP_WINDOW_DAYS, now)
+    mentions = _load_document_mentions(conn, _MAP_WINDOW_DAYS, now)
     corpus = signals + mentions
     if not corpus:
         return []
@@ -787,10 +1103,10 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
 
     out: list[dict] = []
     for ticker, sigs in by_ticker.items():
-        if len(sigs) < 3:
+        if len(sigs) < _ASSET_MIN_MENTIONS:
             continue
 
-        buckets = [0, 0, 0, 0]
+        buckets = [0] * _MAP_WEEKS
         first_seen: datetime | None = None
         sources: set[str] = set()
         for s in sigs:
@@ -799,16 +1115,21 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
                 continue
             age_days_f = (now - dt).total_seconds() / 86400.0
             wk = int(age_days_f // 7)
-            if 0 <= wk <= 3:
-                buckets[3 - wk] += 1
+            if 0 <= wk < _MAP_WEEKS:
+                buckets[_MAP_WEEKS - 1 - wk] += 1
             if first_seen is None or dt < first_seen:
                 first_seen = dt
             slug = s["source_slug"] or s["author_id"]
             if slug:
                 sources.add(slug)
 
-        mentions_last_7d = buckets[3]
-        mentions_prev_7d = buckets[2]
+        # Drop archival names with no recent activity so the extended edge
+        # of the scatter only carries actually-fading live narratives.
+        if sum(buckets[-_LIVE_TAIL_WEEKS:]) < _LIVE_TAIL_MIN:
+            continue
+
+        mentions_last_7d = buckets[-1]
+        mentions_prev_7d = buckets[-2]
         max_window = max(buckets) or 1
         age_days = int((now - first_seen).total_seconds() / 86400.0) if first_seen else 0
 
@@ -830,7 +1151,7 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         else:
             direction = "mixed"
 
-        lifecycle = max(0.0, min(1.0, 1.0 - (mentions_last_7d / max_window)))
+        lifecycle = _compute_lifecycle(buckets)
         novelty = max(0.0, min(1.0, 1.0 - (age_days / _WINDOW_THEME_DAYS)))
         raw_velocity = (mentions_last_7d - mentions_prev_7d) / max(mentions_prev_7d, 1)
         velocity = max(0.0, min(1.0, (math.tanh(raw_velocity) + 1.0) / 2.0))

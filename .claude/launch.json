@@ -15,6 +15,15 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "8088", "--directory", "web"],
       "port": 8088
+    },
+    {
+      "name": "macro-api-verify",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-c",
+        "cd '/Users/thom/Documents/Personal/Code Projects/Macro Analyzer' && exec uv run uvicorn macro_positioning.api.main:app --host 127.0.0.1 --port 8181"
+      ],
+      "port": 8181
     }
   ]
 }

@@ -45,7 +45,12 @@
       "Bash(lsof -iTCP -sTCP:LISTEN -n -P)",
       "Bash(curl -s http://127.0.0.1:8000/ -o /dev/null -w \"8000: %{http_code} %{redirect_url}\\\\n\")",
       "Bash(curl -s http://127.0.0.1:8000/dashboard -o /dev/null -w \"8000/dashboard: %{http_code}\\\\n\")",
-      "Bash(ps -p 45296 -o command=)"
+      "Bash(ps -p 45296 -o command=)",
+      "Bash(sqlite3 data/macro_positioning.db \"SELECT COUNT\\(DISTINCT asset_ticker\\) FROM signals WHERE asset_ticker IS NOT NULL AND asset_ticker != '' AND datetime\\(COALESCE\\(post_at, extracted_at\\)\\) >= datetime\\('now','-28 days'\\);\")",
+      "Bash(sqlite3 data/macro_positioning.db \".schema signals\")",
+      "Bash(sqlite3 data/macro_positioning.db 'SELECT COUNT\\(DISTINCT asset_ticker\\) FROM signals WHERE asset_ticker!='\\\\'''\\\\'' AND datetime\\(extracted_at\\) >= datetime\\('\\\\''now'\\\\'','\\\\''-28 days'\\\\''\\); *)",
+      "Bash(python -c ' *)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

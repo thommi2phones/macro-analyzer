@@ -50,17 +50,22 @@ def _seed_author(conn, author_id: str):
 
 def _insert_document(conn, doc_id: str, source_id: str = "src_a",
                      body: str = "Body text about something.",
-                     author_id: str = "doomberg"):
+                     author_id: str = "doomberg",
+                     published_at: datetime | None = None):
     # Document mentions only count toward the maps when the doc's author is
     # a stated author — seed it so the test corpus is eligible.
     _seed_author(conn, author_id)
+    # published_at/ingested_at drive post_at (the streams builders bucket by
+    # when the call was made, not when the LLM extracted it), so let callers
+    # date the doc to match the signal's intended age.
+    doc_dt = (published_at or NOW).isoformat()
     conn.execute(
         """INSERT INTO documents
            (document_id, source_id, title, published_at, content_type,
             raw_text, cleaned_text, tags_json, ingested_at, author_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (doc_id, source_id, "t", NOW.isoformat(), "manual",
-         body, body, "[]", NOW.isoformat(), author_id),
+        (doc_id, source_id, "t", doc_dt, "manual",
+         body, body, "[]", doc_dt, author_id),
     )
 
 
@@ -85,7 +90,8 @@ def _insert_signal(
     # FKs without a PRAGMA. Still, insert a doc for realism so the synopsis
     # fallback can read cleaned_text.
     _insert_document(conn, doc_id, source_id=source_slug,
-                     body=thesis_summary or "body", author_id=author_id)
+                     body=thesis_summary or "body", author_id=author_id,
+                     published_at=extracted_at or NOW)
     conn.execute(
         """INSERT INTO signals
            (signal_id, document_id, extracted_at, asset_ticker, asset_class,
@@ -237,7 +243,10 @@ def test_empty_db_returns_empty_payload(tmp_path: Path):
     conn.execute("DELETE FROM input_authors")
     conn.commit()
     out = build_streams_section(conn, now=NOW)
-    assert out == {"themeMap": [], "assetMap": [], "concepts": [], "sourceGraph": {"nodes": [], "links": []}}
+    assert out == {
+        "themeMap": [], "assetMap": [], "concepts": [], "breakouts": [],
+        "sourceGraph": {"nodes": [], "links": []},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +414,7 @@ def test_source_graph_links_only_between_known_nodes(tmp_path: Path):
 def test_build_streams_section_returns_all_keys(tmp_path: Path):
     conn = _conn(tmp_path)
     out = build_streams_section(conn, now=NOW)
-    assert set(out.keys()) == {"themeMap", "assetMap", "concepts", "sourceGraph"}
+    assert set(out.keys()) == {"themeMap", "assetMap", "concepts", "breakouts", "sourceGraph"}
 
 
 # ---------------------------------------------------------------------------

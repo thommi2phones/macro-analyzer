@@ -283,15 +283,23 @@ def _load_signals(conn: sqlite3.Connection, window_days: int, now: datetime) -> 
     # are excluded — see authors.seeded_author_ids.
     allowed = seeded_author_ids(conn)
     try:
+        # Window + bucket by the POST date (when the call was actually made),
+        # not extracted_at (when the LLM ran). A bulk backfill extracts
+        # hundreds of old posts "today" — bucketing on extracted_at would
+        # pile them all into the current week and fake a breakout. post_at =
+        # document published_at (chart/TradingView date) → ingested_at →
+        # extracted_at fallback. Mirrors _load_document_mentions + signal_decay.
         cur = conn.execute(
             """
-            SELECT signal_id, extracted_at, side, conviction,
-                   author_trust_weight, source_slug, author_id,
-                   asset_class, thesis_tags_json, macro_regime_tags_json,
-                   thesis_summary, asset_ticker
-              FROM signals
-             WHERE COALESCE(status, 'active') = 'active'
-               AND extracted_at >= ?
+            SELECT s.signal_id, s.extracted_at, s.side, s.conviction,
+                   s.author_trust_weight, s.source_slug, s.author_id,
+                   s.asset_class, s.thesis_tags_json, s.macro_regime_tags_json,
+                   s.thesis_summary, s.asset_ticker,
+                   COALESCE(d.published_at, d.ingested_at, s.extracted_at) AS post_at
+              FROM signals s
+              LEFT JOIN documents d ON d.document_id = s.document_id
+             WHERE COALESCE(s.status, 'active') = 'active'
+               AND COALESCE(d.published_at, d.ingested_at, s.extracted_at) >= ?
             """,
             (cutoff,),
         )
@@ -301,9 +309,11 @@ def _load_signals(conn: sqlite3.Connection, window_days: int, now: datetime) -> 
     for r in cur.fetchall():
         if (r[6] or "") not in allowed:
             continue
+        post_at = _parse_iso(r[12]) or _parse_iso(r[1])
         out.append({
             "signal_id":    r[0],
             "extracted_at": _parse_iso(r[1]),
+            "post_at":      post_at,
             "side":         (r[2] or "").upper(),
             "conviction":   float(r[3] or 0.0),
             "trust":        float(r[4] or 1.0),
@@ -562,6 +572,7 @@ def _load_document_mentions(
             out.append({
                 "signal_id":    None,
                 "extracted_at": dt,
+                "post_at":      dt,
                 "side":         "",
                 "conviction":   0.0,
                 "trust":        1.0,
@@ -586,6 +597,7 @@ def _load_document_mentions(
                 out.append({
                     "signal_id":      None,
                     "extracted_at":   dt,
+                    "post_at":        dt,
                     "side":           lean,          # "" | LONG | SHORT
                     "conviction":     0.5 if lean else 0.0,
                     "trust":          1.0,
@@ -682,7 +694,7 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         first_seen: datetime | None = None
         sources: set[str] = set()
         for s in sigs:
-            dt = s["extracted_at"]
+            dt = s.get("post_at") or s["extracted_at"]
             if dt is None:
                 continue
             age_days = (now - dt).total_seconds() / 86400.0
@@ -782,7 +794,7 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         first_seen: datetime | None = None
         sources: set[str] = set()
         for s in sigs:
-            dt = s["extracted_at"]
+            dt = s.get("post_at") or s["extracted_at"]
             if dt is None:
                 continue
             age_days_f = (now - dt).total_seconds() / 86400.0
@@ -858,7 +870,7 @@ def _weekly_buckets(sigs: list[dict], now: datetime, n_weeks: int) -> tuple[list
     first_seen: datetime | None = None
     sources: set[str] = set()
     for s in sigs:
-        dt = s.get("extracted_at")
+        dt = s.get("post_at") or s.get("extracted_at")
         if dt is None:
             continue
         wk = int((now - dt).total_seconds() / 86400.0 // 7)  # 0 = current week

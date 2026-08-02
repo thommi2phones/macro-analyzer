@@ -1128,6 +1128,67 @@ const _MA_MOCK = {
   // ---------- Asset detail page (design-folder port) ----------
   portfolio: { equityUsd: 612400, cashUsd: 195800 },
 
+  // Macro home dashboard — top assets by category with prices + sentiment.
+  // Sentiment: bullish | bearish | neutral. Change fields are day-over-day.
+  // Real /api/desk/data will overlay this shape once /api/macro/home lands.
+  macroHome: {
+    asOf: "2026-08-02 08:14 ET",
+    categories: [
+      {
+        key: "monetary",
+        label: "Monetary · liquidity",
+        blurb: "Global money supply, dollar, and rates — the macro tape.",
+        assets: [
+          { asset: "M2SL",     name: "US M2 money supply",   value: 21850, unit: "B",  chgPct: 0.42,  chg30dPct: 1.10,  sentiment: "bullish", note: "expanding at 5.1% YoY · reaccelerating from Feb trough" },
+          { asset: "DXY",      name: "US dollar index",      value: 99.20, unit: "",   chgPct: -0.38, chg30dPct: -2.20, sentiment: "bearish", note: "breaking 100 support · confirms liquidity-easing bias" },
+          { asset: "US10Y",    name: "10-year Treasury",     value: 4.12,  unit: "%",  chgPct: -0.05, chg30dPct: -0.22, sentiment: "neutral", note: "termite bid range-bound · fiscal supply capped" },
+          { asset: "US02Y",    name: "2-year Treasury",      value: 3.68,  unit: "%",  chgPct: -0.03, chg30dPct: -0.35, sentiment: "bullish", note: "front-end pricing 2 cuts by year-end" },
+          { asset: "FCI",      name: "Fin. conditions",      value: -0.554, unit: "z", chgPct: -0.02, chg30dPct: -0.19, sentiment: "bullish", note: "easing · below neutral for 42 days" },
+          { asset: "MOVE",     name: "Rate vol (MOVE)",      value: 84,    unit: "",   chgPct: -1.6,  chg30dPct: -12.4, sentiment: "bullish", note: "rate vol crushed · fixed-income complex calms" },
+        ],
+      },
+      {
+        key: "indices",
+        label: "Equity indices",
+        blurb: "Broad market breadth, risk-on tape.",
+        assets: [
+          { asset: "SPX",   name: "S&P 500",             value: 5720,  unit: "",  chgPct: 0.28,  chg30dPct: 3.10,  sentiment: "bullish", note: "grinding higher · above 50/200 DMA · breadth confirming" },
+          { asset: "NDX",   name: "Nasdaq 100",          value: 20180, unit: "",  chgPct: 0.44,  chg30dPct: 4.60,  sentiment: "bullish", note: "AI capex leaders leading · MAG7 concentration risk" },
+          { asset: "RUT",   name: "Russell 2000",        value: 2210,  unit: "",  chgPct: 0.82,  chg30dPct: 5.10,  sentiment: "bullish", note: "small-cap catch-up · rate-cut beneficiary" },
+          { asset: "DJI",   name: "Dow Jones",           value: 42150, unit: "",  chgPct: 0.19,  chg30dPct: 2.40,  sentiment: "bullish", note: "cyclical leadership rotating in" },
+          { asset: "VIX",   name: "Volatility (VIX)",    value: 13.2,  unit: "",  chgPct: -3.1,  chg30dPct: -8.5,  sentiment: "bullish", note: "compressed · complacency setting in below 14" },
+          { asset: "SPY-BR",name: "SPX breadth (%>200D)", value: 68,   unit: "%", chgPct: 1.2,   chg30dPct: 6.0,   sentiment: "bullish", note: "healthy · not overbought · 70% is the caution flag" },
+        ],
+      },
+      {
+        key: "crypto",
+        label: "Crypto",
+        blurb: "Digital-asset tape · liquidity-sensitive risk lever.",
+        assets: [
+          { asset: "BTC",   name: "Bitcoin",             value: 71800, unit: "",  chgPct: 1.85,  chg30dPct: 8.20,  sentiment: "bullish", note: "cup+handle breakout retest · spot ETF flows +$1.2B/wk" },
+          { asset: "ETH",   name: "Ethereum",            value: 3820,  unit: "",  chgPct: 2.10,  chg30dPct: 6.80,  sentiment: "bullish", note: "reclaiming 3600 · ETF launch adjusting flow pipe" },
+          { asset: "SOL",   name: "Solana",              value: 178,   unit: "",  chgPct: 3.40,  chg30dPct: 12.5,  sentiment: "bullish", note: "L1 leader vs ETH · high-beta of the cycle" },
+          { asset: "TOTAL", name: "Total crypto mcap",   value: 2.68,  unit: "T", chgPct: 1.95,  chg30dPct: 7.60,  sentiment: "bullish", note: "$2.68T · reclaiming Q1 highs · risk-on confirmed" },
+          { asset: "USDT",  name: "Tether supply",       value: 118,   unit: "B", chgPct: 0.20,  chg30dPct: 2.10,  sentiment: "bullish", note: "stablecoin float expanding · net inflow proxy" },
+          { asset: "DOMBTC",name: "BTC dominance",       value: 55.4,  unit: "%", chgPct: -0.30, chg30dPct: -1.80, sentiment: "neutral", note: "topping · alt-season signal if breaks 54" },
+        ],
+      },
+      {
+        key: "commodities",
+        label: "Commodities · hard assets",
+        blurb: "Real-asset tape confirming the framework regime.",
+        assets: [
+          { asset: "GC",    name: "Gold",                value: 2680,  unit: "",  chgPct: 0.65,  chg30dPct: 3.20,  sentiment: "bullish", note: "monetary debasement leader · above 2600 anchor" },
+          { asset: "SI",    name: "Silver",              value: 32.40, unit: "",  chgPct: 1.20,  chg30dPct: 5.80,  sentiment: "bullish", note: "gold/silver ratio compressing · industrial demand" },
+          { asset: "CL",    name: "WTI crude",           value: 86.20, unit: "",  chgPct: 0.90,  chg30dPct: 4.10,  sentiment: "bullish", note: "OVX deflating · Strait headlines fading" },
+          { asset: "HG",    name: "Copper",              value: 4.62,  unit: "",  chgPct: 0.35,  chg30dPct: 2.90,  sentiment: "bullish", note: "supply tightness · China stimulus tailwind" },
+          { asset: "U308",  name: "Uranium U3O8",        value: 94.10, unit: "",  chgPct: 1.10,  chg30dPct: 6.40,  sentiment: "bullish", note: "physical firming above $94 · reactor restart cadence" },
+          { asset: "DBA",   name: "Agri complex",        value: 26.80, unit: "",  chgPct: 0.40,  chg30dPct: 1.90,  sentiment: "neutral", note: "ag tape firming · watching soybean COT extreme" },
+        ],
+      },
+    ],
+  },
+
   // 90-day daily close price series per asset (most recent last)
   priceSeries: {
     "URA":  [33.20,33.45,33.10,33.80,34.05,34.60,34.40,34.10,34.55,35.10,35.45,35.20,35.80,36.05,35.70,35.40,35.95,36.20,36.50,36.20,35.90,36.40,36.85,37.20,37.05,36.80,37.30,37.65,38.00,38.10,37.85,38.20,38.55,38.80,38.60,38.30,38.65,38.95,39.20,39.05,38.85,39.10,39.40,39.65,39.85,39.60,39.30,39.55,39.85,40.10,40.30,40.05,39.80,40.10,40.40,40.65,40.45,40.20,40.55,40.85,40.60,40.35,40.65,40.95,41.10,40.85,40.55,40.20,39.95,40.25,40.60,40.85,41.05,40.80,40.55,40.85,41.15,41.40,41.20,40.95,41.25,41.45,41.30,41.10,41.35,41.05,40.85,41.10,41.30,41.20],

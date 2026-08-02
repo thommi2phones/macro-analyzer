@@ -35,6 +35,10 @@ function useLiveClock() {
 // into subsections when active (or when a child view is active).
 const NAV = [
   {
+    id: "home", label: "Home",
+    icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M4 11.5 12 4.5l8 7"/><path d="M6 10.5V19h12v-8.5"/><path d="M10 19v-5h4v5"/></svg>,
+  },
+  {
     id: "positioning", label: "Positioning",
     icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="7.5"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/><circle cx="12" cy="12" r="2.3"/></svg>,
     children: [
@@ -66,6 +70,7 @@ const NAV = [
 
 // Which top-level group owns each view (for highlighting + expansion).
 const GROUP_OF = {
+  home: "home",
   positioning: "positioning", concepts: "positioning", identify: "positioning", live: "positioning",
   journal: "journal",
   streams: "streams", sources: "streams", influence: "streams", inbox: "streams",
@@ -74,6 +79,7 @@ const GROUP_OF = {
 
 // Page-head eyebrow + title per view.
 const SECTIONS = {
+  home:        ["Macro tape", "Home"],
   positioning: ["Live desk", "Positioning"],
   concepts:    ["Funnel", "Concepts"],
   identify:    ["Funnel", "Identify"],
@@ -87,7 +93,7 @@ const SECTIONS = {
 };
 
 function App() {
-  const [view, setView] = useS("positioning");
+  const [view, setView] = useS("home");
   const [assetSig, setAssetSig] = useS(null);
   // remember which top-level view to return to from an asset page
   const [returnTo, setReturnTo] = useS("positioning");
@@ -252,6 +258,7 @@ function App() {
             onActivated={(tradeId) => { setFocusTradeId(tradeId); setView("live"); }}
           />
         )}
+        {view === "home" && <Home onNav={nav} />}
         {view === "live" && <Live focusTradeId={focusTradeId} />}
         {view === "journal" && <Journal />}
         {view === "sources" && <Sources />}

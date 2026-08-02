@@ -5,6 +5,9 @@ const { useState: useStateP, useMemo: useMemoP } = React;
 function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
   const D = window.MA_DATA;
   const [filter, setFilter] = useStateP("ALL");
+  const [tierFilter, setTierFilter] = useStateP("ALL");
+  const [regimeFilter, setRegimeFilter] = useStateP("ALL");
+  const [wlQ, setWlQ] = useStateP("");
   const [sortBy, setSortBy] = useStateP("score");
   const [sortDir, setSortDir] = useStateP("desc");
   const [, force] = useStateP(0);
@@ -53,13 +56,23 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
     if (filter === "T1") rows = rows.filter(r => r.tier === 1);
     if (filter === "LONG") rows = rows.filter(r => r.side === "LONG");
     if (filter === "SHORT") rows = rows.filter(r => r.side === "SHORT");
+    if (tierFilter !== "ALL") rows = rows.filter(r => String(r.tier) === tierFilter.replace("T", ""));
+    if (regimeFilter !== "ALL") rows = rows.filter(r => r.regime === regimeFilter);
+    if (wlQ.trim()) {
+      const q = wlQ.toLowerCase();
+      rows = rows.filter(r =>
+        r.asset.toLowerCase().includes(q) ||
+        (r.name || "").toLowerCase().includes(q) ||
+        (r.assetClass || "").toLowerCase().includes(q)
+      );
+    }
     rows.sort((a, b) => {
       const av = a[sortBy], bv = b[sortBy];
       if (typeof av === "number") return sortDir === "desc" ? bv - av : av - bv;
       return sortDir === "desc" ? String(bv).localeCompare(String(av)) : String(av).localeCompare(String(bv));
     });
     return rows;
-  }, [filter, sortBy, sortDir]);
+  }, [filter, tierFilter, regimeFilter, wlQ, sortBy, sortDir]);
 
   const sortToggle = (col) => () => {
     if (sortBy === col) setSortDir(sortDir === "desc" ? "asc" : "desc");
@@ -100,13 +113,8 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
             <span className="block-meta mono">refreshed 08:14:22 · next 08:29</span>
           </div>
         </header>
-        <div className="hero-grid">
-          {D.heroSignals.slice(0, 3).map(s => (
-            <SetupCard key={s.id} s={s} onOpen={onOpenReasoning} />
-          ))}
-        </div>
-        <div className="hero-grid hero-grid-2">
-          {D.heroSignals.slice(3).map(s => (
+        <div className="hero-grid hero-grid-4">
+          {D.heroSignals.slice(0, 4).map(s => (
             <SetupCard key={s.id} s={s} onOpen={onOpenReasoning} />
           ))}
         </div>
@@ -119,13 +127,31 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
             <div className="block-title">
               <span className="block-num mono">02</span>
               <span>Watchlist · scored</span>
-              <span className="block-sub">{watchlist.length} of {D.watchlist.length} · sortable</span>
+              <span className="block-sub">
+                {watchlist.length} of {D.watchlist.length}
+                {(filter !== "ALL" || tierFilter !== "ALL" || regimeFilter !== "ALL" || wlQ.trim()) ? " · filtered" : ""}
+                {" · sort "}{sortBy} {sortDir === "desc" ? "↓" : "↑"}
+              </span>
             </div>
-            <div className="block-actions">
-              <div className="filter-pill-row">
-                {["ALL","ACTIONABLE","T1","LONG","SHORT"].map(f => (
+            <div className="block-actions wl-actions">
+              <input className="src-search" placeholder="search ticker / name…"
+                     value={wlQ} onChange={e => setWlQ(e.target.value)} />
+              <div className="filter-pill-row" title="side / posture">
+                {["ALL","ACTIONABLE","LONG","SHORT"].map(f => (
                   <button key={f} className={`filter-pill ${filter === f ? "on" : ""}`}
                           onClick={() => setFilter(f)}>{f}</button>
+                ))}
+              </div>
+              <div className="filter-pill-row" title="tier">
+                {["ALL","T1","T2","T3","T4"].map(f => (
+                  <button key={f} className={`filter-pill ${tierFilter === f ? "on" : ""}`}
+                          onClick={() => setTierFilter(f)}>{f}</button>
+                ))}
+              </div>
+              <div className="filter-pill-row" title="regime fit">
+                {[["ALL","regime: all"],["fit","fit"],["mix","mixed"],["off","off"]].map(([k, lbl]) => (
+                  <button key={k} className={`filter-pill ${regimeFilter === k ? "on" : ""}`}
+                          onClick={() => setRegimeFilter(k)}>{lbl}</button>
                 ))}
               </div>
             </div>
@@ -133,18 +159,18 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
           <table className="wl-table">
             <thead>
               <tr>
-                <th onClick={sortToggle("asset")}>ASSET</th>
-                <th>SIDE</th>
+                <th onClick={sortToggle("asset")} className="sortable">ASSET {sortBy === "asset" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("side")} className="sortable">SIDE {sortBy === "side" && (sortDir === "desc" ? "↓" : "↑")}</th>
                 <th onClick={sortToggle("score")} className="sortable num">
                   SCORE {sortBy === "score" && (sortDir === "desc" ? "↓" : "↑")}
                 </th>
-                <th onClick={sortToggle("dScore")} className="sortable num">Δ 1D</th>
-                <th>TIER</th>
-                <th>REGIME</th>
-                <th className="num">TECH</th>
-                <th className="num">VOL</th>
-                <th onClick={sortToggle("rr")} className="sortable num">R/R</th>
-                <th className="num">LAST</th>
+                <th onClick={sortToggle("dScore")} className="sortable num">Δ 1D {sortBy === "dScore" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("tier")} className="sortable">TIER {sortBy === "tier" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("regime")} className="sortable">REGIME {sortBy === "regime" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("tech")} className="sortable num">TECH {sortBy === "tech" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("vol")} className="sortable num">VOL {sortBy === "vol" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("rr")} className="sortable num">R/R {sortBy === "rr" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("last")} className="sortable num">LAST {sortBy === "last" && (sortDir === "desc" ? "↓" : "↑")}</th>
                 <th>FUNNEL</th>
               </tr>
             </thead>

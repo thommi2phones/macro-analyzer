@@ -250,6 +250,7 @@ def build_regime_section() -> dict:
         current_conf = last["confidence"]
         bias, sizing, score_mod = _REGIME_BIASES.get(current_slug, ("neutral", 1.0, 0))
         trace = [round(s["confidence"], 3) for s in history]
+        trace_dates = [s["date"] for s in history]
         transitions = derive_transitions(history)
         since_days = since_days_for_current(history)
     else:
@@ -260,6 +261,7 @@ def build_regime_section() -> dict:
         current_conf = rr.confidence
         bias, sizing, score_mod = _REGIME_BIASES.get(current_slug, ("neutral", 1.0, 0))
         trace = [round(current_conf, 2)] * 84
+        trace_dates = []
         transitions = [{
             "date": datetime.now(UTC).date().isoformat(),
             "from": "Transitional Chop",
@@ -289,6 +291,7 @@ def build_regime_section() -> dict:
             "lastRevised": "2026-04-22",
         },
         "confidenceTrace": trace,
+        "confidenceTraceDates": trace_dates,  # ISO YYYY-MM-DD per trace index
         "transitions": transitions,
     }
     out["indicators"] = _build_macro_indicators()  # None = strip hides itself

@@ -30,9 +30,20 @@ const _MA_MOCK = {
     },
     // 90-day daily regime confidence trace (0..1) — for sparkline shape
     confidenceTrace: [0.41,0.43,0.42,0.45,0.49,0.52,0.50,0.48,0.51,0.55,0.58,0.62,0.60,0.58,0.61,0.65,0.68,0.66,0.64,0.66,0.69,0.71,0.70,0.67,0.69,0.72,0.74,0.73,0.71,0.74,0.76,0.78,0.76,0.74,0.77,0.79,0.81,0.79,0.77,0.79,0.81,0.82,0.80,0.78,0.80,0.82,0.83,0.81,0.79,0.80,0.82,0.83,0.81,0.78,0.79,0.81,0.83,0.81,0.79,0.80,0.81,0.83,0.82,0.80,0.79,0.81,0.83,0.82,0.80,0.78,0.77,0.79,0.80,0.78,0.76,0.77,0.78,0.78,0.77,0.78,0.79,0.78,0.77,0.78],
+    // Dates per confidenceTrace index. Real /api/desk emits ISO dates;
+    // mock computes them relative to a fixed "today" so the preview
+    // renders realistic axis labels.
+    confidenceTraceDates: (() => {
+      const out = []; const today = new Date("2026-08-02");
+      for (let i = 83; i >= 0; i--) {
+        const d = new Date(today); d.setDate(d.getDate() - i);
+        out.push(d.toISOString().slice(0, 10));
+      }
+      return out;
+    })(),
     transitions: [
-      { date: "2026-02-04", from: "Transitional Chop", to: "Dovish Liquidity Wave" },
-      { date: "2026-03-19", from: "Dovish Liquidity Wave", to: "Commodity-Led Inflation" },
+      { date: "2026-06-08", from: "Transitional Chop",  to: "Risk-On Expansion" },
+      { date: "2026-07-06", from: "Risk-On Expansion", to: "Commodity-Led Inflation" },
     ],
   },
 

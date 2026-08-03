@@ -83,18 +83,38 @@ function RegimeTimelineChart({ regime }) {
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
 
-  // Build regime periods: transitions give change points; treat the
-  // pre-first-transition period as `transitions[0].from` and the tail
-  // as the current framework label.
+  // Build regime periods. When we have per-trace dates (real backend
+  // path), map transition dates → trace indices for accurate segment
+  // widths. Otherwise fall back to evenly-spaced anchors.
   const trans = (regime.transitions || []).slice();
+  const dates = regime.confidenceTraceDates || [];
   const currentLabel = regime.framework?.label || "—";
   const segments = [];
+  const _idxForDate = (d) => {
+    if (!dates.length) return null;
+    const t = new Date(d + "T00:00:00Z").getTime();
+    let best = 0, bestDelta = Infinity;
+    for (let i = 0; i < dates.length; i++) {
+      const dt = Math.abs(new Date(dates[i] + "T00:00:00Z").getTime() - t);
+      if (dt < bestDelta) { bestDelta = dt; best = i; }
+    }
+    return best;
+  };
   if (!trans.length) {
     segments.push({ startIdx: 0, endIdx: n - 1, label: currentLabel });
+  } else if (dates.length === n) {
+    // Accurate: use each transition's actual date to place the boundary.
+    let cursor = 0;
+    trans.forEach((t) => {
+      const end = _idxForDate(t.date);
+      if (end != null && end > cursor) {
+        segments.push({ startIdx: cursor, endIdx: end, label: t.from });
+        cursor = end;
+      }
+    });
+    segments.push({ startIdx: cursor, endIdx: n - 1, label: currentLabel });
   } else {
-    // Space transition indices evenly across the trace as a proxy — the
-    // real dates aren't tied to trace indices, so we render "approximate
-    // segmentation" and label it as such in the axis strip.
+    // Fallback (no dates): evenly-spaced anchors as before.
     const anchors = trans.map((_, i) => Math.round(((i + 1) / (trans.length + 1)) * n));
     let cursor = 0;
     trans.forEach((t, i) => {
@@ -130,8 +150,10 @@ function RegimeTimelineChart({ regime }) {
           <span className="block-num mono">RG</span>
           <span>Regime timeline · last 90d</span>
           <span className="block-sub">
-            confidence trace overlaid on approximate regime segmentation ·
-            {" "}{segments.length} regime{segments.length === 1 ? "" : "s"} · now
+            {dates.length === n
+              ? "confidence trace overlaid on dated regime segments"
+              : "confidence trace overlaid on approximate regime segmentation"}
+            {" · "}{segments.length} regime{segments.length === 1 ? "" : "s"} · now
             {" "}<b>{Math.round(currentConf * 100)}%</b>
           </span>
         </div>
@@ -173,9 +195,36 @@ function RegimeTimelineChart({ regime }) {
               </g>
             );
           })}
-          {/* X-axis: start / today */}
-          <text x={padL} y={H - 6} fontFamily="var(--mono)" fontSize="10" fill="var(--text-mute-2)">−90d</text>
-          <text x={W - padR} y={H - 6} fontFamily="var(--mono)" fontSize="10" fill="var(--text-mute-2)" textAnchor="end">now</text>
+          {/* X-axis: real date ticks at ~5 evenly-spaced trace indices */}
+          {(() => {
+            if (dates.length !== n) {
+              return (
+                <>
+                  <text x={padL} y={H - 6} fontFamily="var(--mono)" fontSize="10" fill="var(--text-mute-2)">−{n - 1}d</text>
+                  <text x={W - padR} y={H - 6} fontFamily="var(--mono)" fontSize="10" fill="var(--text-mute-2)" textAnchor="end">now</text>
+                </>
+              );
+            }
+            const ticks = 5;
+            const _short = (iso) => {
+              const d = new Date(iso + "T00:00:00Z");
+              return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+            };
+            const nodes = [];
+            for (let t = 0; t < ticks; t++) {
+              const idx = Math.round((t / (ticks - 1)) * (n - 1));
+              const x = padL + (idx / (n - 1)) * plotW;
+              const label = _short(dates[idx]);
+              const anchor = t === 0 ? "start" : t === ticks - 1 ? "end" : "middle";
+              nodes.push(
+                <g key={t}>
+                  <line x1={x} y1={padT + plotH} x2={x} y2={padT + plotH + 3} stroke="var(--text-mute-2)" strokeWidth="1" />
+                  <text x={x} y={H - 6} fontFamily="var(--mono)" fontSize="10" fill="var(--text-mute-2)" textAnchor={anchor}>{label}</text>
+                </g>
+              );
+            }
+            return <>{nodes}</>;
+          })()}
         </svg>
       </div>
       {regime.transitions && regime.transitions.length > 0 && (

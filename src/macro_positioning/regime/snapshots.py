@@ -97,44 +97,55 @@ def _synthesize_history(today: date, current_regime: str, current_conf: float) -
     current one; confidence ramps up over time with mild noise.
     """
     rng = random.Random(0xB1A5ED)  # deterministic — same backfill on repeats
-    # Two prior regimes → current. Pick a simple story arc based on the
-    # current framework; keeps the seed data realistic without pretending
-    # it's history we actually have.
-    # Only use valid framework_regime slugs (see desk_data._FRAMEWORK_REGIME_LABELS).
-    if current_regime == "commodity_led_inflation":
-        prior = [("transitional_chop", 28), ("risk_on_expansion", 28)]
-    elif current_regime == "risk_off_contraction":
-        prior = [("transitional_chop", 28), ("transitional_chop", 28)]
-    elif current_regime == "risk_on_expansion":
-        prior = [("transitional_chop", 28), ("transitional_chop", 28)]
-    else:
-        prior = [("transitional_chop", 42), (current_regime, 14)]
 
-    segments: list[tuple[str, int]] = list(prior) + [(current_regime, _BACKFILL_DAYS - sum(p[1] for p in prior))]
+    # Pick a plausible 3-segment arc based on the current framework.
+    # Only valid framework_regime slugs (see desk_data._FRAMEWORK_REGIME_LABELS).
+    if current_regime == "commodity_led_inflation":
+        arc = ["transitional_chop", "risk_on_expansion", current_regime]
+    elif current_regime == "risk_off_contraction":
+        arc = ["risk_on_expansion", "transitional_chop", current_regime]
+    elif current_regime == "risk_on_expansion":
+        arc = ["risk_off_contraction", "transitional_chop", current_regime]
+    else:
+        arc = ["risk_on_expansion", "transitional_chop", current_regime]
+
+    # Segment lengths: 3 uneven segments summing to _BACKFILL_DAYS.
+    # Real regime durations vary a lot — pick from a spread rather than
+    # equal thirds so the chart doesn't look mechanically generated.
+    a = rng.randint(18, 34)              # first segment: 18-34 days
+    b = rng.randint(20, 36)              # middle segment: 20-36 days
+    c = _BACKFILL_DAYS - a - b           # tail runs to today
+    if c < 8:                            # ensure tail is at least ~1 week
+        b -= (8 - c)
+        c = 8
+    segments: list[tuple[str, int]] = [(arc[0], a), (arc[1], b), (arc[2], c)]
+
+    # Per-segment confidence targets — the current regime's tail should
+    # land near current_conf; earlier segments run lower + varied.
+    seg_targets = [
+        0.42 + rng.random() * 0.08,      # early: 0.42 - 0.50
+        0.55 + rng.random() * 0.10,      # middle: 0.55 - 0.65
+        max(0.55, min(0.90, current_conf)),
+    ]
 
     snaps: list[RegimeSnapshot] = []
     day_offset = _BACKFILL_DAYS
-    # base_conf drifts up across segments so the tail reaches ~current_conf
-    seg_targets: list[float] = []
-    for i, (_, _) in enumerate(segments):
-        # early: 0.45 ± 0.05, middle: 0.6 ± 0.05, late: current ± 0.05
-        if i == 0:
-            seg_targets.append(0.45)
-        elif i == len(segments) - 1:
-            seg_targets.append(max(0.5, min(0.9, current_conf)))
-        else:
-            seg_targets.append(0.6)
-
     for seg_i, (regime, length) in enumerate(segments):
         target = seg_targets[seg_i]
+        prev = seg_targets[seg_i - 1] if seg_i > 0 else 0.42
         for i in range(length):
             d = today - timedelta(days=day_offset)
             day_offset -= 1
-            noise = (rng.random() - 0.5) * 0.06
-            # linearly ramp from prev target to this target within segment
+            # smoothstep (non-linear ramp) so confidence rises with
+            # inflection instead of straight lines.
             frac = i / max(1, length - 1)
-            prev = seg_targets[seg_i - 1] if seg_i > 0 else 0.45
-            conf = prev + (target - prev) * frac + noise
+            eased = frac * frac * (3 - 2 * frac)
+            base = prev + (target - prev) * eased
+            # Daily noise + occasional 2-day pullback (5% chance).
+            noise = (rng.random() - 0.5) * 0.07
+            if rng.random() < 0.05:
+                noise -= 0.04
+            conf = base + noise
             conf = max(0.30, min(0.92, conf))
             snaps.append(RegimeSnapshot(
                 snapshot_date=d,

@@ -137,6 +137,13 @@ def main() -> int:
         return f"{s.persisted} scored"
     summary["scoring"] = _step("scoring", _scoring)
 
+    def _regime_snapshot():
+        from macro_positioning.regime.snapshots import record_daily_regime_snapshot
+        with sqlite3.connect(settings.sqlite_path) as c:
+            res = record_daily_regime_snapshot(c, seed_history=True)
+        return f"{res['regime']} ({res['today']}), backfilled {res['backfilled']}"
+    summary["regime_snapshot"] = _step("regime_snapshot", _regime_snapshot)
+
     errors = [k for k, v in summary.items() if v["status"] == "error"]
     log.info("daily_free_ingest complete — %d/%d ok%s",
              len(summary) - len(errors), len(summary),

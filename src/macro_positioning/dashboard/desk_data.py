@@ -224,21 +224,58 @@ _SOURCE_TYPE_DISPLAY = {
 # ---------------------------------------------------------------------------
 
 def build_regime_section() -> dict:
-    """Active regime read with seeded transition + confidenceTrace + indicator strip."""
-    regime = classify_regime_stub(hint_thesis_regime="commodity_expansion")
-    bias, sizing, score_mod = _REGIME_BIASES.get(
-        regime.framework_regime,
-        ("neutral", 1.0, 0),
+    """Active regime read with real 90-day confidence trace + transitions
+    from `macro_regimes` (populated by daily_free_ingest via the
+    regime.snapshots writer). Falls back to the stub classifier + a flat
+    trace if the table is empty."""
+    from macro_positioning.regime.snapshots import (
+        derive_transitions,
+        load_regime_history,
+        since_days_for_current,
     )
+
+    # Load real history first — this is the primary path once daily
+    # snapshots exist.
+    history: list[dict] = []
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            history = load_regime_history(conn, days=90)
+    except sqlite3.Error:
+        history = []
+
+    if history:
+        # Most-recent snapshot drives the "current" read.
+        last = history[-1]
+        current_slug = last["framework_regime"]
+        current_conf = last["confidence"]
+        bias, sizing, score_mod = _REGIME_BIASES.get(current_slug, ("neutral", 1.0, 0))
+        trace = [round(s["confidence"], 3) for s in history]
+        transitions = derive_transitions(history)
+        since_days = since_days_for_current(history)
+    else:
+        # Fallback: no daily snapshots yet → keep the stub shape so the
+        # SPA still renders (it will show the "pending" pill).
+        rr = classify_regime_stub(hint_thesis_regime="commodity_expansion")
+        current_slug = rr.framework_regime
+        current_conf = rr.confidence
+        bias, sizing, score_mod = _REGIME_BIASES.get(current_slug, ("neutral", 1.0, 0))
+        trace = [round(current_conf, 2)] * 84
+        transitions = [{
+            "date": datetime.now(UTC).date().isoformat(),
+            "from": "Transitional Chop",
+            "to": _FRAMEWORK_REGIME_LABELS.get(current_slug, current_slug),
+        }]
+        since_days = 14
+
     out = {
         "framework": {
-            "label": _FRAMEWORK_REGIME_LABELS.get(regime.framework_regime, regime.framework_regime),
-            "slug": regime.framework_regime,
-            "confidence": round(regime.confidence, 2),
+            "label": _FRAMEWORK_REGIME_LABELS.get(current_slug, current_slug),
+            "slug": current_slug,
+            "confidence": round(current_conf, 2),
             "bias": bias,
             "sizingModifier": sizing,
             "scoreModifier": score_mod,
-            "sinceDays": 14,  # TODO: compute from regime transition history
+            "sinceDays": since_days,
         },
         "thesis": {
             "label": "Two-Speed · Liquidity ↔ Structural",
@@ -251,17 +288,8 @@ def build_regime_section() -> dict:
             "author": "Lindsey",
             "lastRevised": "2026-04-22",
         },
-        # 90-day daily regime confidence trace. Seeded as flat at the
-        # current confidence; will become real once we persist daily
-        # classification snapshots.
-        "confidenceTrace": [round(regime.confidence, 2)] * 84,
-        "transitions": [
-            {
-                "date": "2026-04-22",
-                "from": "Transitional Chop",
-                "to": "Commodity-Led Inflation",
-            },
-        ],
+        "confidenceTrace": trace,
+        "transitions": transitions,
     }
     out["indicators"] = _build_macro_indicators()  # None = strip hides itself
     return out
@@ -1336,8 +1364,9 @@ def build_live_signals_section() -> list[dict]:
         with sqlite3.connect(settings.sqlite_path) as conn:
             conn.row_factory = sqlite3.Row
             # Hero signals only surface authors the user has explicitly
-            # stated — the seeded allowlist (SEEDED_AUTHOR_WHERE). Filtering
-            # in-query so LIMIT 8 applies to the eligible set, not the raw one.
+            # stated — the seeded allowlist (SEEDED_AUTHOR_WHERE). Pull a wide
+            # pool (not 8) so the real-ticker filter below still yields 8 after
+            # dropping memecoin "first call" spam.
             rows = conn.execute(
                 f"""
                 SELECT
@@ -1354,12 +1383,22 @@ def build_live_signals_section() -> list[dict]:
                       SELECT author_id FROM input_authors WHERE {SEEDED_AUTHOR_WHERE}
                   )
                 ORDER BY weighted_score DESC NULLS LAST, extracted_at DESC
-                LIMIT 8
+                LIMIT 120
                 """
             ).fetchall()
+            # Real-ticker filter: keep priced names (equities + majors) or
+            # tracked crypto; drop trenching/memecoin junk (TOBY, UNEE, CULT,
+            # NYAN…). "Live signals" is the core feed, not a memecoin scanner.
+            from macro_positioning.prices.symbol_map import _TRACKED_CRYPTO
+            _priced = {row[0] for row in conn.execute("SELECT DISTINCT ticker FROM prices")}
     except sqlite3.OperationalError:
         # signals table not yet created (pre-migration DB)
         return []
+
+    def _is_real(t: str) -> bool:
+        return bool(t) and (t in _priced or t in _TRACKED_CRYPTO)
+
+    rows = [r for r in rows if _is_real(r["asset_ticker"])][:8]
     out: list[dict] = []
     for r in rows:
         out.append({

@@ -39,6 +39,45 @@ function RegimeTimelineChart({ regime }) {
   const n = trace.length;
   if (!n) return null;
 
+  // Detect stub data: backend seeds confidenceTrace as [confidence]*84 until
+  // a daily regime-snapshot table is wired up. If variance is ~0, don't
+  // draw a misleading flat line — surface the pipeline gap instead.
+  const traceMin = Math.min.apply(null, trace);
+  const traceMax = Math.max.apply(null, trace);
+  const traceIsStub = (traceMax - traceMin) < 0.02;
+
+  if (traceIsStub) {
+    return (
+      <section className="block home-timeline">
+        <header className="block-head">
+          <div className="block-title">
+            <span className="block-num mono">RG</span>
+            <span>Regime timeline · last 90d</span>
+            <span className="block-sub">
+              current: <b>{regime.framework?.label || "—"}</b> · {Math.round((regime.framework?.confidence || 0) * 100)}% confidence
+            </span>
+          </div>
+        </header>
+        <div className="home-timeline-pending mono small muted">
+          regime history not yet persisted — backend emits a flat confidence trace and one
+          stub transition until a daily regime-snapshot writer lands (see
+          <code> desk_data.build_regime_section</code>). The current framework read above is live;
+          the 90-day chart will appear once daily snapshots accumulate.
+        </div>
+        {regime.transitions && regime.transitions.length > 0 && (
+          <div className="home-timeline-transitions mono small muted">
+            latest transition on record:&nbsp;
+            <b>{regime.transitions[regime.transitions.length - 1].date}</b>
+            {" · "}
+            {regime.transitions[regime.transitions.length - 1].from}
+            {" → "}
+            {regime.transitions[regime.transitions.length - 1].to}
+          </div>
+        )}
+      </section>
+    );
+  }
+
   const W = 900, H = 130;
   const padL = 8, padR = 8, padT = 28, padB = 22;
   const plotW = W - padL - padR;

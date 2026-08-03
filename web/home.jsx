@@ -13,6 +13,7 @@ function Home({ onNav }) {
   return (
     <div className="home-view">
       {regime && <RegimeTape regime={regime} />}
+      {regime && <RegimeQuadrantChart regime={regime} />}
       {regime && <RegimeTimelineChart regime={regime} />}
       {regime && regime.indicators && (
         <MacroIndicatorStrip ind={regime.indicators} />
@@ -28,6 +29,145 @@ function Home({ onNav }) {
         ))}
       </div>
     </div>
+  );
+}
+
+// Growth × Inflation quadrant — plots current macro position on a 2D
+// grid where each quadrant maps to a framework regime, plus partial
+// membership scores across all regimes (so we can see we're 45%
+// commodity-led, 30% risk-on, etc. — the market is never one thing).
+function RegimeQuadrantChart({ regime }) {
+  const ind = regime.indicators || {};
+  const framework = regime.framework || {};
+
+  // Compute (x, y) in [-1..1]. x = inflation, y = growth.
+  const _sig = (label) => {
+    const s = (label || "").toLowerCase();
+    if (s.includes("expan") || s.includes("stable") || s === "up") return 0.65;
+    if (s.includes("hot") || s.includes("elevated") || s.includes("high")) return 0.85;
+    if (s.includes("cool") || s.includes("moderate")) return 0.15;
+    if (s.includes("contract") || s.includes("weak") || s === "down") return -0.65;
+    if (s.includes("defla") || s.includes("low")) return -0.85;
+    return 0;
+  };
+  // Prefer indicator strip's growth/inflation signals when present,
+  // otherwise map from the framework regime itself.
+  let inflX = _sig(ind.inflationSignal);
+  let growY = _sig(ind.growthSignal);
+  if (inflX === 0 && growY === 0) {
+    const map = {
+      commodity_led_inflation:       [ 0.7,  0.35],
+      risk_on_expansion:             [-0.2,  0.7 ],
+      risk_off_contraction:          [-0.4, -0.7 ],
+      monetary_debasement_hard_asset:[ 0.6, -0.2 ],
+      transitional_chop:             [ 0.05, 0.05],
+    };
+    const p = map[framework.slug] || [0, 0];
+    inflX = p[0]; growY = p[1];
+  }
+
+  // Partial membership: distance from each regime's anchor → 1/(1+d).
+  const anchors = [
+    { slug: "risk_on_expansion",              label: "Risk-On Expansion",   x: -0.55, y:  0.7,  color: "var(--green, #25915d)" },
+    { slug: "commodity_led_inflation",        label: "Commodity-Led Infl.", x:  0.7,  y:  0.4,  color: "var(--gold, #b0862f)" },
+    { slug: "monetary_debasement_hard_asset", label: "Monetary Debasement", x:  0.65, y: -0.35, color: "var(--amber, #bb8d33)" },
+    { slug: "risk_off_contraction",           label: "Risk-Off Contraction",x: -0.55, y: -0.7,  color: "var(--red, #cf5346)" },
+    { slug: "transitional_chop",              label: "Transitional Chop",   x:  0,    y:  0,    color: "var(--text-mute-2, #8d897c)" },
+  ];
+  const rawDist = anchors.map(a => Math.hypot(a.x - inflX, a.y - growY));
+  const invD = rawDist.map(d => 1 / (0.35 + d * 1.2));
+  const sum = invD.reduce((a, b) => a + b, 0) || 1;
+  const membership = anchors.map((a, i) => ({ ...a, pct: invD[i] / sum }));
+  membership.sort((a, b) => b.pct - a.pct);
+
+  const W = 640, H = 420;
+  const padL = 44, padR = 12, padT = 24, padB = 40;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  const toX = (v) => padL + ((v + 1) / 2) * plotW;
+  const toY = (v) => padT + ((1 - v) / 2) * plotH;
+
+  return (
+    <section className="block home-quadrant">
+      <header className="block-head">
+        <div className="block-title">
+          <span className="block-num mono">RQ</span>
+          <span>Regime map · growth × inflation</span>
+          <span className="block-sub">
+            partial membership across all regimes · single label is the dominant read, not the whole story
+          </span>
+        </div>
+      </header>
+      <div className="home-quadrant-wrap">
+        <div className="home-quadrant-chart">
+          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" className="home-quadrant-svg">
+            {/* Quadrant tints */}
+            {anchors.slice(0, 4).map(a => {
+              const cx = a.x > 0 ? padL + plotW * 0.5 : padL;
+              const cy = a.y > 0 ? padT : padT + plotH * 0.5;
+              return <rect key={a.slug} x={cx} y={cy} width={plotW * 0.5} height={plotH * 0.5} fill={a.color} opacity="0.06" />;
+            })}
+            {/* Axes */}
+            <line x1={padL} y1={toY(0)} x2={padL + plotW} y2={toY(0)} stroke="var(--line-2)" strokeWidth="1" />
+            <line x1={toX(0)} y1={padT} x2={toX(0)} y2={padT + plotH} stroke="var(--line-2)" strokeWidth="1" />
+            {/* Axis labels */}
+            <text x={padL + plotW - 4} y={toY(0) - 6} fontFamily="var(--mono)" fontSize="11" fill="var(--text-mute)" textAnchor="end">inflation ↑</text>
+            <text x={padL + 4}       y={toY(0) - 6} fontFamily="var(--mono)" fontSize="11" fill="var(--text-mute)">← disinflation</text>
+            <text x={toX(0) + 6}     y={padT + 12}  fontFamily="var(--mono)" fontSize="11" fill="var(--text-mute)">growth ↑</text>
+            <text x={toX(0) + 6}     y={padT + plotH - 4} fontFamily="var(--mono)" fontSize="11" fill="var(--text-mute)">growth ↓</text>
+            {/* Regime anchor labels */}
+            {anchors.map(a => (
+              <g key={a.slug}>
+                <circle cx={toX(a.x)} cy={toY(a.y)} r="4" fill={a.color} opacity="0.55" />
+                <text x={toX(a.x)} y={toY(a.y) - 10}
+                      fontFamily="var(--sans)" fontSize="11" fontWeight="600"
+                      fill={a.color} textAnchor="middle"
+                      style={{ letterSpacing: "0.02em" }}>
+                  {a.label}
+                </text>
+              </g>
+            ))}
+            {/* Current position */}
+            {(() => {
+              const cx = toX(inflX), cy = toY(growY);
+              return (
+                <g>
+                  <circle cx={cx} cy={cy} r="16" fill="var(--accent, #b0862f)" opacity="0.18" />
+                  <circle cx={cx} cy={cy} r="8"  fill="var(--accent, #b0862f)" opacity="0.35" />
+                  <circle cx={cx} cy={cy} r="4"  fill="var(--accent, #b0862f)" />
+                  <text x={cx} y={cy + 22} fontFamily="var(--mono)" fontSize="11" fontWeight="700"
+                        fill="var(--text)" textAnchor="middle">
+                    NOW
+                  </text>
+                </g>
+              );
+            })()}
+          </svg>
+        </div>
+        <div className="home-quadrant-panel">
+          <div className="home-quadrant-panel-lbl mono small muted">Partial membership</div>
+          {membership.map(m => (
+            <div key={m.slug} className="home-membership-row">
+              <div className="home-membership-head">
+                <span className="home-membership-dot" style={{ background: m.color }}></span>
+                <span className="home-membership-lbl" style={{ color: m.slug === framework.slug ? m.color : "var(--text)" }}>
+                  {m.label}
+                  {m.slug === framework.slug && <span className="mono small muted"> · dominant</span>}
+                </span>
+                <span className="home-membership-pct mono">{Math.round(m.pct * 100)}%</span>
+              </div>
+              <div className="home-membership-bar">
+                <span style={{ width: `${m.pct * 100}%`, background: m.color }}></span>
+              </div>
+            </div>
+          ))}
+          <div className="home-quadrant-note mono small muted">
+            position: growth {growY >= 0 ? "+" : ""}{growY.toFixed(2)} · inflation {inflX >= 0 ? "+" : ""}{inflX.toFixed(2)}
+            {ind.quadrant && <> · quadrant read <b>{String(ind.quadrant).toUpperCase()}</b></>}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 

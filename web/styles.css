@@ -3530,8 +3530,14 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 .setup-card:hover { border-color: var(--line-2); }
 .su-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .su-head-left { display: flex; align-items: center; gap: 8px; }
+.su-head-right { display: flex; align-items: center; gap: 8px; }
 .su-rank { font-size: 10px; letter-spacing: 0.14em; }
 .su-kind { font-size: 9px; letter-spacing: 0.18em; }
+.su-ago {
+  font-size: 9px; letter-spacing: 0.1em;
+  padding: 2px 6px; border: 1px solid var(--green-soft); color: var(--green);
+}
+.su-ago.stale { border-color: var(--line-2); color: var(--text-mute); }
 .su-pattern {
   font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
   padding: 2px 8px; border: 1px solid transparent;
@@ -4790,6 +4796,49 @@ body { font-size: 15.5px; }
   line-height: 1.5;
   letter-spacing: 0.02em;
 }
+/* Growth × Inflation quadrant */
+.home-quadrant-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr);
+  gap: 20px;
+  padding: 8px 18px 20px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .home-quadrant-wrap { grid-template-columns: 1fr; }
+}
+.home-quadrant-chart {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg-card);
+}
+.home-quadrant-svg { width: 100%; height: auto; display: block; }
+.home-quadrant-panel {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 6px 4px;
+}
+.home-quadrant-panel-lbl { letter-spacing: 0.16em; text-transform: uppercase; }
+.home-membership-row { display: flex; flex-direction: column; gap: 4px; }
+.home-membership-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.home-membership-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.home-membership-lbl { flex: 1; font-weight: 500; }
+.home-membership-pct { color: var(--text-mute); font-weight: 600; }
+.home-membership-bar {
+  height: 6px; border-radius: 4px;
+  background: var(--bg-inset, var(--line-soft));
+  overflow: hidden;
+}
+.home-membership-bar > span {
+  display: block; height: 100%; border-radius: 4px;
+}
+.home-quadrant-note {
+  margin-top: 6px; padding-top: 10px;
+  border-top: 1px dashed var(--line-soft, var(--line));
+  line-height: 1.5;
+}
+.home-quadrant-note b { color: var(--text); font-weight: 600; }
+
 .home-timeline-pending code {
   font-family: var(--mono);
   font-size: 11.5px;

@@ -14,7 +14,6 @@ function Home({ onNav }) {
     <div className="home-view">
       {regime && <RegimeTape regime={regime} />}
       {regime && <RegimeQuadrantChart regime={regime} />}
-      {regime && <RegimeTimelineChart regime={regime} />}
       {regime && regime.indicators && (
         <MacroIndicatorStrip ind={regime.indicators} />
       )}
@@ -74,6 +73,51 @@ function RegimeQuadrantChart({ regime }) {
     { slug: "risk_off_contraction",           label: "Risk-Off Contraction",x: -0.55, y: -0.7,  color: "var(--red, #cf5346)" },
     { slug: "transitional_chop",              label: "Transitional Chop",   x:  0,    y:  0,    color: "var(--text-mute-2, #8d897c)" },
   ];
+  const anchorBySlug = Object.fromEntries(anchors.map(a => [a.slug, a]));
+
+  // Build the historical trail: for each day in the trace, look up the
+  // active framework regime (walk transitions), place the point near
+  // that regime's anchor with deterministic jitter so the trail reads
+  // as movement rather than a stack of dots at each anchor.
+  const trace = regime.confidenceTrace || [];
+  const dates = regime.confidenceTraceDates || [];
+  const trans = (regime.transitions || []).slice().sort((a, b) => (a.date < b.date ? -1 : 1));
+
+  // Reverse-map human labels → slugs (transitions carry human labels).
+  const labelToSlug = {
+    "Risk-On Expansion": "risk_on_expansion",
+    "Commodity-Led Inflation": "commodity_led_inflation",
+    "Monetary Debasement / Hard Asset": "monetary_debasement_hard_asset",
+    "Risk-Off Contraction": "risk_off_contraction",
+    "Transitional Chop": "transitional_chop",
+  };
+  const _slugAtDate = (isoDate) => {
+    if (!trans.length) return framework.slug;
+    if (isoDate < trans[0].date) return labelToSlug[trans[0].from] || framework.slug;
+    let cur = labelToSlug[trans[0].to] || framework.slug;
+    for (let i = 0; i < trans.length; i++) {
+      if (isoDate >= trans[i].date) cur = labelToSlug[trans[i].to] || cur;
+    }
+    return cur;
+  };
+  // Simple deterministic hash → jitter in [-0.14, +0.14]
+  const _jitter = (seed) => {
+    let h = 0;
+    for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
+    const jx = (((h & 0xffff) / 0xffff) - 0.5) * 0.28;
+    const jy = ((((h >> 16) & 0xffff) / 0xffff) - 0.5) * 0.28;
+    return [jx, jy];
+  };
+  const trailPoints = dates.length === trace.length && dates.length > 0
+    ? dates.map((d, i) => {
+        const slug = _slugAtDate(d);
+        const a = anchorBySlug[slug] || anchorBySlug.transitional_chop;
+        const [jx, jy] = _jitter(d);
+        // Confidence tightens the point toward the anchor center.
+        const tighten = 1 - Math.max(0, Math.min(1, trace[i])) * 0.4;
+        return { date: d, x: a.x + jx * tighten, y: a.y + jy * tighten, color: a.color };
+      })
+    : [];
   const rawDist = anchors.map(a => Math.hypot(a.x - inflX, a.y - growY));
   const invD = rawDist.map(d => 1 / (0.35 + d * 1.2));
   const sum = invD.reduce((a, b) => a + b, 0) || 1;
@@ -127,6 +171,58 @@ function RegimeQuadrantChart({ regime }) {
                 </text>
               </g>
             ))}
+            {/* Historical trail — path connecting each day's position,
+                colored by that day's regime. Fades in as time approaches now. */}
+            {trailPoints.length > 1 && (() => {
+              const segs = [];
+              for (let i = 1; i < trailPoints.length; i++) {
+                const p0 = trailPoints[i - 1], p1 = trailPoints[i];
+                const t = i / (trailPoints.length - 1);        // 0..1 (old..new)
+                const opacity = 0.10 + t * 0.55;               // fade in
+                segs.push(
+                  <line key={`s-${i}`}
+                        x1={toX(p0.x)} y1={toY(p0.y)}
+                        x2={toX(p1.x)} y2={toY(p1.y)}
+                        stroke={p1.color} strokeWidth="1.4"
+                        strokeLinecap="round" opacity={opacity} />
+                );
+              }
+              return <g className="quadrant-trail">{segs}</g>;
+            })()}
+            {/* Small dot at each trail point so the path has texture */}
+            {trailPoints.map((p, i) => {
+              const t = i / Math.max(1, trailPoints.length - 1);
+              return (
+                <circle key={`d-${i}`}
+                        cx={toX(p.x)} cy={toY(p.y)} r="1.6"
+                        fill={p.color} opacity={0.15 + t * 0.55} />
+              );
+            })}
+            {/* Date waypoints — 4 evenly-spaced labels along the trail */}
+            {trailPoints.length >= 8 && (() => {
+              const _fmt = (iso) => {
+                const d = new Date(iso + "T00:00:00Z");
+                return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+              };
+              const marks = [];
+              const N = 4;
+              for (let k = 0; k < N; k++) {
+                const idx = Math.round((k / (N - 1)) * (trailPoints.length - 1));
+                if (k === N - 1) continue; // skip last — the NOW dot covers it
+                const p = trailPoints[idx];
+                marks.push(
+                  <g key={`w-${k}`}>
+                    <circle cx={toX(p.x)} cy={toY(p.y)} r="3" fill="var(--bg-card)" stroke={p.color} strokeWidth="1.4" />
+                    <text x={toX(p.x)} y={toY(p.y) - 8}
+                          fontFamily="var(--mono)" fontSize="10"
+                          fill="var(--text-mute)" textAnchor="middle">
+                      {_fmt(p.date)}
+                    </text>
+                  </g>
+                );
+              }
+              return <g>{marks}</g>;
+            })()}
             {/* Current position */}
             {(() => {
               const cx = toX(inflX), cy = toY(growY);

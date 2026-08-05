@@ -1207,73 +1207,130 @@ select.form-input {
    beneath the action buttons. Direction-across-horizons is a hero-tier
    fact — belongs next to the composite score, not buried in the trail. */
 .ah-signal-runner {
-  margin-top: 14px; padding-top: 12px;
+  margin-top: 18px; padding-top: 16px;
   border-top: 1px solid var(--line-soft);
 }
 .ahsr-header {
-  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
-  margin-bottom: 8px;
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  margin-bottom: 10px;
 }
+.ahsr-header-left { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ahsr-header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .ahsr-title {
-  font-size: 10px; letter-spacing: 0.18em; color: var(--text-mute-2);
+  font-size: 13px; font-weight: 600; letter-spacing: 0.02em; color: var(--text);
 }
+.ahsr-title-sub {
+  font-size: 11.5px; line-height: 1.4; color: var(--text-mute);
+}
+.ahsr-title-sub b { color: var(--text); font-weight: 600; }
+
+.ahsr-blend-row {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding: 8px 12px; margin-bottom: 12px;
+  background: var(--bg-inset, var(--bg-card-2));
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+}
+.ahsr-blend-lbl { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
 .ahsr-blend {
-  font-size: 12px; letter-spacing: 0.04em; font-weight: 600;
+  font-size: 15px; letter-spacing: 0.04em; font-weight: 700;
 }
 .ahsr-blend.dir-long    { color: var(--green); }
 .ahsr-blend.dir-short   { color: var(--red); }
-.ahsr-blend.dir-neutral { color: var(--text-mute-2); }
+.ahsr-blend.dir-neutral { color: var(--text-mute); }
+.ahsr-blend-cov { font-size: 11px; margin-left: auto; }
+
 .ahsr-trend {
-  padding: 2px 8px; border-radius: 3px; font-size: 11px;
+  padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--line-2, var(--line));
+  background: var(--bg-card);
+  color: var(--text-mute);
+  white-space: nowrap;
 }
 .ahsr-trend.trend-flip {
   background: color-mix(in srgb, var(--amber) 14%, transparent);
   color: var(--amber);
-  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
 }
-.ahsr-trend.trend-stable_long,
+.ahsr-trend.trend-stable_long {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+}
 .ahsr-trend.trend-stable_short {
-  color: var(--text-mute);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 45%, transparent);
 }
 .ahsr-trend.trend-mixed { color: var(--text-mute-2); font-style: italic; }
-.ahsr-coverage { margin-left: auto; }
 
 .ahsr-strip {
-  display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px;
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px;
 }
 .ahsr-cell {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 8px 6px; border-radius: 4px;
-  background: var(--bg-card-2, rgba(0,0,0,0.02));
-  border: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; align-items: center;
+  gap: 6px; padding: 14px 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--line-2, var(--line));
+  min-width: 0;
 }
 .ahsr-cell.align-diverging {
   background: color-mix(in srgb, var(--amber) 10%, transparent);
-  border-color: color-mix(in srgb, var(--amber) 35%, transparent);
+  border-color: color-mix(in srgb, var(--amber) 45%, transparent);
 }
 .ahsr-cell-lbl {
-  font-size: 10px; letter-spacing: 0.12em; color: var(--text-mute-2);
+  font-size: 11px; letter-spacing: 0.04em; color: var(--text-mute);
+  text-transform: none; font-weight: 500;
+  white-space: nowrap;
 }
 .ahsr-cell-dot {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 10px; height: 10px; border-radius: 50%;
   background: var(--text-mute-3);
+  margin: 2px 0;
 }
-.ahsr-cell-dot.dir-long    { background: var(--green); }
-.ahsr-cell-dot.dir-short   { background: var(--red); }
+.ahsr-cell-dot.dir-long    { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 15%, transparent); }
+.ahsr-cell-dot.dir-short   { background: var(--red);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--red)   15%, transparent); }
 .ahsr-cell-dot.dir-neutral { background: var(--text-mute-3); }
 .ahsr-cell-conf {
-  font-size: 12px; font-weight: 600;
+  font-size: 18px; font-weight: 700; letter-spacing: -0.01em;
+  line-height: 1;
 }
 .ahsr-cell.dir-long  .ahsr-cell-conf { color: var(--green); }
 .ahsr-cell.dir-short .ahsr-cell-conf { color: var(--red); }
 .ahsr-cell.dir-neutral .ahsr-cell-conf { color: var(--text-mute-2); }
 .ahsr-cell-n {
-  font-size: 10px; letter-spacing: 0.06em;
+  font-size: 11px; letter-spacing: 0.02em;
 }
+.ahsr-cell-dir {
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 600;
+}
+.ahsr-cell-dir.dir-long    { color: var(--green); }
+.ahsr-cell-dir.dir-short   { color: var(--red); }
+.ahsr-cell-dir.dir-neutral { color: var(--text-mute-2); }
+
+.ahsr-legend {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 10px; padding-top: 8px;
+  border-top: 1px dashed var(--line-soft);
+  font-size: 11px; letter-spacing: 0.02em;
+}
+.ahsr-legend-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin: 0 2px 0 4px;
+  vertical-align: middle;
+}
+.ahsr-legend-long    { background: var(--green); }
+.ahsr-legend-short   { background: var(--red); }
+.ahsr-legend-neutral { background: var(--text-mute-3); }
 
 /* Narrow viewports — collapse to 2 rows of 4/3 so cells stay legible. */
-@media (max-width: 720px) {
-  .ahsr-strip { grid-template-columns: repeat(4, 1fr); }
+@media (max-width: 1100px) {
+  .ahsr-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .ahsr-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ============== Journal ============== */

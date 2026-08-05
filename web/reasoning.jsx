@@ -117,24 +117,43 @@ function AssetPage({ signal, onBack, returnTo }) {
           return (
             <div className="ah-signal-runner">
               <div className="ahsr-header">
-                <span className="ahsr-title mono">SIGNAL ALIGNMENT</span>
-                <span className={`ahsr-blend mono dir-${sw.blend.direction}`}>
-                  blend · {sw.blend.direction} · {Math.round(sw.blend.confidence * 100)}%
-                </span>
-                <span className={`ahsr-trend mono small ${trendClass}`}>{trendLabel}</span>
-                <span className="ahsr-coverage mono small muted">
-                  coverage {Math.round(sw.blend.coverage * 100)}%
-                </span>
+                <div className="ahsr-header-left">
+                  <span className="ahsr-title mono">Signal alignment</span>
+                  <span className="ahsr-title-sub mono muted">
+                    KOL / extractor tape over trailing lookback windows · <b>past</b>, not forward horizons
+                  </span>
+                </div>
+                <div className="ahsr-header-right">
+                  <span className={`ahsr-trend mono ${trendClass}`}>{trendLabel}</span>
+                </div>
+              </div>
+              <div className="ahsr-blend-row">
+                <div className="ahsr-blend-lbl mono muted">Blended read</div>
+                <div className={`ahsr-blend mono dir-${sw.blend.direction}`}>
+                  {sw.blend.direction.toUpperCase()} · {Math.round(sw.blend.confidence * 100)}%
+                </div>
+                <div className="ahsr-blend-cov mono muted">
+                  coverage {Math.round(sw.blend.coverage * 100)}% — share of windows w/ ≥3 signals
+                </div>
               </div>
               <div className="ahsr-strip">
                 {sw.rows.map(w => (
-                  <div key={w.label} className={`ahsr-cell align-${w.alignment} dir-${w.direction}`}>
-                    <div className="ahsr-cell-lbl mono">{w.label}</div>
+                  <div key={w.label} className={`ahsr-cell align-${w.alignment} dir-${w.direction}`}
+                       title={`Trailing ${w.label} window (past). ${w.nSignals} signal${w.nSignals === 1 ? "" : "s"} · read ${w.direction} @ ${Math.round(w.confidence * 100)}%`}>
+                    <div className="ahsr-cell-lbl mono">last {w.label}</div>
                     <div className={`ahsr-cell-dot dir-${w.direction}`}></div>
-                    <div className="ahsr-cell-conf mono">{Math.round(w.confidence * 100)}%</div>
-                    <div className="ahsr-cell-n mono muted">{w.nSignals} sig</div>
+                    <div className={`ahsr-cell-conf mono`}>{Math.round(w.confidence * 100)}%</div>
+                    <div className="ahsr-cell-n mono muted">{w.nSignals} signal{w.nSignals === 1 ? "" : "s"}</div>
+                    <div className={`ahsr-cell-dir mono dir-${w.direction}`}>{w.direction}</div>
                   </div>
                 ))}
+              </div>
+              <div className="ahsr-legend mono muted">
+                each cell = one trailing lookback window ·
+                <span className="ahsr-legend-dot ahsr-legend-long"></span> long ·
+                <span className="ahsr-legend-dot ahsr-legend-short"></span> short ·
+                <span className="ahsr-legend-dot ahsr-legend-neutral"></span> neutral ·
+                % = weighted agreement across signals in that window
               </div>
             </div>
           );

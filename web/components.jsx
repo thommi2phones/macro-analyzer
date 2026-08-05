@@ -176,8 +176,28 @@ function SetupCard({ s, onOpen, active = false }) {
   const hasLevels = (s.entry || 0) > 0 && (s.stop || 0) > 0 && (s.target || 0) > 0;
   const distToInval = hasLevels ? ((s.entry - s.stop) / s.entry) * 100 : 0;
   const upside      = hasLevels ? ((s.target - s.entry) / s.entry) * 100 : 0;
+  // Compact tape-vs-price divergence chip: fires when the composite score's
+  // signal blend leans one way but 90d price trend is the opposite.
+  const D = window.MA_DATA || {};
+  const series = D.priceSeries?.[s.asset];
+  const rt = (D.reasoning || {})[s.id]?.signalWindows?.blend;
+  let divergence = null;
+  if (series && series.length >= 10 && rt) {
+    const first = series[Math.max(0, series.length - 90)];
+    const last  = series[series.length - 1];
+    if (first && last) {
+      const ret90 = (last / first) - 1;
+      const priceDir = ret90 > 0.15 ? "long" : ret90 < -0.15 ? "short" : "neutral";
+      const opposed = (rt.direction === "long"  && priceDir === "short")
+                   || (rt.direction === "short" && priceDir === "long");
+      if (opposed && (rt.confidence || 0) >= 0.55) {
+        divergence = { tape: rt.direction, price: priceDir, ret90 };
+      }
+    }
+  }
   return (
-    <div className={`setup-card tier-${s.tier} ${active ? "active" : ""}`} onClick={() => onOpen(s)}>
+    <div className={`setup-card tier-${s.tier} ${active ? "active" : ""} ${divergence ? "divergent" : ""}`}
+         onClick={() => onOpen(s)}>
       <ConvictionStripe tier={s.tier} />
       <div className="sc-head">
         <div className="sc-asset-block">
@@ -189,6 +209,12 @@ function SetupCard({ s, onOpen, active = false }) {
       <div className="sc-meta">
         <SideLabel side={s.side} />
         <span className="sc-setup">{s.setup}</span>
+        {divergence && (
+          <span className="sc-div-chip mono"
+                title={`Tape reads ${divergence.tape.toUpperCase()} but 90d price is ${(divergence.ret90 * 100).toFixed(1)}%`}>
+            ⚠ tape≠price
+          </span>
+        )}
       </div>
 
       {hasLevels ? (
@@ -319,7 +345,7 @@ function SourceDetailPanel({ s }) {
   }));
 
   const analyzedLine = extras
-    ? `${extras.n_with_vision}/${extras.n_drops} analyzed${extras.earliest_chart && extras.latest_chart ? ` · ${extras.earliest_chart} → ${extras.latest_chart}` : ""}`
+    ? `${extras.n_with_vision}/${extras.n_charts ?? extras.n_drops} charts analyzed · ${extras.n_drops} drops${extras.earliest_chart && extras.latest_chart ? ` · ${extras.earliest_chart} → ${extras.latest_chart}` : ""}`
     : (s.items7d != null ? `${s.items7d} items · last 7d` : null);
 
   return (

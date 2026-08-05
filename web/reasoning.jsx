@@ -90,6 +90,41 @@ function AssetPage({ signal, onBack, returnTo }) {
           </div>
         </div>
 
+        {/* Tape-vs-price divergence flag — fires when the tape blend
+            leans strongly one way while price is deeply on the other.
+            Sits at hero level so overconfident composite scores get
+            called out where the trader will actually see them. */}
+        {(() => {
+          const sw = r.signalWindows;
+          if (!sw || !sw.blend || !shownSeries || shownSeries.length < 10) return null;
+          const first = series[Math.max(0, series.length - 90)]; // 90d ago (or as far back as we have)
+          const last  = series[series.length - 1];
+          if (!first || !last) return null;
+          const ret90 = (last / first) - 1;
+          const blendDir  = sw.blend.direction;      // "long" | "short" | "neutral"
+          const blendConf = sw.blend.confidence || 0;
+          // Divergence: |ret| ≥ 15% AND tape conviction ≥ 55% pointing
+          // opposite to price direction.
+          const priceDir = ret90 >  0.15 ? "long"
+                         : ret90 < -0.15 ? "short"
+                         : "neutral";
+          const opposed = (blendDir === "long"  && priceDir === "short")
+                       || (blendDir === "short" && priceDir === "long");
+          if (!opposed || blendConf < 0.55) return null;
+          const retPct = (ret90 * 100).toFixed(1);
+          const conviction = Math.round(blendConf * 100);
+          return (
+            <div className="ah-divergence mono">
+              <span className="ah-div-badge">⚠ TAPE ≠ PRICE</span>
+              <span className="ah-div-body">
+                tape reads <b className={`dir-${blendDir}`}>{blendDir.toUpperCase()} · {conviction}%</b>
+                {" but "}90d price is <b className={`dir-${priceDir}`}>{ret90 >= 0 ? "+" : ""}{retPct}%</b>.
+                {" Composite may be overstating conviction — wait for structural confirmation before trusting the tape."}
+              </span>
+            </div>
+          );
+        })()}
+
         {/* Actions row — moved to the top */}
         <div className="ah-actions">
           <button className="btn-primary">Log this trade ↵</button>

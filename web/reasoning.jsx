@@ -99,6 +99,46 @@ function AssetPage({ signal, onBack, returnTo }) {
           <button className="btn-ghost mono">Add to watchlist +</button>
           <button className="btn-ghost mono">Share trail ↗</button>
         </div>
+
+        {/* Signal-alignment runner — 7-window strip across the bottom
+            of the hero. Lives here (not in the reasoning trail) because
+            direction-across-horizons is a hero-tier fact: it belongs
+            next to the composite score, not buried under it. */}
+        {r.signalWindows && r.signalWindows.rows.length > 0 && (() => {
+          const sw = r.signalWindows;
+          const trendLabel = {
+            flipping_short: "⚠ tape flipping SHORT",
+            flipping_long:  "⚠ tape flipping LONG",
+            stable_long:    "stable long across horizons",
+            stable_short:   "stable short across horizons",
+            mixed:          "mixed across horizons",
+          }[sw.trend] || sw.trend;
+          const trendClass = sw.recentFlip ? "trend-flip" : `trend-${sw.trend}`;
+          return (
+            <div className="ah-signal-runner">
+              <div className="ahsr-header">
+                <span className="ahsr-title mono">SIGNAL ALIGNMENT</span>
+                <span className={`ahsr-blend mono dir-${sw.blend.direction}`}>
+                  blend · {sw.blend.direction} · {Math.round(sw.blend.confidence * 100)}%
+                </span>
+                <span className={`ahsr-trend mono small ${trendClass}`}>{trendLabel}</span>
+                <span className="ahsr-coverage mono small muted">
+                  coverage {Math.round(sw.blend.coverage * 100)}%
+                </span>
+              </div>
+              <div className="ahsr-strip">
+                {sw.rows.map(w => (
+                  <div key={w.label} className={`ahsr-cell align-${w.alignment} dir-${w.direction}`}>
+                    <div className="ahsr-cell-lbl mono">{w.label}</div>
+                    <div className={`ahsr-cell-dot dir-${w.direction}`}></div>
+                    <div className="ahsr-cell-conf mono">{Math.round(w.confidence * 100)}%</div>
+                    <div className="ahsr-cell-n mono muted">{w.nSignals} sig</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </header>
 
       {/* ── Price chart + Trade-on-this-asset side-by-side ────── */}
@@ -399,68 +439,6 @@ function ReasoningTrail({ signal, hideHeader = false, hideFooter = false }) {
           ))}
         </div>
       </div>
-
-      {/* A2 · Signal alignment by window ─────────────────────────────
-          7-window strip (1d → 180d) showing what each time horizon of
-          KOL/insider conviction reads. Diverging cells (opposite of the
-          long-bloc thesis) glow amber; a `flipping_*` trend badge fires
-          when the short bloc (1d/3d/7d) flatly disagrees with the long
-          bloc (28d/90d/180d) — the exact "3 fresh bears vs quarter-long
-          stack" signal that a single 90d aggregate used to hide. Only
-          renders for scores that carried the multi-window aggregate. */}
-      {r.signalWindows && r.signalWindows.rows.length > 0 && (() => {
-        const sw = r.signalWindows;
-        const trendLabel = {
-          flipping_short: "⚠ tape flipping SHORT — thesis still LONG",
-          flipping_long:  "⚠ tape flipping LONG — thesis still SHORT",
-          stable_long:    "stable long across horizons",
-          stable_short:   "stable short across horizons",
-          mixed:          "mixed across horizons",
-        }[sw.trend] || sw.trend;
-        const trendClass = sw.recentFlip ? "trend-flip" : `trend-${sw.trend}`;
-        return (
-          <div className="rt-section">
-            <div className="rt-section-head">
-              <span className="rt-section-num mono">A2</span>
-              <span>Signal alignment by window</span>
-              <span className="rt-section-sub">
-                blend {sw.blend.direction} · {Math.round(sw.blend.confidence * 100)}% conf ·
-                coverage {Math.round(sw.blend.coverage * 100)}%
-              </span>
-            </div>
-            <div className={`rt-window-trend mono small ${trendClass}`}>
-              {trendLabel}
-            </div>
-            <table className="wl-table rt-windows-table">
-              <thead>
-                <tr>
-                  <th>WINDOW</th>
-                  <th>DIR</th>
-                  <th className="num">CONF</th>
-                  <th className="num">SIGNALS</th>
-                  <th className="num">NET BIAS</th>
-                  <th>VS THESIS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sw.rows.map(w => (
-                  <tr key={w.label} className={`rt-win-row align-${w.alignment}`}>
-                    <td className="mono">{w.label}</td>
-                    <td className={`mono dir-${w.direction}`}>{w.direction}</td>
-                    <td className="num mono">{Math.round(w.confidence * 100)}%</td>
-                    <td className="num mono">{w.nSignals}</td>
-                    <td className="num mono">{w.netBias >= 0 ? "+" : ""}{w.netBias.toFixed(2)}</td>
-                    <td className={`mono small align-${w.alignment}`}>
-                      {w.alignment === "diverging" ? "diverges" :
-                       w.alignment === "aligned"   ? "aligned"  : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-      })()}
 
       {/* B · Why now */}
       <div className="rt-section">

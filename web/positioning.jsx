@@ -563,12 +563,6 @@ function DataFreshnessStrip({ dh }) {
 // rolls them into trade_scores. So the positioning desk surfaces real
 // extracted intelligence within seconds of ingestion.
 function LiveSignalsPanel({ signals }) {
-  const sideColor = {
-    LONG: "#7dd87d", ADD: "#7dd87d",
-    SHORT: "#e07070", HEDGE: "#e07070",
-    EXIT: "#e0a020", TRIM: "#e0a020",
-    WATCH: "#a0a0a0", AVOID: "#888",
-  };
   function fmtAge(iso) {
     if (!iso) return "—";
     try {
@@ -579,8 +573,15 @@ function LiveSignalsPanel({ signals }) {
       return `${Math.round(m / (60 * 24))}d`;
     } catch (e) { return "—"; }
   }
+  const sideKind = (side) => {
+    const s = (side || "").toUpperCase();
+    if (s === "LONG" || s === "ADD") return "long";
+    if (s === "SHORT" || s === "HEDGE") return "short";
+    if (s === "EXIT" || s === "TRIM") return "trim";
+    return "watch";
+  };
   return (
-    <section className="block">
+    <section className="block live-signals-block">
       <header className="block-head">
         <div className="block-title">
           <span className="block-num mono">01a</span>
@@ -591,31 +592,16 @@ function LiveSignalsPanel({ signals }) {
           </span>
         </div>
       </header>
-      <div className="live-signals-grid" style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-        gap: 10,
-      }}>
+      <div className="live-signals-grid">
         {signals.map(s => (
-          <div key={s.signal_id} className="live-signal-card" style={{
-            border: "1px solid #2a2a2a",
-            borderLeft: `3px solid ${sideColor[s.side] || "#666"}`,
-            background: "#101010",
-            padding: "10px 12px",
-            fontSize: 12,
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between",
-                          alignItems: "baseline", marginBottom: 4 }}>
-              <span style={{ fontWeight: 600, fontSize: 14, color: "#e8e8e8" }}>
-                {s.ticker}
-              </span>
-              <span style={{ color: sideColor[s.side] || "#aaa",
-                             fontFamily: "monospace", fontSize: 11 }}>
+          <div key={s.signal_id} className={`live-signal-card side-${sideKind(s.side)}`}>
+            <div className="ls-head">
+              <span className="ls-ticker">{s.ticker}</span>
+              <span className={`ls-side ls-side-${sideKind(s.side)} mono`}>
                 {s.side} · conv {s.conviction != null ? s.conviction.toFixed(1) : "—"}
               </span>
             </div>
-            <div style={{ color: "#888", fontSize: 10, fontFamily: "monospace",
-                          marginBottom: 6 }}>
+            <div className="ls-meta mono">
               {[
                 s.extractor_name,
                 s.source_channel || s.source_slug,
@@ -625,14 +611,10 @@ function LiveSignalsPanel({ signals }) {
               ].filter(Boolean).join(" · ")}
             </div>
             {s.thesis_summary && (
-              <div style={{ color: "#bbb", fontSize: 11,
-                            lineHeight: 1.4, marginBottom: 4 }}>
-                {s.thesis_summary}
-              </div>
+              <div className="ls-thesis">{s.thesis_summary}</div>
             )}
             {(s.stop_loss != null || s.target_1 != null) && (
-              <div style={{ color: "#888", fontSize: 10,
-                            fontFamily: "monospace" }}>
+              <div className="ls-levels mono">
                 {s.stop_loss != null && <>stop {s.stop_loss}</>}
                 {s.stop_loss != null && s.target_1 != null && " · "}
                 {s.target_1 != null && <>tgt {s.target_1}</>}

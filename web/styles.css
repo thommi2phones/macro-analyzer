@@ -401,12 +401,13 @@ button:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 /* ============== Setup card (hero) ============== */
 .hero-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap-block); }
 .hero-grid-4 {
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  padding: 6px 0 4px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 6px var(--pad-card) 12px;
 }
+.hero-grid-4 .setup-card { min-width: 0; }
 /* Only two allowed states: 4-across or 2×2 — never 3+1 with a gap */
-@media (max-width: 1500px) { .hero-grid-4 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1280px) { .hero-grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 620px)  { .hero-grid-4 { grid-template-columns: 1fr; } }
 @media (max-width: 1300px) { .hero-grid:not(.hero-grid-4) { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 800px)  { .hero-grid:not(.hero-grid-4) { grid-template-columns: 1fr; } }
@@ -4845,6 +4846,65 @@ body { font-size: 15.5px; }
   background: var(--bg-card-2);
   padding: 2px 7px;
 }
+
+/* Live signals — inverted ink band styled to match the RegimeTape hero
+   at the top of /home. Same background, radius, shadow, and typography. */
+.live-signals-block {
+  --ink: #1a2030;
+  background: var(--ink);
+  border: 0;
+  border-radius: 20px;
+  box-shadow: 0 18px 44px rgba(26,32,48,0.28);
+  color: #edeff5;
+  overflow: hidden;
+}
+[data-theme="dark"] .live-signals-block {
+  --ink: #202839;
+  border: 1px solid var(--line-2);
+  box-shadow: none;
+}
+.live-signals-block .block-head { border-bottom: 0; padding: 22px var(--pad-card) 6px; }
+.live-signals-block .block-num { color: rgba(237,239,245,0.55) !important; }
+.live-signals-block .block-title > span:nth-child(2) { color: #ffffff; }
+.live-signals-block .block-sub { color: rgba(237,239,245,0.6) !important; }
+.live-signals-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  padding: 10px var(--pad-card) 22px;
+}
+.live-signal-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: rgba(237,239,245,0.9);
+  display: flex; flex-direction: column; gap: 6px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.live-signal-card:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.16);
+}
+.live-signal-card.side-long   { border-left: 3px solid #7dd87d; }
+.live-signal-card.side-short  { border-left: 3px solid #e07070; }
+.live-signal-card.side-trim   { border-left: 3px solid #e0a020; }
+.live-signal-card.side-watch  { border-left: 3px solid rgba(255,255,255,0.25); }
+.ls-head {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+}
+.ls-ticker {
+  font-family: var(--display, inherit);
+  font-size: 15px; font-weight: 700; letter-spacing: 0.02em; color: #ffffff;
+}
+.ls-side { font-size: 11px; letter-spacing: 0.02em; }
+.ls-side-long   { color: #7dd87d; }
+.ls-side-short  { color: #e07070; }
+.ls-side-trim   { color: #e0a020; }
+.ls-side-watch  { color: rgba(237,239,245,0.55); }
+.ls-meta        { font-size: 10.5px; color: rgba(237,239,245,0.5); letter-spacing: 0.02em; }
+.ls-thesis      { font-size: 12px; line-height: 1.45; color: rgba(237,239,245,0.85); }
+.ls-levels      { font-size: 10.5px; color: rgba(237,239,245,0.55); }
 
 /* ===================== /home macro dashboard ===================== */
 .home-view { display: flex; flex-direction: column; gap: 20px; }

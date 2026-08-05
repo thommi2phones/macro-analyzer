@@ -524,10 +524,12 @@ def _load_latest_scores() -> list[dict]:
                 c.grade, c.position_size_tier, c.reasoning_trail_json,
                 a.ticker, a.asset_name, a.asset_class,
                 p.prior_score, p.prior_scored_at,
-                c.signal_alignment_score
+                c.signal_alignment_score,
+                ts_full.signal_aggregate_json
             FROM current c
             JOIN assets a ON a.asset_id = c.asset_id
             LEFT JOIN prior p ON p.asset_id = c.asset_id
+            LEFT JOIN trade_scores ts_full ON ts_full.score_id = c.score_id
             ORDER BY c.adjusted_total_score DESC
             """
         )
@@ -539,6 +541,10 @@ def _load_latest_scores() -> list[dict]:
             trail = json.loads(r[14]) if r[14] else {}
         except Exception:
             trail = {}
+        try:
+            signal_agg = json.loads(r[21]) if r[21] else {}
+        except Exception:
+            signal_agg = {}
         prior_score = r[18]
         d_score = (r[2] - prior_score) if prior_score is not None else 0
         out.append({
@@ -563,6 +569,7 @@ def _load_latest_scores() -> list[dict]:
             "prior_score": prior_score,
             "prior_scored_at": r[19],
             "signal": r[20],
+            "signal_aggregate": signal_agg,
             "d_score": d_score,
         })
     return out
@@ -756,7 +763,53 @@ def build_reasoning_section() -> dict:
             for o in _origins_to_pretty(origins)
         ]
 
-        out[r["score_id"]] = {
+        # Signal-alignment multi-window strip. Emitted only when the
+        # scored aggregate carried the multi-window shape (new scoring
+        # passes); older rows without the matrix render nothing.
+        sig_agg = r.get("signal_aggregate") or {}
+        windows_raw = sig_agg.get("windows") or {}
+        blend = sig_agg.get("blend") or {}
+        cross = sig_agg.get("cross_window") or {}
+        signal_windows = None
+        if windows_raw:
+            # UI expects an ordered list — sort by the DEFAULT_WINDOWS
+            # order so tactical → thesis reads left→right.
+            from macro_positioning.signals.aggregation import DEFAULT_WINDOWS
+            order = [w[0] for w in DEFAULT_WINDOWS]
+            diverging = set(cross.get("diverging_windows") or [])
+            aligned = set(cross.get("aligned_windows") or [])
+            rows_out = []
+            for label in order:
+                if label not in windows_raw:
+                    continue
+                w = windows_raw[label]
+                rows_out.append({
+                    "label": label,
+                    "direction": w.get("bias_direction") or "neutral",
+                    "confidence": w.get("bias_confidence") or 0.0,
+                    "nSignals": w.get("n_signals") or 0,
+                    "netBias": w.get("net_bias") or 0.0,
+                    "alignment": (
+                        "diverging" if label in diverging
+                        else "aligned" if label in aligned
+                        else "neutral"
+                    ),
+                })
+            signal_windows = {
+                "rows": rows_out,
+                "blend": {
+                    "direction": blend.get("bias_direction") or "neutral",
+                    "confidence": blend.get("bias_confidence") or 0.0,
+                    "alignmentScore": blend.get("alignment_score") or 0,
+                    "coverage": blend.get("coverage") or 0.0,
+                },
+                "trend": cross.get("trend") or "mixed",
+                "recentFlip": bool(cross.get("recent_flip")),
+                "shortBloc": cross.get("short_bloc") or {},
+                "longBloc": cross.get("long_bloc") or {},
+            }
+
+        entry = {
             "total": r["score"],
             "tier": _tier_str(r["tier"]),
             "components": comps,
@@ -769,6 +822,9 @@ def build_reasoning_section() -> dict:
                 {"agent": "score_composer", "model": "heuristic+stubs", "latencyMs": 0, "costUsd": 0.0, "ok": True},
             ],
         }
+        if signal_windows is not None:
+            entry["signalWindows"] = signal_windows
+        out[r["score_id"]] = entry
     return out
 
 

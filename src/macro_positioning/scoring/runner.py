@@ -488,16 +488,16 @@ def run_scoring_pass(
 
         # 4b. Per-ticker signal aggregation. Run once up front so the
         # composer sees a stable snapshot and we don't pay the join cost
-        # per ticker inside the write transaction. Half-life = 14d so a
-        # signal from two weeks ago is worth half a fresh one.
+        # per ticker inside the write transaction. Uses the default 7-
+        # window matrix (1d..180d) with timeframe-weighted reads — the
+        # composer's `signal_alignment` sub-score reads the top-level
+        # blend fields, and the trail carries the per-window matrix.
         from macro_positioning.signals.aggregation import (
             aggregate_for_tickers,
             directional_scale,
         )
         ticker_signal_aggregates = aggregate_for_tickers(
             (e.ticker for e in resolved.entries),
-            since_days=90,
-            half_life_days=14.0,
         )
         # Per-pass conviction scale — the signal_alignment scorer divides
         # net_bias by this to get its 0..1 tilt. Computed once so every

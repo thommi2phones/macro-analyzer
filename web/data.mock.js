@@ -277,6 +277,26 @@ const _MA_MOCK = {
         { agent: "chart_vision",        model: "gemini-2.5-pro",     latencyMs: 1980, costUsd: 0.024, ok: true },
         { agent: "rationale_writer",    model: "claude-haiku-4.5",   latencyMs: 540, costUsd: 0.005, ok: true },
       ],
+      // Mock signalWindows so the A2 panel renders in preview / static
+      // mode. Real payloads are emitted by desk_data.build_reasoning_section
+      // once scoring runs against actual signals. Shape mirrors
+      // aggregation.aggregate_for_ticker() blend + cross_window fields.
+      signalWindows: {
+        rows: [
+          { label: "1d",   direction: "long",    confidence: 0.85, nSignals: 2, netBias:  3.20, alignment: "aligned" },
+          { label: "3d",   direction: "long",    confidence: 0.78, nSignals: 4, netBias:  4.80, alignment: "aligned" },
+          { label: "7d",   direction: "long",    confidence: 0.71, nSignals: 6, netBias:  5.40, alignment: "aligned" },
+          { label: "14d",  direction: "long",    confidence: 0.68, nSignals: 9, netBias:  6.10, alignment: "aligned" },
+          { label: "28d",  direction: "long",    confidence: 0.72, nSignals: 14, netBias: 8.20, alignment: "aligned" },
+          { label: "90d",  direction: "long",    confidence: 0.79, nSignals: 28, netBias: 12.4, alignment: "aligned" },
+          { label: "180d", direction: "long",    confidence: 0.81, nSignals: 42, netBias: 15.6, alignment: "aligned" },
+        ],
+        blend: { direction: "long", confidence: 0.74, alignmentScore: 8, coverage: 1.0 },
+        trend: "stable_long",
+        recentFlip: false,
+        shortBloc: { direction: "long", confidence: 0.78 },
+        longBloc:  { direction: "long", confidence: 0.77 },
+      },
     },
   },
 

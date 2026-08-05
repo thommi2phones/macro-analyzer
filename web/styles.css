@@ -1201,6 +1201,47 @@ select.form-input {
 
 .rt-footer { display: flex; gap: 10px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
 
+/* ── Signal alignment by window (A2 panel) ─────────────────────────── */
+.rt-window-trend {
+  margin: 6px 0 12px; padding: 8px 12px; border-radius: 4px;
+  letter-spacing: 0.04em; font-size: 12px;
+}
+.rt-window-trend.trend-flip {
+  background: color-mix(in srgb, var(--amber) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  color: var(--amber);
+}
+.rt-window-trend.trend-stable_long,
+.rt-window-trend.trend-stable_short {
+  background: color-mix(in srgb, var(--text-mute) 6%, transparent);
+  color: var(--text-mute);
+  border: 1px solid var(--line-soft);
+}
+.rt-window-trend.trend-mixed {
+  color: var(--text-mute-2);
+  border: 1px dashed var(--line-soft);
+}
+.rt-windows-table { width: 100%; margin-top: 4px; }
+.rt-windows-table thead th {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em;
+  color: var(--text-mute-2); text-align: left; padding: 6px 8px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.rt-windows-table thead th.num { text-align: right; }
+.rt-windows-table tbody td {
+  padding: 8px; font-size: 12px; border-bottom: 1px solid var(--line-soft);
+}
+.rt-windows-table tbody td.num { text-align: right; }
+.rt-windows-table tbody tr:last-child td { border-bottom: 0; }
+.rt-win-row.align-diverging {
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+}
+.rt-win-row .dir-long   { color: var(--green); }
+.rt-win-row .dir-short  { color: var(--red); }
+.rt-win-row .dir-neutral { color: var(--text-mute-2); }
+.rt-win-row td.align-diverging { color: var(--amber); font-style: italic; }
+.rt-win-row td.align-aligned   { color: var(--text-mute-2); }
+
 /* ============== Journal ============== */
 .journal-view { display: flex; flex-direction: column; gap: var(--gap-block); }
 .ps-grid {

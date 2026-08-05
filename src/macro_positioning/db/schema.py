@@ -954,7 +954,41 @@ def _dedupe_existing_documents(connection: sqlite3.Connection) -> int:
     return cursor.rowcount or 0
 
 
-def initialize_database(database_path: Path) -> None:
+def initialize_database(database_path: Path, *, allow_reinit: bool = False) -> None:
+    # Defense against a past incident: a smoke test whose env-var override
+    # was silently ignored fell back to the production DB path. Refuse to
+    # create/re-create the production DB from scratch unless the caller
+    # explicitly opts in. Existing production DBs (with our tables) pass
+    # through — this is only about brand-new / freshly-wiped files at that
+    # path. `allow_reinit=True` is the escape hatch for legit resets.
+    if not allow_reinit:
+        try:
+            from macro_positioning.core.settings import settings as _settings
+            prod_path = _settings.sqlite_path.resolve()
+        except Exception:
+            prod_path = None
+        if prod_path is not None and database_path.resolve() == prod_path:
+            exists = database_path.exists()
+            size = database_path.stat().st_size if exists else 0
+            has_schema = False
+            if exists and size > 0:
+                try:
+                    with sqlite3.connect(f"file:{database_path}?mode=ro", uri=True) as _probe:
+                        row = _probe.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents'"
+                        ).fetchone()
+                        has_schema = row is not None
+                except sqlite3.DatabaseError:
+                    has_schema = False
+            if not has_schema:
+                raise RuntimeError(
+                    "Refusing to initialize the production DB at "
+                    f"{database_path} — file "
+                    f"{'is missing' if not exists else f'exists ({size} bytes) but has no `documents` table'}. "
+                    "This looks like an accidental smoke-test target. "
+                    "If you truly intend to (re)create the production DB, "
+                    "pass allow_reinit=True."
+                )
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database_path) as connection:
         # WAL mode = concurrent reads + single writer without lock contention.

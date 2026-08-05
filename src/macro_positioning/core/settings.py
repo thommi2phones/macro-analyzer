@@ -1,9 +1,26 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+# Guard against a footgun that once wiped the live DB: scripts intending
+# to override settings with `MACRO_POSITIONING_SQLITE_PATH=...` were
+# silently ignored (real prefix is `MPA_`), so the smoke DB fell back to
+# the production path. Any env var with the wrong-but-plausible prefix
+# now halts import — loudly — rather than silently doing the wrong thing.
+_FORBIDDEN_ENV_PREFIXES = ("MACRO_POSITIONING_",)
+_stray = [k for k in os.environ if k.startswith(_FORBIDDEN_ENV_PREFIXES)]
+if _stray:
+    raise RuntimeError(
+        "Refusing to load settings: env vars "
+        f"{sorted(_stray)!r} use a prefix that is silently ignored "
+        "(real prefix is 'MPA_'). Rename them, e.g. "
+        "MACRO_POSITIONING_SQLITE_PATH → MPA_DATABASE_URL='sqlite:///...'."
+    )
 
 
 class Settings(BaseSettings):

@@ -81,3 +81,10 @@ src/macro_brain/models/*.gguf
 # Telegram session file — credentials artefact, never commit
 data/telegram.session*
 *.session-journal
+
+# Incident artifacts (2026-08-04 DB deletion + recovery). Multi-hundred-MB
+# rescued copies; the `*.db.pre-*` rule above does not catch these suffixes.
+data/rescue/
+data/recovery/
+*.db.pid*
+*.db.pre-guardtest-recovery

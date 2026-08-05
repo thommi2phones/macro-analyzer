@@ -181,6 +181,23 @@ def _strip_chain_tags(text: str) -> str:
     return _CHAIN_TAG_RE.sub(r"\1", text)
 
 
+# Pair-quote pattern — DEX/CEX pair notation quotes the trade currency
+# after a slash: "FRONG/ETH on Uniswap", "CHIIKAWA/SOL", "ARB/USDT".
+# The quote side is NOT a mention of that asset (a FRONG/ETH meme chart
+# says nothing about Ethereum) — strip it before ticker extraction. The
+# base survives in the text, so "ETH/BTC ratio" still counts ETH, and a
+# genuine standalone "ETH looks strong" elsewhere still hits.
+_PAIR_QUOTES = ("WETH", "ETH", "WBTC", "BTC", "SOL", "BNB", "AVAX",
+                "USDT", "USDC", "BUSD", "TUSD", "DAI", "USD",
+                "TETHERUS", "TETHER")
+_PAIR_QUOTE_RE = re.compile(r"/\s*(" + "|".join(_PAIR_QUOTES) + r")\b")
+
+
+def _strip_pair_quotes(text: str) -> str:
+    """Drop the quote currency of `BASE/QUOTE` pair notation."""
+    return _PAIR_QUOTE_RE.sub("", text)
+
+
 def extract_tickers_from_text(text: str) -> set[str]:
     """Return the set of allow-listed tickers mentioned in `text`.
 
@@ -190,6 +207,7 @@ def extract_tickers_from_text(text: str) -> set[str]:
     if not text:
         return set()
     text = _strip_chain_tags(text)
+    text = _strip_pair_quotes(text)
     allow = get_allowlist()
     found: set[str] = set()
 

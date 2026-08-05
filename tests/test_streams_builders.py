@@ -514,3 +514,103 @@ def test_document_mentions_do_not_override_signal_direction(tmp_path: Path):
     conn.commit()
     themes = {t["id"]: t for t in build_theme_map(conn, now=NOW)}
     assert themes["technology_ai"]["direction"] == "bullish"
+
+
+# ---------------------------------------------------------------------------
+# Discovery-feed real-asset gate — DEX meme tokens stay out (Aug 2026)
+# ---------------------------------------------------------------------------
+
+def test_concepts_meme_only_theme_filtered(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # A DEX meme-token burst invents a fresh tag-theme (the Aug-2026
+    # $LUCKY/CALLCAT shape): perfect novelty + velocity, zero real assets.
+    for days in (1, 2, 3, 5):
+        _insert_signal(conn, ticker="LUCKY/SOL", side="LONG",
+                       extracted_at=NOW - timedelta(days=days),
+                       thesis_tags=["crypto_pump"])
+    conn.commit()
+    ids = {c["id"] for c in build_concepts(conn, now=NOW)}
+    assert "crypto_pump" not in ids
+
+
+def test_concepts_real_asset_theme_kept(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # Same tag but the underlying signals reference a major crypto.
+    for days in (1, 2, 3, 5):
+        _insert_signal(conn, ticker="BTC", side="LONG",
+                       extracted_at=NOW - timedelta(days=days),
+                       thesis_tags=["crypto_pump"])
+    conn.commit()
+    ids = {c["id"] for c in build_concepts(conn, now=NOW)}
+    assert "crypto_pump" in ids
+
+
+def test_breakouts_meme_ticker_filtered(tmp_path: Path):
+    from macro_positioning.dashboard.streams_builders import build_breakouts
+
+    conn = _conn(tmp_path)
+    for days in (1, 1, 2, 8):
+        _insert_signal(conn, ticker="CALLCAT/SOL", side="LONG",
+                       extracted_at=NOW - timedelta(days=days))
+        _insert_signal(conn, ticker="BTC", side="LONG",
+                       extracted_at=NOW - timedelta(days=days))
+    conn.commit()
+    entries = {(b["kind"], b["id"]) for b in build_breakouts(conn, now=NOW)}
+    assert ("asset", "CALLCAT") not in entries
+    assert ("asset", "CALLCAT/SOL") not in entries
+    assert ("asset", "BTC") in entries
+
+
+def test_asset_map_pair_tickers_group_under_base(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # Vision extraction stores DEX pair tickers verbatim — the meme base
+    # gets the card, and the quote currency (ETH) is never credited.
+    for days in (1, 8, 15):
+        _insert_signal(conn, ticker="FRONG/ETH", side="LONG",
+                       extracted_at=NOW - timedelta(days=days))
+    conn.commit()
+    assets = {a["id"] for a in build_asset_map(conn, now=NOW)}
+    assert "FRONG" in assets
+    assert "FRONG/ETH" not in assets
+    assert "ETH" not in assets
+
+
+def test_asset_map_junk_pair_sentinel_dropped(tmp_path: Path):
+    conn = _conn(tmp_path)
+    for days in (1, 8, 15):
+        _insert_signal(conn, ticker="N/A", side="LONG",
+                       extracted_at=NOW - timedelta(days=days))
+    conn.commit()
+    ids = {a["id"] for a in build_asset_map(conn, now=NOW)}
+    assert "N" not in ids
+    assert "N/A" not in ids
+
+
+def test_concepts_majority_junk_theme_dropped(tmp_path: Path):
+    conn = _conn(tmp_path)
+    # 1 genuine SOL call must not carry 4 meme tokens into the feed.
+    _insert_signal(conn, ticker="SOL", side="LONG", asset_class="crypto",
+                   extracted_at=NOW - timedelta(days=1),
+                   thesis_tags=["crypto_pump"])
+    for i, tk in enumerate(("LUCKY", "CATJAK", "CHIIKAWA", "KEKIUS")):
+        _insert_signal(conn, ticker=tk, side="LONG", asset_class="crypto",
+                       extracted_at=NOW - timedelta(days=1 + i),
+                       thesis_tags=["crypto_pump"])
+    conn.commit()
+    ids = {c["id"] for c in build_concepts(conn, now=NOW)}
+    assert "crypto_pump" not in ids
+
+
+def test_crypto_equity_symbol_collision_stays_junk(tmp_path: Path):
+    from macro_positioning.dashboard.streams_builders import (
+        _crypto_majors, _signal_is_real_asset)
+
+    # Channel's "SFM" is Safemoon (crypto-classed) — must NOT be vouched
+    # for by Sprouts Farmers Market being a real NYSE symbol.
+    majors = _crypto_majors()
+    memecoin = {"asset_ticker": "SFM", "asset_class": "crypto",
+                "thesis_summary": "crypto pump alert"}
+    equity = {"asset_ticker": "SFM", "asset_class": "equity",
+              "thesis_summary": "grocery margins improving"}
+    assert _signal_is_real_asset(memecoin, majors) is False
+    assert _signal_is_real_asset(equity, majors) is True

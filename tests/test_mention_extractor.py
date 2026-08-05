@@ -278,3 +278,35 @@ def test_count_mentions_window_summary_includes_half_life():
     docs = [{"source_id": "x", "title": "", "cleaned_text": "URA", "published_at": NOW.isoformat()}]
     result = count_mentions(docs, window_days=30, now=NOW, half_life_days=14)
     assert result.half_life_days == 14
+
+
+# ---------------------------------------------------------------------------
+# Pair-quote stripping — FRONG/ETH is not an ETH mention
+# ---------------------------------------------------------------------------
+
+def test_pair_quote_eth_not_extracted():
+    text = "FRONG/ETH on Uniswap, 15, dexscreener.com breaking down"
+    assert "ETH" not in extract_tickers_from_text(text)
+
+
+def test_pair_quote_sol_not_extracted():
+    text = "CHIIKAWA/SOL trying a break over top need volume to confirm"
+    assert "SOL" not in extract_tickers_from_text(text)
+
+
+def test_pair_quote_with_space_not_extracted():
+    text = "new listing / SOL pair looking wild"
+    assert "SOL" not in extract_tickers_from_text(text)
+
+
+def test_pair_base_still_extracted():
+    # ETH/BTC ratio commentary IS about ETH — base survives, quote dropped.
+    text = "ETH/BTC ratio pushing higher into the weekly close"
+    got = extract_tickers_from_text(text)
+    assert "ETH" in got
+    assert "BTC" not in got
+
+
+def test_standalone_eth_still_extracted():
+    text = "ETH holding the range, expecting upside continuation"
+    assert "ETH" in extract_tickers_from_text(text)

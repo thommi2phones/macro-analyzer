@@ -87,6 +87,22 @@ def get_credentials():
             "See print_setup_instructions() for setup walkthrough."
         )
 
+    # NEVER start the interactive flow from a headless run: launchd has no
+    # browser or user, run_local_server() blocks forever, and the hung
+    # process makes launchd skip every subsequent scheduled ingest (the
+    # Aug 2026 outage: one expired token stalled the whole free layer for
+    # 2 days). Fail the step instead — the runner logs STEP FAIL and the
+    # other sources still ingest.
+    import os
+    import sys
+    if not sys.stdin.isatty() and not os.environ.get("MACRO_GMAIL_ALLOW_OAUTH"):
+        raise RuntimeError(
+            "Gmail token expired/revoked and re-auth needs a browser. "
+            "Run in a terminal: .venv/bin/python -c \"from "
+            "macro_positioning.ingestion.personal_gmail import "
+            "get_credentials; get_credentials()\""
+        )
+
     logger.info("Starting browser OAuth flow (one-time)…")
     flow = InstalledAppFlow.from_client_secrets_file(
         str(PERSONAL_CREDENTIALS_PATH), SCOPES

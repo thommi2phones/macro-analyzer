@@ -167,6 +167,25 @@ _NON_THEME_TOKENS: set[str] = {
     "trim", "add", "event",
     # generic OHLC / numeric noise
     "high", "low", "open", "close", "volume",
+    # Elliott-wave / structure vocabulary the vision extractor leaks as
+    # tags ("abc_corrective_structure_in_progress", "elliott_wave_5_wave
+    # _impulse_complete", "parabolic_blow_off_top", "multiple_lower_highs
+    # _and_lower_lows", "descending_channel_from_june_highs") — chart
+    # structures, not themes.
+    "elliott", "wave", "waves", "impulse", "impulsive", "corrective",
+    "correction", "abc", "structure", "structures", "progress",
+    "complete", "completed", "parabolic", "blow", "blowoff", "off",
+    "top", "tops", "bottom", "bottoms", "peak", "peaks", "climax",
+    "rounding", "rounded", "shaped", "recovery",
+    "ascending", "descending", "rising", "falling",
+    "higher", "lower", "highs", "lows", "multiple",
+    "early", "stage", "opportunity", "opportunities", "alert",
+    "from", "and", "the", "in", "at", "of", "to", "above", "below",
+    "january", "february", "march", "april", "may", "june", "july",
+    "august", "september", "october", "november", "december",
+    # count words that pad pattern tags ("5_wave", "u_shaped")
+    "one", "two", "three", "four", "five", "u", "v", "w",
+    "1", "2", "3", "4", "5",
 }
 
 
@@ -897,8 +916,9 @@ def _signal_themes(s: dict, ticker_idx: dict[str, str] | None = None) -> set[str
     for t in (set(s["thesis_tags"]) | set(s["regime_tags"])):
         if _is_real_theme(t):
             out.add(t)
-    # 2. curated sector theme by ticker
-    tk = (s.get("asset_ticker") or "").strip().upper()
+    # 2. curated sector theme by ticker (pair base, so ARB/USDT routes
+    #    like ARB and FRONG/ETH doesn't route like ETH)
+    tk = _base_ticker(s.get("asset_ticker") or "")
     if tk and tk in ticker_idx:
         out.add(ticker_idx[tk])
     # 3. asset-class catch-all so the long tail still shows up
@@ -1078,6 +1098,31 @@ def build_theme_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
 # Same dict shape so the SPA can reuse the ThemeMap component.
 # ---------------------------------------------------------------------------
 
+# Junk sentinel values some extractors emit when they can't resolve a
+# ticker — drop them rather than render an "N/A" bubble.
+_JUNK_TICKERS = {"", "N/A", "NA", "NONE", "NULL", "?", "TBD", "UNKNOWN"}
+
+
+def _base_ticker(raw: str) -> str:
+    """Group key for asset aggregation: the BASE of pair notation.
+
+    Vision/LLM extraction stores DEX pair tickers verbatim (FRONG/ETH,
+    CHIIKAWA/SOL, ARB/USDT) — the asset being traded is the base; the
+    quote currency must not be credited (a FRONG/ETH chart is not an
+    Ethereum call) nor should the raw pair spawn its own junk card.
+    Splits on "/" and "_" only — "-" stays intact for equity share
+    classes like BRK-B. Returns "" for junk sentinels.
+    """
+    t = (raw or "").strip().upper()
+    if t in _JUNK_TICKERS:  # check sentinels BEFORE splitting ("N/A" → "N")
+        return ""
+    for sep in ("/", "_"):
+        if sep in t:
+            t = t.split(sep, 1)[0].strip()
+            break
+    return "" if t in _JUNK_TICKERS else t
+
+
 def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) -> list[dict]:
     """Per-asset card mirroring build_theme_map's shape but grouped by
     `signals.asset_ticker` instead of theme tag. Lets the UI surface
@@ -1089,13 +1134,10 @@ def build_asset_map(conn: sqlite3.Connection, *, now: datetime | None = None) ->
     if not corpus:
         return []
 
-    # Junk sentinel values some extractors emit when they can't resolve a
-    # ticker — drop them rather than render an "N/A" bubble.
-    _JUNK_TICKERS = {"", "N/A", "NA", "NONE", "NULL", "?", "TBD", "UNKNOWN"}
     by_ticker: dict[str, list[dict]] = defaultdict(list)
     for s in corpus:
-        ticker = (s.get("asset_ticker") or "").strip().upper()
-        if ticker in _JUNK_TICKERS:
+        ticker = _base_ticker(s.get("asset_ticker") or "")
+        if not ticker:
             continue
         if s["extracted_at"] is None:
             continue
@@ -1225,6 +1267,92 @@ def _vote_direction(sigs: list[dict]) -> str:
     return "mixed"
 
 
+# ---------------------------------------------------------------------------
+# Real-asset gate for the discovery feeds (concepts + breakouts).
+#
+# One KOL channel pumping PumpSwap/DEX meme tokens ($LUCKY, CALLCAT,
+# CATWIF…) generates fresh LLM tag-themes with perfect novelty/velocity and
+# floods the feeds. User directive (Aug 2026): only main cryptos (~top 25)
+# and assets listed on exchanges / OTC markets belong in discovery.
+# ---------------------------------------------------------------------------
+
+# Majors top-up beyond the Coinbase-tradeable _TRACKED_CRYPTO set, so the
+# combined crypto universe ≈ top 25 by cap.
+_MAJOR_CRYPTO_EXTRA = {
+    "BNB", "ADA", "TON", "XLM", "BCH", "DOT", "NEAR", "UNI", "ATOM",
+    "ETC", "POL", "MATIC", "ARB", "OP", "XMR",
+}
+
+
+def _crypto_majors() -> set[str]:
+    """The crypto universe allowed in discovery: tracked Coinbase coins +
+    the majors top-up (≈ top 25 by cap). Deliberately NOT unioned with the
+    prices table — symbol collisions there vouch for memes (the channel's
+    "SFM" is Safemoon, but SFM is also Sprouts Farmers Market on NYSE)."""
+    universe = set(_MAJOR_CRYPTO_EXTRA)
+    try:
+        from macro_positioning.prices.symbol_map import _TRACKED_CRYPTO
+        universe |= _TRACKED_CRYPTO
+    except Exception:
+        pass
+    return universe
+
+
+# The vision extractor hardcodes asset_class="equity", so a Solana meme
+# token often arrives as a bare "equity" ticker. Its thesis prose gives it
+# away — detect crypto context lexically as a backstop.
+_CRYPTO_CONTEXT_RE = re.compile(
+    r"(?i)\b(solana|blockchain|on-?chain|pump\.?swap|uniswap|dexscreener|"
+    r"altcoin|memecoin|meme coin|cryptocurrency|token|stablecoin|"
+    r"\bFDV\b|liquidity pool|launchpad)\b"
+)
+
+
+def _signal_is_real_asset(s: dict, universe: set[str]) -> bool:
+    """False only for junk CRYPTO: pair-notation tickers (FRONG/ETH — DEX
+    listings always quote a pair), crypto-classed tickers, or tickers whose
+    thesis prose reads crypto — unless the base is a major. The crypto
+    check runs FIRST so a meme ticker colliding with a real equity symbol
+    (Safemoon vs Sprouts Farmers Market, both "SFM") can't sneak through.
+    Equities stay in even when unpriced — channels' equity calls are
+    dynamically scored, not a fixed list (see symbol_map), and a small-cap
+    on an index/OTC market is exactly what the user wants."""
+    raw = (s.get("asset_ticker") or "").strip().upper()
+    base = _base_ticker(raw)
+    if not base:
+        return False  # no ticker — contributes nothing either way
+    is_pair = "/" in raw or "_" in raw
+    is_crypto = (
+        is_pair
+        or (s.get("asset_class") or "").lower() in (
+            "crypto", "cryptocurrency", "coin", "token")
+        or bool(_CRYPTO_CONTEXT_RE.search(s.get("thesis_summary") or ""))
+    )
+    if is_crypto:
+        return base in universe
+    return True
+
+
+def _theme_touches_real_asset(sigs: list[dict], universe: set[str]) -> bool:
+    """A theme stays in discovery when its tickered signals are MAJORITY
+    real assets — or none reference tickers at all (prose macro themes
+    like fed_policy carry no ticker and must not drop). Majority, not
+    any(): the Aug-2026 "crypto_pump" tag was 10 meme tokens + 1 genuine
+    SOL call, and one real straggler must not carry ten memes into the
+    feed."""
+    real = junk = 0
+    for s in sigs:
+        if not (s.get("asset_ticker") or "").strip():
+            continue
+        if _signal_is_real_asset(s, universe):
+            real += 1
+        else:
+            junk += 1
+    if real + junk == 0:
+        return True
+    return real >= junk
+
+
 def build_breakouts(conn: sqlite3.Connection, *, now: datetime | None = None) -> list[dict]:
     """Ranked feed of tickers + themes whose mention-rate is accelerating.
 
@@ -1244,13 +1372,13 @@ def build_breakouts(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         return []
 
     ticker_idx = _ticker_theme_index()
-    _JUNK = {"", "N/A", "NA", "NONE", "NULL", "?", "TBD", "UNKNOWN"}
+    universe = _crypto_majors()
 
     by_ticker: dict[str, list[dict]] = defaultdict(list)
     by_theme: dict[str, list[dict]] = defaultdict(list)
     for s in corpus:
-        tk = (s.get("asset_ticker") or "").strip().upper()
-        if tk and tk not in _JUNK:
+        tk = _base_ticker(s.get("asset_ticker") or "")
+        if tk:
             by_ticker[tk].append(s)
         for theme in _signal_themes(s, ticker_idx):
             by_theme[theme].append(s)
@@ -1283,8 +1411,12 @@ def build_breakouts(conn: sqlite3.Connection, *, now: datetime | None = None) ->
         })
 
     for tk, sigs in by_ticker.items():
+        if not any(_signal_is_real_asset(s, universe) for s in sigs):
+            continue  # DEX meme token — not a tradeable asset for this desk
         _emit("asset", tk, tk, sigs)
     for theme_id, sigs in by_theme.items():
+        if not _theme_touches_real_asset(sigs, universe):
+            continue  # tag-theme spun up entirely by meme-token drops
         _emit("theme", theme_id, _title_label(theme_id), sigs)
 
     # Rank: breakouts first, then by adjusted score.
@@ -1329,6 +1461,7 @@ def build_concepts(conn: sqlite3.Connection, *, now: datetime | None = None) -> 
 
     # Author display-name lookup
     display_by_slug = _author_display_map(conn)
+    universe = _crypto_majors()
 
     out: list[dict] = []
     for t in themes:
@@ -1336,6 +1469,8 @@ def build_concepts(conn: sqlite3.Connection, *, now: datetime | None = None) -> 
             continue
         tid = t["id"]
         recent = by_theme_14d.get(tid, [])
+        if not _theme_touches_real_asset(recent, universe):
+            continue  # concept exists only because of meme-token drops
         items_count = len({s["signal_id"] for s in recent})
         slugs = [s["source_slug"] or s["author_id"] for s in recent]
         slug_counts = Counter([s for s in slugs if s])

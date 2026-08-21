@@ -58,12 +58,15 @@ function RegimeBadge({ kind, label, confidence }) {
 }
 
 // ─── Sub-score bar — labeled horizontal bar w/ fill ──────────────
-function SubScoreBar({ label, score, max, color = "amber", note }) {
+function SubScoreBar({ label, score, max, color = "amber", note, flat, flatNote }) {
   const pct = (score / max) * 100;
   return (
-    <div className="ssb">
+    <div className={`ssb ${flat ? "ssb-is-flat" : ""}`}>
       <div className="ssb-row">
         <span className="ssb-label">{label}</span>
+        {/* A component returning the same value for every asset is a
+            constant offset — it moves the total but ranks nothing. */}
+        {flat && <span className="ssb-flat mono" title={flatNote}>not ranking</span>}
         <span className="ssb-num mono">{score}<span className="muted">/{max}</span></span>
       </div>
       <div className="ssb-track">
@@ -72,6 +75,7 @@ function SubScoreBar({ label, score, max, color = "amber", note }) {
       {/* What this component actually measures — so the bar doesn't
           need a lookup elsewhere to be readable. */}
       {note && <div className="ssb-note">{note}</div>}
+      {flat && flatNote && <div className="ssb-note ssb-note-flat">{flatNote}</div>}
     </div>
   );
 }

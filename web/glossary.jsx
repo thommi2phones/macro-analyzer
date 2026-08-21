@@ -37,7 +37,7 @@ const MA_GLOSSARY = {
   components: {
     "Macro alignment": {
       weight: 15,
-      note: "Does the setup fit the active macro regime?",
+      note: "Is this setup type one the active regime prefers? Scored as regime confidence when it matches, 30% of that when it doesn't — so a low-confidence regime read caps this component for everyone.",
     },
     "Liquidity": {
       weight: 15,
@@ -97,6 +97,10 @@ const MA_GLOSSARY = {
     setup: "Which detector produced the levels — a structural read, or mechanical ATR rails when no structure was found.",
     levels: "Entry, stop and target from the technical agent. Structural stops sit at invalidation; mechanical rails are a 2×ATR stop with a 3R target.",
     side: "LONG/SHORT come from the tracked-voice bias; WATCH and AVOID come from the tier.",
+    notRanking:
+      "This component returned the same value for every asset in the pass, so it shifts every total equally and separates nothing. Checked per pass — the flag clears itself once the component starts discriminating.",
+    setupType:
+      "The setup named in the framework's own vocabulary (breakout continuation, support retest, uranium accumulation…), derived from the technical agent's detector plus the asset's theme and class. Macro alignment scores whether that name is one the active regime prefers.",
   },
 };
 

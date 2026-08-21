@@ -541,6 +541,11 @@ function AssetPage({ signal, onBack, returnTo }) {
                 {signal.levelStructural ? "structural" : "mechanical"}
               </span>
               {" · "}{signal.levelMethod}
+              {signal.frameworkSetup && (
+                <span title={MA_GLOSSARY.terms.setupType}>
+                  {" · framework: "}{signal.frameworkSetup.replace(/_/g, " ")}
+                </span>
+              )}
               {(signal.levelNotes || []).length ? ` · ${signal.levelNotes[0]}` : ""}
             </div>
           ) : (
@@ -773,7 +778,8 @@ function ReasoningTrail({ signal, hideHeader = false, hideFooter = false }) {
         <div className="rt-bars">
           {r.components.map(c => (
             <SubScoreBar key={c.label} label={c.label} score={c.score}
-                         max={c.max} color={c.color} note={componentNote(c.label)} />
+                         max={c.max} color={c.color} note={componentNote(c.label)}
+                         flat={c.flat} flatNote={c.flatNote} />
           ))}
         </div>
         <ScoreNote title={MA_GLOSSARY.modifiers.long}>{MA_GLOSSARY.modifiers.short}</ScoreNote>

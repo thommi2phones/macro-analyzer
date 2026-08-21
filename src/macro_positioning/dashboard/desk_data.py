@@ -653,6 +653,8 @@ def _levels_for_row(r: dict) -> dict:
         "levelStructural": bool(lv.get("structural")),
         "riskPct": round(float(lv.get("riskPct") or 0.0), 4),
         "levelNotes": lv.get("notes") or [],
+        # The framework-vocabulary name macro alignment scores against.
+        "frameworkSetup": lv.get("frameworkSetup"),
         "levelsReason": None,
     }
 
@@ -895,6 +897,23 @@ def build_reasoning_section() -> dict:
                 timeline_cache[ticker] = {}
         return timeline_cache[ticker]
 
+    def _flat_components(rows: list[dict], specs: list[tuple]) -> dict[str, int | None]:
+        """Components that returned the same value for every asset in this
+        pass — they contribute a constant offset and rank nothing.
+
+        Computed from the data rather than hardcoded, so a component stops
+        being flagged the moment it starts discriminating (risk/reward did
+        exactly that once the technical agent began emitting levels).
+        """
+        flat: dict[str, int | None] = {}
+        if len(rows) < 3:
+            return flat  # too few assets for "no spread" to mean anything
+        for _label, key, _max_v in specs:
+            values = {r.get(key) or 0 for r in rows}
+            if len(values) == 1:
+                flat[key] = values.pop()
+        return flat
+
     component_specs = [
         ("Macro alignment", "macro", 15),
         ("Liquidity", "liquidity", 15),
@@ -907,12 +926,21 @@ def build_reasoning_section() -> dict:
         ("Psychology · clean", "psych", 2),
     ]
 
+    flat_map = _flat_components(rows, component_specs)
+
     for r in rows:
         comps = []
         for label, key, max_v in component_specs:
             score = r.get(key) or 0  # coerce None (pre-signal_alignment rows) → 0
             color = "green" if (score / max_v) >= 0.7 else "amber" if (score / max_v) >= 0.5 else "red"
-            comps.append({"label": label, "score": score, "max": max_v, "color": color})
+            comp = {"label": label, "score": score, "max": max_v, "color": color}
+            if key in flat_map:
+                comp["flat"] = True
+                comp["flatNote"] = (
+                    f"same {flat_map[key]}/{max_v} for every asset this pass — "
+                    "a constant offset, not a ranking input"
+                )
+            comps.append(comp)
 
         modifiers = []
         trail = r.get("trail", {}) or {}
@@ -1021,6 +1049,7 @@ def build_reasoning_section() -> dict:
                 "structural": bool(lv.get("structural")),
                 "version": lv.get("version"),
                 "notes": lv.get("notes") or [],
+                "frameworkSetup": lv.get("frameworkSetup"),
             }
         elif r.get("levels_reason"):
             entry["levels"] = {"reason": r["levels_reason"]}

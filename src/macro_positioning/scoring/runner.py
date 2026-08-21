@@ -47,6 +47,7 @@ from macro_positioning.scoring.levels import (
     synthesize_levels,
 )
 from macro_positioning.scoring.mention_extractor import count_mentions
+from macro_positioning.scoring.setup_types import classify_setup_type
 from macro_positioning.scoring.watchlist_resolver import (
     ResolvedWatchlist,
     WatchlistEntry,
@@ -335,6 +336,7 @@ def _persist_trade_score(
     signal_aggregate: dict | None = None,
     level_set: "LevelSet | None" = None,
     level_reason: str | None = None,
+    framework_setup: str | None = None,
 ) -> None:
     """Insert one row into trade_scores. Caller wraps in a transaction.
 
@@ -401,6 +403,8 @@ def _persist_trade_score(
     # can render a "why this ticker?" pill.
     annotated_trail = dict(score.reasoning_trail or {})
     annotated_trail["watchlist_origins"] = origins
+    if framework_setup:
+        annotated_trail["framework_setup"] = framework_setup
     if signal_aggregate:
         # Compact subset for the trail — the full aggregate goes in its
         # own column for the dashboard / learning loop.
@@ -428,6 +432,7 @@ def _persist_trade_score(
                 "structural": level_set.structural,
                 "version": level_set.version,
                 "notes": level_set.notes,
+                "frameworkSetup": framework_setup,
             }
         }
     elif level_reason:
@@ -644,6 +649,20 @@ def run_scoring_pass(
                         target = level_set.target
                     else:
                         entry_zone = stop_loss = target = None
+
+                    # Name the setup in the framework's own vocabulary so
+                    # macro_alignment can score regime fit. Passing "" here
+                    # (the old behaviour) made that component a constant.
+                    framework_setup = classify_setup_type(
+                        method=level_set.method if level_set else None,
+                        structural=bool(level_set and level_set.structural),
+                        side=level_set.side if level_set else level_side,
+                        ticker=entry.ticker,
+                        asset_class=entry.asset_class,
+                        themes=asset_themes,
+                        rs_features=rs_features,
+                        regime=regime.framework_regime,
+                    )
                     # Expose the signal aggregate to the composer via
                     # relevant_sources — designed for this purpose.
                     relevant_sources_payload = []
@@ -654,7 +673,7 @@ def run_scoring_pass(
                         setup_id=f"setup-{entry.ticker.lower()}-{run_id[:8]}",
                         asset_ticker=entry.ticker,
                         asset_class=entry.asset_class or "equity",
-                        setup_type="",
+                        setup_type=framework_setup,
                         active_regime=regime,
                         entry_zone=entry_zone,
                         stop_loss=stop_loss,
@@ -684,6 +703,7 @@ def run_scoring_pass(
                             signal_aggregate=sig_agg or None,
                             level_set=level_set,
                             level_reason=level_reason,
+                            framework_setup=framework_setup,
                         )
                         persisted_count += 1
                 except Exception as exc:

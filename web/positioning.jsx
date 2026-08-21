@@ -2,11 +2,34 @@
 
 const { useState: useStateP, useMemo: useMemoP } = React;
 
+// ── Asset-class buckets ────────────────────────────────────────
+// The scored watchlist mixes on-chain assets, exchange-listed tickers
+// (single names, miners, commodity ETFs, bond/cash proxies) and two pure
+// indices that can't be traded directly. Those read differently at the
+// desk, so the table is bucketed rather than shown as one ranked list.
+const _WL_CRYPTO = new Set(["BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "AVAX", "LINK", "DOGE", "TON", "SUI", "DOT"]);
+const _WL_MACRO  = new Set(["DXY", "VIX"]);
+
+function assetGroup(r) {
+  const cls = (r.assetClass || "").toLowerCase();
+  const t = (r.asset || "").toUpperCase();
+  if (cls === "crypto" || _WL_CRYPTO.has(t)) return "crypto";
+  if (cls === "vol" || _WL_MACRO.has(t)) return "macro";
+  return "stocks";  // equity, index, commodity/miner + bond/cash ETFs
+}
+
+const _WL_GROUPS = [
+  ["stocks", "Stocks & ETFs"],
+  ["crypto", "Crypto"],
+  ["macro",  "Macro indices"],
+];
+
 function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
   const D = window.MA_DATA;
   const [filter, setFilter] = useStateP("ALL");
   const [tierFilter, setTierFilter] = useStateP("ALL");
   const [regimeFilter, setRegimeFilter] = useStateP("ALL");
+  const [classFilter, setClassFilter] = useStateP("ALL");
   const [wlQ, setWlQ] = useStateP("");
   const [sortBy, setSortBy] = useStateP("score");
   const [sortDir, setSortDir] = useStateP("desc");
@@ -58,6 +81,7 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
     if (filter === "SHORT") rows = rows.filter(r => r.side === "SHORT");
     if (tierFilter !== "ALL") rows = rows.filter(r => String(r.tier) === tierFilter.replace("T", ""));
     if (regimeFilter !== "ALL") rows = rows.filter(r => r.regime === regimeFilter);
+    if (classFilter !== "ALL") rows = rows.filter(r => assetGroup(r) === classFilter);
     if (wlQ.trim()) {
       const q = wlQ.toLowerCase();
       rows = rows.filter(r =>
@@ -72,7 +96,15 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
       return sortDir === "desc" ? String(bv).localeCompare(String(av)) : String(av).localeCompare(String(bv));
     });
     return rows;
-  }, [filter, tierFilter, regimeFilter, wlQ, sortBy, sortDir]);
+  }, [filter, tierFilter, regimeFilter, classFilter, wlQ, sortBy, sortDir]);
+
+  // Split the (already filtered + sorted) rows into asset-class buckets so
+  // crypto and listed tickers are scanned separately instead of interleaved.
+  const wlGroups = useMemoP(() => {
+    const g = { stocks: [], crypto: [], macro: [] };
+    for (const r of watchlist) g[assetGroup(r)].push(r);
+    return g;
+  }, [watchlist]);
 
   const sortToggle = (col) => () => {
     if (sortBy === col) setSortDir(sortDir === "desc" ? "asc" : "desc");
@@ -129,13 +161,23 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
               <span>Watchlist · scored</span>
               <span className="block-sub">
                 {watchlist.length} of {D.watchlist.length}
-                {(filter !== "ALL" || tierFilter !== "ALL" || regimeFilter !== "ALL" || wlQ.trim()) ? " · filtered" : ""}
+                {" · "}
+                {_WL_GROUPS.filter(([k]) => wlGroups[k].length)
+                           .map(([k, lbl]) => `${wlGroups[k].length} ${lbl.toLowerCase()}`)
+                           .join(" · ")}
+                {(filter !== "ALL" || tierFilter !== "ALL" || regimeFilter !== "ALL" || classFilter !== "ALL" || wlQ.trim()) ? " · filtered" : ""}
                 {" · sort "}{sortBy} {sortDir === "desc" ? "↓" : "↑"}
               </span>
             </div>
             <div className="block-actions wl-actions">
               <input className="src-search" placeholder="search ticker / name…"
                      value={wlQ} onChange={e => setWlQ(e.target.value)} />
+              <div className="filter-pill-row" title="asset class">
+                {[["ALL","all"],["stocks","stocks"],["crypto","crypto"],["macro","macro"]].map(([k, lbl]) => (
+                  <button key={k} className={`filter-pill ${classFilter === k ? "on" : ""}`}
+                          onClick={() => setClassFilter(k)}>{lbl}</button>
+                ))}
+              </div>
               <div className="filter-pill-row" title="side / posture">
                 {["ALL","ACTIONABLE","LONG","SHORT"].map(f => (
                   <button key={f} className={`filter-pill ${filter === f ? "on" : ""}`}
@@ -175,7 +217,18 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
               </tr>
             </thead>
             <tbody>
-              {watchlist.map(r => {
+              {_WL_GROUPS.map(([gkey, glabel]) => {
+                const rows = wlGroups[gkey];
+                if (!rows.length) return null;
+                return (
+                <React.Fragment key={gkey}>
+                  <tr className="wl-group-head">
+                    <td colSpan={11}>
+                      <span className={`wl-group-tag wl-group-${gkey}`}>{glabel}</span>
+                      <span className="wl-group-count mono">{rows.length}</span>
+                    </td>
+                  </tr>
+                  {rows.map(r => {
                 const marked = activeConceptByAsset[r.asset];
                 return (
                 <tr key={r.asset} className={`tier-row tier-${r.tier}`}>
@@ -205,6 +258,9 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
                         </button>}
                   </td>
                 </tr>
+                );
+                  })}
+                </React.Fragment>
                 );
               })}
             </tbody>
@@ -587,7 +643,7 @@ function LiveSignalsPanel({ signals }) {
           <span className="block-num mono">01a</span>
           <span>Live signals</span>
           <span className="block-sub">
-            top {signals.length} extracted in the last 72h ·
+            {signals.length} most recent · last 7d ·
             direct from manual / insider / vision / LLM extractors
           </span>
         </div>

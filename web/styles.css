@@ -5202,3 +5202,21 @@ body { font-size: 15.5px; }
   color: var(--gold, #b0862f);
   border: 1px solid color-mix(in srgb, var(--gold, #b0862f) 45%, var(--line-2));
 }
+
+/* ── Watchlist asset-class group headers ─────────────────────── */
+.wl-table tbody tr.wl-group-head { background: var(--bg-card-2); cursor: default; }
+.wl-table tbody tr.wl-group-head:hover { background: var(--bg-card-2); }
+.wl-table tbody tr.wl-group-head td {
+  padding: 7px var(--pad-card);
+  height: auto;
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+}
+.wl-group-tag {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--text-mute-3);
+}
+.wl-group-tag.wl-group-crypto { color: var(--gold, #b0862f); }
+.wl-group-count {
+  font-size: 10.5px; color: var(--text-mute-3); margin-left: 8px;
+}

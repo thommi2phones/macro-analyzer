@@ -717,10 +717,26 @@ def build_reasoning_section() -> dict:
       total, tier, components[{label,score,max,color}],
       modifiers[{label,value}], sources[{name,weight,freshness,contrib,tags}],
       theses[{theme,direction,confidence}],
-      agentBreakdown[{agent,model,latencyMs,costUsd,ok}]
+      agentBreakdown[{agent,model,latencyMs,costUsd,ok}],
+      signalTimeline[{dates,blend,coverage,n_signals,windows}]
     """
     rows = _load_latest_scores()
     out: dict[str, dict] = {}
+    # One timeline per ticker even if a ticker is scored twice this
+    # pass — the replay reads history, not the current score row.
+    from macro_positioning.signals.aggregation import (
+        build_signal_timeline_for_ticker,
+    )
+    timeline_cache: dict[str, dict] = {}
+    def _timeline_for(ticker: str) -> dict:
+        if ticker not in timeline_cache:
+            try:
+                timeline_cache[ticker] = build_signal_timeline_for_ticker(
+                    ticker, days=60
+                )
+            except Exception:
+                timeline_cache[ticker] = {}
+        return timeline_cache[ticker]
 
     component_specs = [
         ("Macro alignment", "macro", 15),
@@ -824,6 +840,13 @@ def build_reasoning_section() -> dict:
         }
         if signal_windows is not None:
             entry["signalWindows"] = signal_windows
+        # 60-day historical replay of the blend + per-window conviction,
+        # for the "sentiment over time" chart on the asset page. Sentiment
+        # is deliberately not price-joined — the chart says what tracked
+        # voices have been saying, whether price agrees or not.
+        tl = _timeline_for(r["ticker"]) if r.get("ticker") else {}
+        if tl.get("dates"):
+            entry["signalTimeline"] = tl
         out[r["score_id"]] = entry
     return out
 

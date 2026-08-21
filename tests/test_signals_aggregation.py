@@ -14,6 +14,7 @@ from macro_positioning.signals import repository
 from macro_positioning.signals.aggregation import (
     DEFAULT_BLEND_WEIGHTS,
     DEFAULT_WINDOWS,
+    TIMELINE_WINDOWS,
     _HORIZON_MULT,
     _SCALE_DEFAULT,
     _SCALE_FLOOR,
@@ -22,6 +23,7 @@ from macro_positioning.signals.aggregation import (
     _timeframe_multiplier,
     aggregate_for_ticker,
     aggregate_for_tickers,
+    build_signal_timeline_for_ticker,
     directional_scale,
 )
 from macro_positioning.signals.base import Signal, SignalHorizon, SignalSide
@@ -496,3 +498,74 @@ def test_top_signals_includes_timeframe_multiplier(db):
     _seed(db, side=SignalSide.LONG, horizon=SignalHorizon.STRATEGIC)
     agg = aggregate_for_ticker("AAPL", db_path=db)
     assert agg["top_signals"][0]["timeframe_multiplier"] == pytest.approx(_HORIZON_MULT["strategic"])
+
+
+# ── Historical timeline replay ──────────────────────────────────────────────
+
+
+def test_timeline_shape(db):
+    """Timeline returns `days` dates plus one series per surfaced window."""
+    _seed(db, side=SignalSide.LONG)
+    tl = build_signal_timeline_for_ticker("AAPL", db_path=db, days=14)
+    assert len(tl["dates"]) == 14
+    assert len(tl["blend"]) == 14
+    assert len(tl["coverage"]) == 14
+    assert len(tl["n_signals"]) == 14
+    assert set(tl["windows"].keys()) == set(TIMELINE_WINDOWS)
+    for w in TIMELINE_WINDOWS:
+        assert len(tl["windows"][w]) == 14
+
+
+def test_timeline_signs_direction(db):
+    """A LONG-only tape yields positive signed conviction across the
+    stretch; a SHORT-only tape yields negative. The chart plots one line
+    per window that crosses zero on flip — no separate direction column."""
+    _seed(db, side=SignalSide.LONG, conviction=3.0)
+    tl_long = build_signal_timeline_for_ticker("AAPL", db_path=db, days=5)
+    assert tl_long["blend"][-1] > 0
+
+    # Fresh table for the short case
+    import sqlite3 as _sq
+    with _sq.connect(db) as _c:
+        _c.execute("DELETE FROM signals")
+    _seed(db, side=SignalSide.SHORT, conviction=3.0)
+    tl_short = build_signal_timeline_for_ticker("AAPL", db_path=db, days=5)
+    assert tl_short["blend"][-1] < 0
+
+
+def test_timeline_no_lookahead(db):
+    """A signal extracted 3 days ago must not influence dates before that."""
+    # Insert one signal timestamped 3 days ago
+    from datetime import UTC as _UTC, datetime as _dt, timedelta as _td
+    three_days_ago = (_dt.now(_UTC) - _td(days=3)).isoformat()
+    _seed(db, side=SignalSide.LONG, extracted_at=three_days_ago)
+
+    tl = build_signal_timeline_for_ticker("AAPL", db_path=db, days=7)
+    # Earliest day (~7d ago) — the signal wasn't visible yet, so no counts.
+    assert tl["n_signals"][0] == 0
+    # Latest day — signal is visible.
+    assert tl["n_signals"][-1] == 1
+    # Somewhere between, count flips from 0 to 1.
+    assert 0 in tl["n_signals"] and 1 in tl["n_signals"]
+
+
+def test_timeline_captures_flip(db):
+    """The Aug-2-style flip: fresh SHORTs on top of a stack of older
+    LONGs should show up as a dip in the blend line + short signed
+    conviction on the 1d window."""
+    from datetime import UTC as _UTC, datetime as _dt, timedelta as _td
+    # 5 older LONGs
+    old = (_dt.now(_UTC) - _td(days=20)).isoformat()
+    for i in range(5):
+        _seed(db, side=SignalSide.LONG, conviction=3.0,
+              extracted_at=old, document_id=f"doc-old-{i}")
+    # 3 fresh SHORTs (today)
+    for i in range(3):
+        _seed(db, side=SignalSide.SHORT, conviction=3.0,
+              document_id=f"doc-fresh-{i}")
+
+    tl = build_signal_timeline_for_ticker("AAPL", db_path=db, days=30)
+    # 1d window today = 3 SHORTs, 0 LONGs → strongly negative signed conf
+    assert tl["windows"]["1d"][-1] < -0.5
+    # 90d window today = 5 LONG + 3 SHORT netted → positive but muted
+    assert tl["windows"]["90d"][-1] > 0

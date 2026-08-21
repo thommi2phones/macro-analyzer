@@ -7,6 +7,185 @@ const TIER_LABELS = {
   4: { label: "TIER 4 · AVOID",           color: "var(--red)" },
 };
 
+// Small helper the levels strips use. Under $1000 → 2dp, otherwise
+// thousands-separated. (Restores the helper the c21f673 asset-page
+// refactor referenced without defining, which prevented AssetPage
+// from mounting — fmtPrice threw ReferenceError.)
+function fmtPrice(v) {
+  if (v == null || Number.isNaN(v)) return "—";
+  return v < 1000 ? v.toFixed(2) : v.toLocaleString();
+}
+
+// ───────────────────────────────────────────────────────────────
+// SignalTimelineBlock — 60-day sentiment-over-time chart.
+// Reads signalTimeline built by desk_data.build_reasoning_section
+// (which calls signals.aggregation.build_signal_timeline_for_ticker).
+// Pure SVG in the house style — no external chart libraries.
+// ───────────────────────────────────────────────────────────────
+function SignalTimelineBlock({ timeline }) {
+  const [showWindows, setShowWindows] = React.useState(true);
+  const [showCoverage, setShowCoverage] = React.useState(true);
+
+  const dates = timeline.dates;
+  const N = dates.length;
+  if (N < 2) return null;
+
+  const W = 900, H = 220;
+  const padL = 44, padR = 24, padT = 20, padB = 28;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const xFor = (i) => padL + (i / (N - 1)) * plotW;
+  const yFor = (v) => padT + (1 - (v + 1) / 2) * plotH;   // v in [-1, +1] → y
+  const yCov = (pct) => padT + (1 - pct / 100) * plotH;   // 0..100 → y (mirror axis)
+
+  const toPath = (arr) => arr
+    .map((v, i) => `${i === 0 ? "M" : "L"}${xFor(i).toFixed(1)} ${yFor(v).toFixed(1)}`)
+    .join(" ");
+
+  const covPath = timeline.coverage
+    .map((c, i) => `${i === 0 ? "M" : "L"}${xFor(i).toFixed(1)} ${yCov(c).toFixed(1)}`)
+    .join(" ");
+  const covAreaPath = `${covPath} L${xFor(N - 1).toFixed(1)} ${padT + plotH} L${xFor(0).toFixed(1)} ${padT + plotH} Z`;
+
+  const xLabels = [];
+  for (let i = 0; i < N; i += 10) xLabels.push({ i, label: dates[i].slice(5) });
+  if ((N - 1) % 10 !== 0) xLabels.push({ i: N - 1, label: dates[N - 1].slice(5) });
+
+  const C = {
+    blend: "var(--blue, #2a78d6)",
+    w1d:   "var(--orange, #eb6834)",
+    w7d:   "var(--yellow, #eda100)",
+    w28d:  "var(--teal, #1baf7a)",
+    w90d:  "var(--purple, #7f77dd)",
+    cov:   "var(--text-mute-3, #b4b2a9)",
+    grid:  "var(--line-soft, rgba(0,0,0,0.08))",
+    axis:  "var(--text-mute-2, #898781)",
+  };
+
+  const last = {
+    blend: timeline.blend[N - 1],
+    w1d:   timeline.windows["1d"][N - 1],
+    w7d:   timeline.windows["7d"][N - 1],
+    w28d:  timeline.windows["28d"][N - 1],
+    w90d:  timeline.windows["90d"][N - 1],
+    cov:   timeline.coverage[N - 1],
+  };
+
+  const dirWord = (v) => v > 0.05 ? "long" : v < -0.05 ? "short" : "neutral";
+  const pct = (v) => `${Math.abs(Math.round(v * 100))}%`;
+
+  return (
+    <section className="block ap-timeline-block">
+      <header className="block-head sm">
+        <div className="block-title">
+          <span className="block-num mono">S1</span>
+          <span>Signal timeline</span>
+          <span className="block-sub">
+            60d sentiment · blend now <b className={`dir-${dirWord(last.blend)}`}>
+              {dirWord(last.blend)} · {pct(last.blend)}
+            </b> · coverage {Math.round(last.cov)}%
+          </span>
+        </div>
+        <div className="block-actions">
+          <div className="filter-pill-row">
+            <button className={`filter-pill ${showWindows ? "on" : ""}`}
+              onClick={() => setShowWindows(v => !v)}>windows</button>
+            <button className={`filter-pill ${showCoverage ? "on" : ""}`}
+              onClick={() => setShowCoverage(v => !v)}>coverage</button>
+          </div>
+        </div>
+      </header>
+
+      <div className="ap-timeline-wrap">
+        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+          role="img" aria-label={`Signal timeline for the last ${N} days`}
+          className="signal-timeline-svg">
+
+          {showCoverage && (
+            <path d={covAreaPath} fill={C.cov} opacity="0.10" />
+          )}
+
+          {[1, 0.5, 0, -0.5, -1].map(v => (
+            <line key={v} x1={padL} x2={W - padR}
+              y1={yFor(v)} y2={yFor(v)}
+              stroke={v === 0 ? C.axis : C.grid}
+              strokeWidth={v === 0 ? 1 : 0.5}
+              strokeDasharray={v === 0 ? "0" : "2 3"} />
+          ))}
+
+          {[{v: 1, l: "100% L"}, {v: 0.5, l: "50%"}, {v: 0, l: "0"},
+            {v: -0.5, l: "50%"}, {v: -1, l: "100% S"}].map(({v, l}) => (
+            <text key={v} x={padL - 6} y={yFor(v) + 3}
+              fontSize="10" fill={C.axis} textAnchor="end"
+              fontFamily="var(--mono)">{l}</text>
+          ))}
+
+          {xLabels.map(({i, label}) => (
+            <text key={i} x={xFor(i)} y={H - 8}
+              fontSize="10" fill={C.axis} textAnchor="middle"
+              fontFamily="var(--mono)">{label}</text>
+          ))}
+
+          {showWindows && (
+            <>
+              <path d={toPath(timeline.windows["90d"])}
+                fill="none" stroke={C.w90d} strokeWidth="1.25"
+                strokeDasharray="1 2" opacity="0.85" />
+              <path d={toPath(timeline.windows["28d"])}
+                fill="none" stroke={C.w28d} strokeWidth="1.25"
+                strokeDasharray="4 2" opacity="0.85" />
+              <path d={toPath(timeline.windows["7d"])}
+                fill="none" stroke={C.w7d} strokeWidth="1.25"
+                strokeDasharray="2 2" opacity="0.9" />
+              <path d={toPath(timeline.windows["1d"])}
+                fill="none" stroke={C.w1d} strokeWidth="1.25"
+                opacity="0.9" />
+            </>
+          )}
+
+          <path d={toPath(timeline.blend)}
+            fill="none" stroke={C.blend} strokeWidth="2.25" />
+
+          <circle cx={xFor(N - 1)} cy={yFor(last.blend)}
+            r="4" fill={C.blend} stroke="var(--bg-card, #fff)" strokeWidth="1.5" />
+
+          <text x={padL - 30} y={padT + 10} fontSize="9"
+            fill={C.axis} fontFamily="var(--mono)" transform={`rotate(-90 ${padL - 30} ${padT + 10})`}>
+            LONG
+          </text>
+          <text x={padL - 30} y={H - padB - 4} fontSize="9"
+            fill={C.axis} fontFamily="var(--mono)" transform={`rotate(-90 ${padL - 30} ${H - padB - 4})`}>
+            SHORT
+          </text>
+        </svg>
+      </div>
+
+      <div className="ap-timeline-legend mono small">
+        <span className="tl-lg-item"><span className="tl-swatch" style={{background: C.blend}}></span>blend {pct(last.blend)} {dirWord(last.blend)}</span>
+        {showWindows && (
+          <>
+            <span className="tl-lg-item"><span className="tl-swatch tl-dash-solid" style={{background: C.w1d}}></span>1d {last.w1d === 0 ? "—" : `${pct(last.w1d)} ${dirWord(last.w1d)}`}</span>
+            <span className="tl-lg-item"><span className="tl-swatch tl-dash-short" style={{background: C.w7d}}></span>7d {last.w7d === 0 ? "—" : `${pct(last.w7d)} ${dirWord(last.w7d)}`}</span>
+            <span className="tl-lg-item"><span className="tl-swatch tl-dash-med"   style={{background: C.w28d}}></span>28d {last.w28d === 0 ? "—" : `${pct(last.w28d)} ${dirWord(last.w28d)}`}</span>
+            <span className="tl-lg-item"><span className="tl-swatch tl-dash-dot"   style={{background: C.w90d}}></span>90d {last.w90d === 0 ? "—" : `${pct(last.w90d)} ${dirWord(last.w90d)}`}</span>
+          </>
+        )}
+        {showCoverage && (
+          <span className="tl-lg-item muted"><span className="tl-swatch" style={{background: C.cov, opacity: 0.5}}></span>coverage {Math.round(last.cov)}%</span>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// Why the technical agent declined to produce levels. It never fabricates
+// them: no price history or too few bars for ATR means no rails at all.
+const LEVELS_REASON = {
+  no_price: "no levels — no price history for this ticker",
+  no_atr: "no levels — too few bars to compute ATR",
+};
+
 // ───────────────────────────────────────────────────────────────
 // AssetPage — full page for a single signal/asset.
 // ───────────────────────────────────────────────────────────────
@@ -29,8 +208,10 @@ function AssetPage({ signal, onBack, returnTo }) {
 
   // Levels can be absent while the technical agent is still working.
   const hasLevels = (signal.entry || 0) > 0 && (signal.stop || 0) > 0 && (signal.target || 0) > 0;
-  const distToStop  = hasLevels ? ((signal.entry - signal.stop) / signal.entry) * 100 : 0;
-  const upside      = hasLevels ? ((signal.target - signal.entry) / signal.entry) * 100 : 0;
+  // Side-agnostic: a SHORT's stop sits above entry and its target below,
+  // so signed math would render both distances backwards.
+  const distToStop  = hasLevels ? (Math.abs(signal.entry - signal.stop) / signal.entry) * 100 : 0;
+  const upside      = hasLevels ? (Math.abs(signal.target - signal.entry) / signal.entry) * 100 : 0;
   const rr          = signal.rr || 0;
   const tInfo       = TIER_LABELS[tier] || TIER_LABELS[3];
 
@@ -96,7 +277,9 @@ function AssetPage({ signal, onBack, returnTo }) {
             called out where the trader will actually see them. */}
         {(() => {
           const sw = r.signalWindows;
-          if (!sw || !sw.blend || !shownSeries || shownSeries.length < 10) return null;
+          // `series` was previously referenced as `shownSeries`, which
+          // never got defined in c21f673 → AssetPage failed to render.
+          if (!sw || !sw.blend || !series || series.length < 10) return null;
           const first = series[Math.max(0, series.length - 90)]; // 90d ago (or as far back as we have)
           const last  = series[series.length - 1];
           if (!first || !last) return null;
@@ -195,6 +378,16 @@ function AssetPage({ signal, onBack, returnTo }) {
         })()}
       </header>
 
+      {/* ── Signal timeline — sentiment over time ─────────────────
+          Day-by-day historical replay of the blend + per-window
+          conviction (1d / 7d / 28d / 90d). Deliberately NOT joined
+          to price — this reads what tracked voices have been saying
+          on this ticker, whether price agrees or not. Sits right below
+          the runner (extends the same story) and above the price row. */}
+      {r.signalTimeline && r.signalTimeline.dates && r.signalTimeline.dates.length > 0 && (
+        <SignalTimelineBlock timeline={r.signalTimeline} />
+      )}
+
       {/* ── Price chart + Trade-on-this-asset side-by-side ────── */}
       <section className="ap-row">
         <div className="block ap-chart-block">
@@ -224,7 +417,9 @@ function AssetPage({ signal, onBack, returnTo }) {
               />
             ) : (
               <div className="pc-empty mono muted">
-                {series ? "levels pending — awaiting technical agent" : `No price series for ${signal.asset}`}
+                {series
+                  ? (LEVELS_REASON[signal.levelsReason] || "no levels for this pass")
+                  : `No price series for ${signal.asset}`}
               </div>
             )}
           </div>
@@ -232,17 +427,17 @@ function AssetPage({ signal, onBack, returnTo }) {
             <div className="ap-levels-strip">
               <div className="apl">
                 <div className="apl-lbl mono">ENTRY</div>
-                <div className="apl-val mono">{signal.entry < 1000 ? signal.entry.toFixed(2) : signal.entry.toLocaleString()}</div>
+                <div className="apl-val mono">{fmtPrice(signal.entry)}</div>
                 <div className="apl-sub mono muted">trigger</div>
               </div>
               <div className="apl">
                 <div className="apl-lbl mono">STOP</div>
-                <div className="apl-val mono red">{signal.stop < 1000 ? signal.stop.toFixed(2) : signal.stop.toLocaleString()}</div>
+                <div className="apl-val mono red">{fmtPrice(signal.stop)}</div>
                 <div className="apl-sub mono red">−{distToStop.toFixed(1)}% to inval.</div>
               </div>
               <div className="apl">
                 <div className="apl-lbl mono">TARGET</div>
-                <div className="apl-val mono green">{signal.target < 1000 ? signal.target.toFixed(2) : signal.target.toLocaleString()}</div>
+                <div className="apl-val mono green">{fmtPrice(signal.target)}</div>
                 <div className="apl-sub mono green">+{upside.toFixed(1)}% upside</div>
               </div>
               <div className="apl">
@@ -251,9 +446,18 @@ function AssetPage({ signal, onBack, returnTo }) {
                 <div className="apl-sub mono muted">{distToStop > 0 ? (upside / distToStop).toFixed(2) : "—"}× win/loss</div>
               </div>
             </div>
+          ) : null}
+          {hasLevels && signal.levelMethod ? (
+            <div className="ap-levels-prov mono small muted">
+              <span className={signal.levelStructural ? "green" : ""}>
+                {signal.levelStructural ? "structural" : "mechanical"}
+              </span>
+              {" · "}{signal.levelMethod}
+              {(signal.levelNotes || []).length ? ` · ${signal.levelNotes[0]}` : ""}
+            </div>
           ) : (
             <div className="sc-levels-pending mono small muted" style={{ margin: "0 16px 14px" }}>
-              levels pending — awaiting technical agent (live price + ATR + setup detector)
+              {LEVELS_REASON[signal.levelsReason] || "no levels — awaiting next scoring pass"}
             </div>
           )}
         </div>
@@ -447,15 +651,15 @@ function ReasoningTrail({ signal, hideHeader = false, hideFooter = false }) {
             <div className="rt-levels-grid">
               <div className="rt-l">
                 <div className="rt-l-lbl">ENTRY</div>
-                <div className="rt-l-val mono">{signal.entry < 1000 ? signal.entry.toFixed(2) : signal.entry.toLocaleString()}</div>
+                <div className="rt-l-val mono">{fmtPrice(signal.entry)}</div>
               </div>
               <div className="rt-l">
                 <div className="rt-l-lbl">STOP</div>
-                <div className="rt-l-val mono red">{signal.stop < 1000 ? signal.stop.toFixed(2) : signal.stop.toLocaleString()}</div>
+                <div className="rt-l-val mono red">{fmtPrice(signal.stop)}</div>
               </div>
               <div className="rt-l">
                 <div className="rt-l-lbl">TARGET</div>
-                <div className="rt-l-val mono green">{signal.target < 1000 ? signal.target.toFixed(2) : signal.target.toLocaleString()}</div>
+                <div className="rt-l-val mono green">{fmtPrice(signal.target)}</div>
               </div>
               <div className="rt-l">
                 <div className="rt-l-lbl">R/R</div>
@@ -464,7 +668,7 @@ function ReasoningTrail({ signal, hideHeader = false, hideFooter = false }) {
             </div>
           ) : (
             <div className="sc-levels-pending mono small muted" style={{ marginBottom: 8 }}>
-              levels pending — awaiting technical agent (live price + ATR + setup detector)
+              {LEVELS_REASON[signal.levelsReason] || "no levels — awaiting next scoring pass"}
             </div>
           )}
         </>

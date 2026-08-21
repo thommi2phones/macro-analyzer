@@ -624,3 +624,141 @@ def directional_scale(
         return default
     idx = min(len(mags) - 1, int(round(percentile * (len(mags) - 1))))
     return max(floor, mags[idx])
+
+
+# ── Historical timeline replay ─────────────────────────────────────────────
+#
+# The composer sees "here's the tape today" — the blend right now. The
+# operator, sizing a trade, wants "here's how the tape's been reading."
+# `build_signal_timeline_for_ticker` walks day-by-day and replays the
+# aggregator using only the signals visible on each day (no lookahead),
+# producing a per-day (blend, per-window, coverage) matrix the SPA can
+# render as a sentiment-over-time chart.
+#
+# Sentiment ≠ price. This is deliberately not joined to prices — the
+# chart says what the tracked voices have been saying, whether or not
+# price agrees.
+
+
+# Windows we surface on the timeline chart. Kept short so the trace
+# stays readable; the aggregator internally computes all 7 windows —
+# these labels just pick which ones the chart plots.
+TIMELINE_WINDOWS: tuple[str, ...] = ("1d", "7d", "28d", "90d")
+
+
+def _signed_conf(agg: dict) -> float:
+    """Confidence signed by direction: positive for LONG, negative for
+    SHORT, 0 for neutral. Lets the chart plot one line per window that
+    crosses zero when direction flips, instead of hiding sign in a
+    separate `direction` column."""
+    dir_ = agg.get("bias_direction")
+    conf = float(agg.get("bias_confidence") or 0.0)
+    if dir_ == "long":
+        return round(conf, 4)
+    if dir_ == "short":
+        return round(-conf, 4)
+    return 0.0
+
+
+def build_signal_timeline_for_ticker(
+    ticker: str,
+    *,
+    days: int = 60,
+    windows: Optional[list[tuple[str, int, float]]] = None,
+    blend_weights: Optional[dict[str, float]] = None,
+    now: Optional[datetime] = None,
+    db_path: Optional[Path] = None,
+) -> dict:
+    """Per-day historical replay of the blend + per-window conviction.
+
+    Returns:
+      {
+        "dates":      ["YYYY-MM-DD", ...],           # `days` entries, ending today
+        "blend":      [signed_conf, ...],            # one per date
+        "coverage":   [pct, ...],                    # blend coverage 0..100
+        "n_signals":  [int, ...],                    # total visible signals as of date
+        "windows": {
+            "1d":  [signed_conf, ...],
+            "7d":  [signed_conf, ...],
+            "28d": [signed_conf, ...],
+            "90d": [signed_conf, ...],
+        },
+      }
+
+    Every value is computed with `now = that_date` — no lookahead. The
+    caller-supplied `windows`/`blend_weights` default to the same
+    baseline the composer uses, so what the chart shows is the same
+    aggregator that produced the score.
+    """
+    windows = windows or DEFAULT_WINDOWS
+    blend_weights = blend_weights or DEFAULT_BLEND_WEIGHTS
+    db_path = db_path or settings.sqlite_path
+    now = now or datetime.now(UTC)
+
+    # Load enough history to cover both the timeline window AND the
+    # widest per-window lookback on the earliest date.
+    max_window_days = max(w[1] for w in windows)
+    lookback_days = days + max_window_days + 1
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        allowed = seeded_author_ids(conn)
+        rows_all = [dict(r) for r in conn.execute(
+            """
+            SELECT signal_id, side, conviction, weighted_score,
+                   source_slug, author_id,
+                   source_trust_weight, author_trust_weight,
+                   horizon, catalyst_type, thesis_summary,
+                   instrument_detail_json, extracted_at
+            FROM signals
+            WHERE asset_ticker = ?
+              AND status = 'active'
+              AND extracted_at >= datetime('now', '-' || ? || ' days')
+            ORDER BY extracted_at ASC
+            """,
+            (ticker.upper(), lookback_days),
+        ).fetchall()]
+
+    rows_all = [r for r in rows_all if (r.get("author_id") or "") in allowed]
+
+    # Pre-parse extracted_at once. Rows with unparseable timestamps
+    # never enter any window — treat them as if they don't exist for
+    # timeline purposes.
+    for r in rows_all:
+        r["_ts"] = _parse_dt(r.get("extracted_at"))
+    rows_all = [r for r in rows_all if r["_ts"] is not None]
+
+    end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    dates = [end - timedelta(days=i) for i in range(days - 1, -1, -1)]
+
+    out_dates: list[str] = []
+    out_blend: list[float] = []
+    out_coverage: list[float] = []
+    out_n: list[int] = []
+    out_windows: dict[str, list[float]] = {w: [] for w in TIMELINE_WINDOWS}
+
+    for d in dates:
+        visible = [r for r in rows_all if r["_ts"] <= d]
+        per_window: dict[str, dict] = {}
+        for label, since_d, hl in windows:
+            cutoff = d - timedelta(days=since_d)
+            window_rows = [r for r in visible if r["_ts"] >= cutoff]
+            per_window[label] = _reduce_window(
+                window_rows, now=d, half_life_days=hl
+            )
+        blend = _blend_windows(per_window, blend_weights)
+
+        out_dates.append(d.strftime("%Y-%m-%d"))
+        out_blend.append(_signed_conf(blend))
+        out_coverage.append(round(blend["coverage"] * 100, 1))
+        out_n.append(len(visible))
+        for w in TIMELINE_WINDOWS:
+            out_windows[w].append(_signed_conf(per_window[w]))
+
+    return {
+        "dates": out_dates,
+        "blend": out_blend,
+        "coverage": out_coverage,
+        "n_signals": out_n,
+        "windows": out_windows,
+    }

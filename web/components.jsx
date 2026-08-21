@@ -29,9 +29,11 @@ function ScoreChip({ score, prev, size = "md" }) {
 
 // ─── Tier indicator — small bar + label ──────────────────────────
 function TierIndicator({ tier }) {
-  const labels = { 1: "TIER 1 · HIGH CONVICTION", 2: "TIER 2 · QUALITY", 3: "TIER 3 · PROBE", 4: "TIER 4 · AVOID" };
+  // Sizing bands, not belief levels — see MA_GLOSSARY.tier.
+  const labels = { 1: "TIER 1 · FULL SIZE", 2: "TIER 2 · STANDARD", 3: "TIER 3 · PROBE", 4: "TIER 4 · AVOID" };
   return (
-    <div className={`tier-ind tier-${tier}`}>
+    <div className={`tier-ind tier-${tier}`}
+         title={typeof MA_GLOSSARY !== "undefined" ? MA_GLOSSARY.tier.long : undefined}>
       <span className="tier-bar"></span>
       <span>{labels[tier]}</span>
     </div>
@@ -56,7 +58,7 @@ function RegimeBadge({ kind, label, confidence }) {
 }
 
 // ─── Sub-score bar — labeled horizontal bar w/ fill ──────────────
-function SubScoreBar({ label, score, max, color = "amber" }) {
+function SubScoreBar({ label, score, max, color = "amber", note }) {
   const pct = (score / max) * 100;
   return (
     <div className="ssb">
@@ -67,6 +69,9 @@ function SubScoreBar({ label, score, max, color = "amber" }) {
       <div className="ssb-track">
         <div className={`ssb-fill ${color}`} style={{ width: `${pct}%` }}></div>
       </div>
+      {/* What this component actually measures — so the bar doesn't
+          need a lookup elsewhere to be readable. */}
+      {note && <div className="ssb-note">{note}</div>}
     </div>
   );
 }

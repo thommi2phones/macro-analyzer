@@ -5260,3 +5260,26 @@ body { font-size: 15.5px; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+
+/* ── Inline definitions (glossary.jsx) ── */
+.score-note {
+  font-size: 11px; line-height: 1.45;
+  color: var(--text-mute-2);
+  margin-top: 6px; max-width: 62ch;
+}
+.ssb-note {
+  font-size: 10.5px; line-height: 1.4;
+  color: var(--text-mute-3);
+  margin-top: 3px;
+}
+.wl-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 18px;
+  padding: 10px 14px 2px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 10.5px; color: var(--text-mute-3);
+}
+.wl-legend b {
+  font-family: var(--mono); font-weight: 600;
+  color: var(--text-mute); margin-right: 5px;
+}

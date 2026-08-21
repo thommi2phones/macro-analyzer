@@ -1,10 +1,12 @@
 // Asset detail page + reasoning trail.
 
+// Position-size bands from feature_vector.assign_position_size_tier —
+// a function of the composite score, NOT of anyone's conviction.
 const TIER_LABELS = {
-  1: { label: "TIER 1 · HIGH CONVICTION", color: "var(--gold)" },
-  2: { label: "TIER 2 · QUALITY",         color: "var(--green)" },
-  3: { label: "TIER 3 · PROBE",           color: "var(--amber)" },
-  4: { label: "TIER 4 · AVOID",           color: "var(--red)" },
+  1: { label: "TIER 1 · FULL SIZE", color: "var(--gold)",  rule: "composite ≥ 85" },
+  2: { label: "TIER 2 · STANDARD",  color: "var(--green)", rule: "composite ≥ 70" },
+  3: { label: "TIER 3 · PROBE",     color: "var(--amber)", rule: "composite ≥ 55" },
+  4: { label: "TIER 4 · AVOID",     color: "var(--red)",   rule: "under 55, or no defined invalidation" },
 };
 
 // Small helper the levels strips use. Under $1000 → 2dp, otherwise
@@ -207,6 +209,7 @@ function AssetSignalCalls({ calls, signal }) {
         <span>Signals behind this asset</span>
         <span className="rt-section-sub">{calls.length} · newest first</span>
       </div>
+      <ScoreNote>{MA_GLOSSARY.terms.conviction}</ScoreNote>
       <div className="asig-list">
         {calls.map(c => {
           const ke = kolEntry(c);
@@ -228,7 +231,7 @@ function AssetSignalCalls({ calls, signal }) {
                 <div className="asig-head">
                   <span className={`side-label side-${sideCls}`}>{c.side || "—"}</span>
                   {c.conviction != null && (
-                    <span className="asig-conv mono" title="extractor conviction (0-5)">
+                    <span className="asig-conv mono" title={MA_GLOSSARY.terms.conviction}>
                       conv {c.conviction.toFixed(1)}
                     </span>
                   )}
@@ -326,13 +329,17 @@ function AssetPage({ signal, onBack, returnTo }) {
                 {total - signal.scorePrev > 0 ? "▲" : total - signal.scorePrev < 0 ? "▼" : "·"} {Math.abs(total - signal.scorePrev)} <span className="muted">vs prev</span>
               </div>
             )}
+            <ScoreNote title={MA_GLOSSARY.composite.long}>
+              {MA_GLOSSARY.composite.short}
+            </ScoreNote>
           </div>
 
           <div className="ah-tier-block">
-            <div className={`ah-tier-badge tier-${tier}`}>
+            <div className={`ah-tier-badge tier-${tier}`} title={MA_GLOSSARY.tier.long}>
               <span className="ah-tier-dot" style={{ background: tInfo.color }}></span>
               {tInfo.label}
             </div>
+            <ScoreNote title={MA_GLOSSARY.tier.long}>{tInfo.rule}</ScoreNote>
             <div className="ah-side-block">
               <span className={`ah-side-pill side-${(signal.side || "watch").toLowerCase()}`}>{signal.side}</span>
               <span className="ah-rr mono">R/R · {rr.toFixed(2)}</span>
@@ -753,11 +760,14 @@ function ReasoningTrail({ signal, hideHeader = false, hideFooter = false }) {
           <span>Composite breakdown</span>
           <span className="rt-section-sub">total {r.total} / 100</span>
         </div>
+        <ScoreNote>{MA_GLOSSARY.composite.long}</ScoreNote>
         <div className="rt-bars">
           {r.components.map(c => (
-            <SubScoreBar key={c.label} label={c.label} score={c.score} max={c.max} color={c.color} />
+            <SubScoreBar key={c.label} label={c.label} score={c.score}
+                         max={c.max} color={c.color} note={componentNote(c.label)} />
           ))}
         </div>
+        <ScoreNote title={MA_GLOSSARY.modifiers.long}>{MA_GLOSSARY.modifiers.short}</ScoreNote>
         <div className="rt-modifiers">
           {r.modifiers.map(m => (
             <div key={m.label} className="rt-mod-row">

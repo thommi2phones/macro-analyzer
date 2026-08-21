@@ -202,16 +202,16 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
             <thead>
               <tr>
                 <th onClick={sortToggle("asset")} className="sortable">ASSET {sortBy === "asset" && (sortDir === "desc" ? "↓" : "↑")}</th>
-                <th onClick={sortToggle("side")} className="sortable">SIDE {sortBy === "side" && (sortDir === "desc" ? "↓" : "↑")}</th>
-                <th onClick={sortToggle("score")} className="sortable num">
+                <th onClick={sortToggle("side")} className="sortable" title={MA_GLOSSARY.terms.side}>SIDE {sortBy === "side" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("score")} className="sortable num" title={MA_GLOSSARY.composite.long}>
                   SCORE {sortBy === "score" && (sortDir === "desc" ? "↓" : "↑")}
                 </th>
-                <th onClick={sortToggle("dScore")} className="sortable num">Δ 1D {sortBy === "dScore" && (sortDir === "desc" ? "↓" : "↑")}</th>
-                <th onClick={sortToggle("tier")} className="sortable">TIER {sortBy === "tier" && (sortDir === "desc" ? "↓" : "↑")}</th>
-                <th onClick={sortToggle("regime")} className="sortable">REGIME {sortBy === "regime" && (sortDir === "desc" ? "↓" : "↑")}</th>
-                <th onClick={sortToggle("tech")} className="sortable num">TECH {sortBy === "tech" && (sortDir === "desc" ? "↓" : "↑")}</th>
-                <th onClick={sortToggle("vol")} className="sortable num">VOL {sortBy === "vol" && (sortDir === "desc" ? "↓" : "↑")}</th>
-                <th onClick={sortToggle("rr")} className="sortable num">R/R {sortBy === "rr" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("dScore")} className="sortable num" title={MA_GLOSSARY.terms.dScore}>Δ 1D {sortBy === "dScore" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("tier")} className="sortable" title={MA_GLOSSARY.tier.long}>TIER {sortBy === "tier" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("regime")} className="sortable" title={MA_GLOSSARY.terms.regime}>REGIME {sortBy === "regime" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("tech")} className="sortable num" title={MA_GLOSSARY.terms.tech}>TECH {sortBy === "tech" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("vol")} className="sortable num" title={MA_GLOSSARY.terms.vol}>VOL {sortBy === "vol" && (sortDir === "desc" ? "↓" : "↑")}</th>
+                <th onClick={sortToggle("rr")} className="sortable num" title={MA_GLOSSARY.terms.rr}>R/R {sortBy === "rr" && (sortDir === "desc" ? "↓" : "↑")}</th>
                 <th onClick={sortToggle("last")} className="sortable num">LAST {sortBy === "last" && (sortDir === "desc" ? "↓" : "↑")}</th>
                 <th>FUNNEL</th>
               </tr>
@@ -269,6 +269,16 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
               })}
             </tbody>
           </table>
+          {/* Legend — what each column means, so the table is readable
+              without going and looking the model up. */}
+          <div className="wl-legend">
+            <span><b>SCORE</b> {MA_GLOSSARY.composite.short} · 0–100</span>
+            <span><b>Δ 1D</b> {MA_GLOSSARY.terms.dScore}</span>
+            <span><b>TIER</b> {MA_GLOSSARY.tier.short}</span>
+            <span><b>REGIME</b> {MA_GLOSSARY.terms.regime}</span>
+            <span><b>TECH / VOL</b> letter grade of that component's share of its weight</span>
+            <span><b>R/R</b> {MA_GLOSSARY.terms.rr}</span>
+          </div>
         </div>
 
       </section>

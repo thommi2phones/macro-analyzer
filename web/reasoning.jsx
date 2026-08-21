@@ -33,7 +33,7 @@ function SignalTimelineBlock({ timeline }) {
   if (N < 2) return null;
 
   const W = 900, H = 220;
-  const padL = 44, padR = 24, padT = 20, padB = 28;
+  const padL = 64, padR = 24, padT = 20, padB = 28;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
 
@@ -116,9 +116,9 @@ function SignalTimelineBlock({ timeline }) {
               strokeDasharray={v === 0 ? "0" : "2 3"} />
           ))}
 
-          {[{v: 1, l: "100% L"}, {v: 0.5, l: "50%"}, {v: 0, l: "0"},
-            {v: -0.5, l: "50%"}, {v: -1, l: "100% S"}].map(({v, l}) => (
-            <text key={v} x={padL - 6} y={yFor(v) + 3}
+          {[{v: 1, l: "100%"}, {v: 0.5, l: "50%"}, {v: 0, l: "0"},
+            {v: -0.5, l: "50%"}, {v: -1, l: "100%"}].map(({v, l}) => (
+            <text key={v} x={padL - 8} y={yFor(v) + 3}
               fontSize="10" fill={C.axis} textAnchor="end"
               fontFamily="var(--mono)">{l}</text>
           ))}
@@ -152,14 +152,23 @@ function SignalTimelineBlock({ timeline }) {
           <circle cx={xFor(N - 1)} cy={yFor(last.blend)}
             r="4" fill={C.blend} stroke="var(--bg-card, #fff)" strokeWidth="1.5" />
 
-          <text x={padL - 30} y={padT + 10} fontSize="9"
-            fill={C.axis} fontFamily="var(--mono)" transform={`rotate(-90 ${padL - 30} ${padT + 10})`}>
-            LONG
-          </text>
-          <text x={padL - 30} y={H - padB - 4} fontSize="9"
-            fill={C.axis} fontFamily="var(--mono)" transform={`rotate(-90 ${padL - 30} ${H - padB - 4})`}>
-            SHORT
-          </text>
+          {/* Axis title — one rotated label per half so LONG/SHORT are
+              unambiguous without colliding with the tick-value column. */}
+          {(() => {
+            const topY = padT + plotH * 0.25;
+            const botY = padT + plotH * 0.75;
+            const tx = 14;
+            return (
+              <>
+                <text x={tx} y={topY} fontSize="9" fontWeight="600" letterSpacing="0.14em"
+                  fill={C.axis} fontFamily="var(--mono)"
+                  transform={`rotate(-90 ${tx} ${topY})`} textAnchor="middle">LONG</text>
+                <text x={tx} y={botY} fontSize="9" fontWeight="600" letterSpacing="0.14em"
+                  fill={C.axis} fontFamily="var(--mono)"
+                  transform={`rotate(-90 ${tx} ${botY})`} textAnchor="middle">SHORT</text>
+              </>
+            );
+          })()}
         </svg>
       </div>
 

@@ -179,6 +179,32 @@ def recent_breakdown(lows: list[float], lookback: int = 20) -> bool:
     return last < prior_min
 
 
+def prior_extreme(values: list[float], lookback: int = 20, *, high: bool = True) -> float | None:
+    """The max (or min) of the `lookback` bars BEFORE the last one.
+
+    This is the level a breakout/breakdown actually pierced — the level
+    synthesizer stops just beyond it, so it must exclude the current bar.
+    """
+    if len(values) < lookback + 1:
+        return None
+    window = values[-(lookback + 1):-1]
+    return max(window) if high else min(window)
+
+
+def swing_low(lows: list[float], lookback: int = 10) -> float | None:
+    """Lowest low of the last `lookback` bars — the recent defended floor."""
+    if not lows:
+        return None
+    return min(lows[-lookback:])
+
+
+def swing_high(highs: list[float], lookback: int = 10) -> float | None:
+    """Highest high of the last `lookback` bars — the recent ceiling."""
+    if not highs:
+        return None
+    return max(highs[-lookback:])
+
+
 # ---------------------------------------------------------------------------
 # Top-level: build a feature dict from a PriceBar list
 # ---------------------------------------------------------------------------
@@ -212,6 +238,7 @@ def compute_technical_features(bars: list[PriceBar]) -> dict:
       close, ma20, ma50, ma200, pct_from_ma20, pct_from_ma50, pct_from_ma200,
       atr14, rsi14, higher_highs, higher_lows, lower_highs, lower_lows,
       above_ma50, above_ma200, recent_breakout, recent_breakdown,
+      prior_high_20, prior_low_20, swing_low_10, swing_high_10,
       n_bars
     """
     if not bars:
@@ -267,4 +294,10 @@ def compute_technical_features(bars: list[PriceBar]) -> dict:
         "above_ema50": (ema50_v is not None and last > ema50_v),
         "recent_breakout": recent_breakout(highs, 20),
         "recent_breakdown": recent_breakdown(lows, 20),
+        # Invalidation references for the level synthesizer: the level a
+        # breakout pierced, and the nearest swing the trade must hold.
+        "prior_high_20": prior_extreme(highs, 20, high=True),
+        "prior_low_20": prior_extreme(lows, 20, high=False),
+        "swing_low_10": swing_low(lows, 10),
+        "swing_high_10": swing_high(highs, 10),
     }

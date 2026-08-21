@@ -1791,6 +1791,23 @@ select.form-input {
   border-color: color-mix(in srgb, var(--amber, #bb8d33) 40%, var(--line-2)) !important;
 }
 
+/* Mechanical-rails flag: levels exist but no structural entry fired. */
+.sc-mech-chip {
+  padding: 2px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--text-mute-2) 8%, var(--bg-card));
+  color: var(--text-mute-2);
+  border: 1px dashed color-mix(in srgb, var(--text-mute-2) 40%, var(--line-2));
+  font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+/* How the levels were derived (detector + first note). */
+.ap-levels-prov {
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--line-soft);
+  letter-spacing: 0.02em;
+}
+
 /* ── Two-col row: chart + active trade ── */
 .ap-row {
   display: grid;

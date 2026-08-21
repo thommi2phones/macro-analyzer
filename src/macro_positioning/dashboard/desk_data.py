@@ -499,6 +499,7 @@ def _load_latest_scores() -> list[dict]:
                     ts.grade,
                     ts.position_size_tier,
                     ts.reasoning_trail_json,
+                    ts.feature_vector_json,
                     tset.asset_id AS asset_id,
                     ROW_NUMBER() OVER (
                         PARTITION BY tset.asset_id
@@ -525,7 +526,8 @@ def _load_latest_scores() -> list[dict]:
                 a.ticker, a.asset_name, a.asset_class,
                 p.prior_score, p.prior_scored_at,
                 c.signal_alignment_score,
-                ts_full.signal_aggregate_json
+                ts_full.signal_aggregate_json,
+                c.feature_vector_json
             FROM current c
             JOIN assets a ON a.asset_id = c.asset_id
             LEFT JOIN prior p ON p.asset_id = c.asset_id
@@ -545,6 +547,14 @@ def _load_latest_scores() -> list[dict]:
             signal_agg = json.loads(r[21]) if r[21] else {}
         except Exception:
             signal_agg = {}
+        # feature_vector_json carries the technical agent's LevelSet
+        # (or the reason it declined to produce one).
+        try:
+            feature_vec = json.loads(r[22]) if r[22] else {}
+        except Exception:
+            feature_vec = {}
+        levels = feature_vec.get("levels") or None
+        levels_reason = feature_vec.get("levels_reason")
         prior_score = r[18]
         d_score = (r[2] - prior_score) if prior_score is not None else 0
         out.append({
@@ -570,6 +580,8 @@ def _load_latest_scores() -> list[dict]:
             "prior_scored_at": r[19],
             "signal": r[20],
             "signal_aggregate": signal_agg,
+            "levels": levels,
+            "levels_reason": levels_reason,
             "d_score": d_score,
         })
     return out
@@ -610,6 +622,49 @@ def _side_from_tier(tier_str: str) -> str:
     return "LONG"
 
 
+def _levels_for_row(r: dict) -> dict:
+    """Flatten the persisted LevelSet into the SPA card shape.
+
+    The SPA calls .toFixed() on entry/stop/target, so a level-less row
+    still gets numeric zeros — `hasLevels` gates rendering, and
+    `levelsReason` says *why* there are none (no_price / no_atr) rather
+    than the old blanket "awaiting technical agent".
+    """
+    lv = r.get("levels") or None
+    if not lv:
+        return {
+            "hasLevels": False,
+            "entry": 0.0, "stop": 0.0, "target": 0.0, "rr": 0.0,
+            "setup": "watchlist scoring pass",
+            "levelMethod": None,
+            "levelStructural": False,
+            "riskPct": 0.0,
+            "levelNotes": [],
+            "levelsReason": r.get("levels_reason"),
+        }
+    return {
+        "hasLevels": True,
+        "entry": round(float(lv.get("entry") or 0.0), 6),
+        "stop": round(float(lv.get("stop") or 0.0), 6),
+        "target": round(float(lv.get("target") or 0.0), 6),
+        "rr": round(float(lv.get("rr") or 0.0), 2),
+        "setup": lv.get("setup") or "watchlist scoring pass",
+        "levelMethod": lv.get("method"),
+        "levelStructural": bool(lv.get("structural")),
+        "riskPct": round(float(lv.get("riskPct") or 0.0), 4),
+        "levelNotes": lv.get("notes") or [],
+        "levelsReason": None,
+    }
+
+
+def _side_with_levels(tier_str: str, levels: dict | None) -> str:
+    """Tier decides WATCH/AVOID; the technical agent decides LONG vs SHORT."""
+    base = _side_from_tier(tier_str)
+    if base == "LONG" and (levels or {}).get("side") == "SHORT":
+        return "SHORT"
+    return base
+
+
 def build_hero_signals_section() -> list[dict]:
     """Top 5 scored setups (from trade_scores).
 
@@ -631,26 +686,27 @@ def build_hero_signals_section() -> list[dict]:
         if origins:
             why.append("Watchlist source: " + ", ".join(_origins_to_pretty(origins)))
 
+        lv = _levels_for_row(r)
+        if lv["hasLevels"]:
+            why.append(
+                f"Levels: {lv['setup']} · {lv['rr']:.2f}R · "
+                f"{lv['riskPct'] * 100:.1f}% to invalidation"
+            )
+
         out.append({
             "id": r["score_id"],
             "asset": r["ticker"],
             "name": r["name"] or r["ticker"],
-            "side": _side_from_tier(r["tier"]),
+            "side": _side_with_levels(r["tier"], r.get("levels")),
             "score": r["score"],
             "scorePrev": r["prior_score"] if r["prior_score"] is not None else r["score"],
             "tier": _tier_str(r["tier"]),
-            "setup": "watchlist scoring pass",
             "regimeFit": r["trail"].get("active_framework_regime", "unknown"),
-            # Entry/stop/target/RR are 0 until live price + technical agent
-            # populate them. SPA uses .toFixed() so null would crash; we
-            # send numeric zero and the operator sees 0.00 placeholders.
-            "entry": 0.0,
-            "stop": 0.0,
-            "target": 0.0,
-            "rr": 0.0,
             "whyNow": why,
             "sources": _origins_to_pretty(origins),
             "lastUpdate": (r["scored_at"] or "")[11:16],  # HH:MM slice
+            # entry/stop/target/rr/setup + level provenance
+            **lv,
         })
     return out
 
@@ -670,14 +726,22 @@ def build_watchlist_section() -> list[dict]:
             "asset": r["ticker"],
             "name": r["name"] or r["ticker"],
             "assetClass": r["asset_class"],
-            "side": _side_from_tier(r["tier"]),
+            "side": _side_with_levels(r["tier"], r.get("levels")),
             "score": r["score"],
             "dScore": r["d_score"],
             "tier": _tier_str(r["tier"]),
             "regime": "fit" if r["macro"] >= 12 else ("mix" if r["macro"] >= 6 else "off"),
             "tech": _grade_letter(r["tech"], 20),
             "vol": _grade_letter(r["vol"], 15),
-            "rr": r["rr"] / 10.0 * 4 if r["rr"] else 0,  # rough display
+            # Real planned R/R from the technical agent; falls back to the
+            # old sub-score approximation for rows scored before levels.
+            "rr": (
+                round(float((r.get("levels") or {}).get("rr") or 0.0), 2)
+                if r.get("levels")
+                else (r["rr"] / 10.0 * 4 if r["rr"] else 0)
+            ),
+            "setup": ((r.get("levels") or {}).get("setup") or None),
+            "levelStructural": bool((r.get("levels") or {}).get("structural")),
             "last": (r["scored_at"] or "")[11:16],
             "origins": _origins_to_pretty(origins),
         })
@@ -840,6 +904,25 @@ def build_reasoning_section() -> dict:
         }
         if signal_windows is not None:
             entry["signalWindows"] = signal_windows
+        # Technical agent provenance for the reasoning trail: which
+        # detector fired, whether it was structural, and its notes.
+        lv = r.get("levels") or None
+        if lv:
+            entry["levels"] = {
+                "side": lv.get("side"),
+                "entry": lv.get("entry"),
+                "stop": lv.get("stop"),
+                "target": lv.get("target"),
+                "rr": lv.get("rr"),
+                "riskPct": lv.get("riskPct"),
+                "method": lv.get("method"),
+                "setup": lv.get("setup"),
+                "structural": bool(lv.get("structural")),
+                "version": lv.get("version"),
+                "notes": lv.get("notes") or [],
+            }
+        elif r.get("levels_reason"):
+            entry["levels"] = {"reason": r["levels_reason"]}
         # 60-day historical replay of the blend + per-window conviction,
         # for the "sentiment over time" chart on the asset page. Sentiment
         # is deliberately not price-joined — the chart says what tracked

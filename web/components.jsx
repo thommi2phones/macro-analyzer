@@ -171,11 +171,35 @@ function SideLabel({ side }) {
   return <span className={`side-label side-${side.toLowerCase()}`}>{side}</span>;
 }
 
+// Price formatter for level rails. toLocaleString() alone emits up to 3
+// fraction digits (2,251.458); sub-$1000 names need 2, and sub-$1 names
+// (small-cap crypto) need real precision or they collapse to 0.00.
+function fmtPrice(v) {
+  const n = Number(v) || 0;
+  const digits = Math.abs(n) >= 1000 ? 0 : Math.abs(n) >= 1 ? 2 : 4;
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+// Why the technical agent declined to produce levels. It never fabricates
+// them: no price history or too few bars for ATR means no rails at all.
+const LEVELS_REASON = {
+  no_price: "no levels — no price history for this ticker",
+  no_atr: "no levels — too few bars to compute ATR",
+};
+
 // ─── Setup card (hero) ───────────────────────────────────────────
 function SetupCard({ s, onOpen, active = false }) {
   const hasLevels = (s.entry || 0) > 0 && (s.stop || 0) > 0 && (s.target || 0) > 0;
-  const distToInval = hasLevels ? ((s.entry - s.stop) / s.entry) * 100 : 0;
-  const upside      = hasLevels ? ((s.target - s.entry) / s.entry) * 100 : 0;
+  // Side-agnostic distances: on a SHORT the stop sits above entry and the
+  // target below, so signed math would render backwards.
+  const distToInval = hasLevels ? (Math.abs(s.entry - s.stop) / s.entry) * 100 : 0;
+  const upside      = hasLevels ? (Math.abs(s.target - s.entry) / s.entry) * 100 : 0;
+  // Provenance: v1 detectors are structural; mechanical rails are honest
+  // placeholders and get flagged so a rail is never read as a real setup.
+  const mechanical  = hasLevels && s.levelStructural === false;
   // Compact tape-vs-price divergence chip: fires when the composite score's
   // signal blend leans one way but 90d price trend is the opposite.
   const D = window.MA_DATA || {};
@@ -209,6 +233,12 @@ function SetupCard({ s, onOpen, active = false }) {
       <div className="sc-meta">
         <SideLabel side={s.side} />
         <span className="sc-setup">{s.setup}</span>
+        {mechanical && (
+          <span className="sc-mech-chip mono"
+                title="No structural entry — 2×ATR stop / 3R target placeholder rails">
+            mech
+          </span>
+        )}
         {divergence && (
           <span className="sc-div-chip mono"
                 title={`Tape reads ${divergence.tape.toUpperCase()} but 90d price is ${(divergence.ret90 * 100).toFixed(1)}%`}>
@@ -221,16 +251,16 @@ function SetupCard({ s, onOpen, active = false }) {
         <div className="sc-levels">
           <div className="sc-level">
             <div className="sc-l-lbl">ENTRY</div>
-            <div className="sc-l-val mono">{s.entry < 1000 ? s.entry.toFixed(2) : s.entry.toLocaleString()}</div>
+            <div className="sc-l-val mono">{fmtPrice(s.entry)}</div>
           </div>
           <div className="sc-level">
             <div className="sc-l-lbl">STOP</div>
-            <div className="sc-l-val mono red">{s.stop < 1000 ? s.stop.toFixed(2) : s.stop.toLocaleString()}</div>
+            <div className="sc-l-val mono red">{fmtPrice(s.stop)}</div>
             <div className="sc-l-sub mono">−{distToInval.toFixed(1)}%</div>
           </div>
           <div className="sc-level">
             <div className="sc-l-lbl">TARGET</div>
-            <div className="sc-l-val mono green">{s.target < 1000 ? s.target.toFixed(2) : s.target.toLocaleString()}</div>
+            <div className="sc-l-val mono green">{fmtPrice(s.target)}</div>
             <div className="sc-l-sub mono">+{upside.toFixed(1)}%</div>
           </div>
           <div className="sc-level">
@@ -240,7 +270,7 @@ function SetupCard({ s, onOpen, active = false }) {
         </div>
       ) : (
         <div className="sc-levels-pending mono small muted">
-          levels pending — awaiting technical agent (live price + ATR + setup detector)
+          {LEVELS_REASON[s.levelsReason] || "no levels — awaiting next scoring pass"}
         </div>
       )}
 

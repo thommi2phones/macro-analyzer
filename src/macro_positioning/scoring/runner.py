@@ -41,6 +41,11 @@ from macro_positioning.prices.technicals import (
     compute_technical_features,
     compute_volume_features,
 )
+from macro_positioning.scoring.levels import (
+    LevelSet,
+    side_from_signal_bias,
+    synthesize_levels,
+)
 from macro_positioning.scoring.mention_extractor import count_mentions
 from macro_positioning.scoring.watchlist_resolver import (
     ResolvedWatchlist,
@@ -77,6 +82,44 @@ class ScoringRunSummary(BaseModel):
 def _connect() -> sqlite3.Connection:
     initialize_database(settings.sqlite_path)
     return sqlite3.connect(settings.sqlite_path)
+
+
+def _regime_read_from_blend(conn: sqlite3.Connection):
+    """Adapt the v1 blend classifier to the RegimeRead the scorer expects.
+
+    Returns None when the classifier can't produce an honest read, so the
+    caller can fall back rather than score against a fabricated regime.
+    `framework_regime` is the blend's argmax — the scorer's
+    PREFERRED_SETUPS lookup is single-label — but the full blend is
+    carried in `evidence` so the reasoning trail shows what was mixed in.
+    """
+    import uuid as _uuid
+    from datetime import UTC as _UTC, datetime as _datetime
+
+    from macro_brain.types import RegimeRead
+    from macro_positioning.regime.classifier_v1 import classify_regime_v1
+
+    try:
+        rb = classify_regime_v1(conn)
+    except sqlite3.Error:
+        return None
+    if rb is None:
+        return None
+
+    mix = ", ".join(
+        f"{k} {v:.0%}"
+        for k, v in sorted(rb.blend.items(), key=lambda kv: -kv[1])
+        if v >= 0.05
+    )
+    return RegimeRead(
+        regime_id=str(_uuid.uuid4()),
+        classified_at=_datetime.now(_UTC),
+        thesis_regime=rb.thesis_regime,
+        framework_regime=rb.dominant,
+        confidence=rb.confidence,
+        evidence=[f"Blend: {mix}", *rb.evidence],
+        classifier_version=rb.classifier_version,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -290,14 +333,19 @@ def _persist_trade_score(
     asset_class: str,
     origins: list[str],
     signal_aggregate: dict | None = None,
+    level_set: "LevelSet | None" = None,
+    level_reason: str | None = None,
 ) -> None:
     """Insert one row into trade_scores. Caller wraps in a transaction.
 
     Notes:
     - We need an `assets` row to satisfy the FK; upsert via INSERT OR IGNORE.
     - We need a `technical_setups` row to satisfy the FK on trade_scores.setup_id;
-      synthesize a placeholder row keyed by setup_id (orchestrator already
-      generated one).
+      it carries the technical agent's levels (entry/invalidation/target/RR)
+      when one was synthesized, and stays level-less when it wasn't.
+    - The full LevelSet (method, structural flag, notes, sizing risk) goes in
+      feature_vector_json so the dashboard can render *how* the levels were
+      derived, not just the numbers.
     - reasoning_trail_json captures the watchlist origins so the dashboard
       can show *why* each ticker is here.
     """
@@ -312,23 +360,40 @@ def _persist_trade_score(
         (asset_id, asset_ticker, asset_ticker, asset_class or "equity"),
     )
 
-    # Synthesize a placeholder technical_setup row so the FK is valid.
+    # technical_setups row — FK target for trade_scores, and the home of
+    # the technical agent's levels. setup_type carries the detector that
+    # produced them (breakout_20d / pullback_support / mechanical_v0) so a
+    # placeholder is never mistaken for a real structural read.
     setup_id = score.setup_id or f"setup-{asset_id}-{uuid.uuid4().hex[:8]}"
     conn.execute(
         """
         INSERT OR IGNORE INTO technical_setups (
             setup_id, asset_id, observed_at, timeframe, setup_type,
-            market_structure, technical_score
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            market_structure, technical_score,
+            key_level, entry_zone_low, entry_zone_high,
+            invalidation_level, target_zone_low, target_zone_high,
+            risk_reward
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             setup_id,
             asset_id,
             now_iso,
             "1D",
-            "watchlist_scoring_pass",
-            "neutral",
+            level_set.method if level_set else "watchlist_scoring_pass",
+            (
+                ("structural" if level_set.structural else "unstructured")
+                if level_set
+                else "neutral"
+            ),
             score.technical_structure_score,
+            level_set.entry if level_set else None,
+            level_set.entry if level_set else None,
+            level_set.entry if level_set else None,
+            level_set.stop if level_set else None,
+            level_set.target if level_set else None,
+            level_set.target if level_set else None,
+            level_set.rr if level_set else None,
         ),
     )
 
@@ -347,6 +412,28 @@ def _persist_trade_score(
             "dominant_catalyst": signal_aggregate.get("dominant_catalyst"),
             "weighted_points": score.signal_alignment_score,  # 0..15 into the total
         }
+
+    # Levels blob for the dashboard: the numbers plus how they were derived.
+    if level_set is not None:
+        level_payload: dict | None = {
+            "levels": {
+                "side": level_set.side,
+                "entry": level_set.entry,
+                "stop": level_set.stop,
+                "target": level_set.target,
+                "rr": level_set.rr,
+                "riskPct": level_set.risk_pct,
+                "method": level_set.method,
+                "setup": level_set.setup,
+                "structural": level_set.structural,
+                "version": level_set.version,
+                "notes": level_set.notes,
+            }
+        }
+    elif level_reason:
+        level_payload = {"levels": None, "levels_reason": level_reason}
+    else:
+        level_payload = None
 
     conn.execute(
         """
@@ -378,7 +465,7 @@ def _persist_trade_score(
             score.adjusted_total_score,
             score.grade,
             score.position_size_tier,
-            None,  # feature_vector_json — TODO once feature_vector helper persisted
+            json.dumps(level_payload) if level_payload else None,
             json.dumps(annotated_trail, default=str),
             # Weighted 0..15 signal_alignment contribution (matches the other
             # per-component columns). The raw 0..10 aggregate alignment_score
@@ -413,11 +500,19 @@ def run_scoring_pass(
     run_id = str(uuid.uuid4())
     started_at = datetime.now(UTC)
 
-    # 1. Active regime (real call — currently stub but interface stable)
-    regime = classify_regime_stub(hint_thesis_regime=framework_regime_hint or "commodity_expansion")
-
     # 2. Load recent docs (for mention extraction)
     conn = _connect()
+
+    # 1. Active regime. Real blend classifier off live prices + FRED; the
+    #    stub is used only when `framework_regime_hint` explicitly asks for
+    #    a what-if run, or when there isn't enough market data to classify.
+    regime = None
+    if not framework_regime_hint:
+        regime = _regime_read_from_blend(conn)
+    if regime is None:
+        regime = classify_regime_stub(
+            hint_thesis_regime=framework_regime_hint or "commodity_expansion"
+        )
     try:
         recent_docs = _load_recent_documents(conn, since_days=docs_window_days)
 
@@ -516,23 +611,6 @@ def run_scoring_pass(
             for entry in resolved.entries:
                 try:
                     feats = ticker_features.get(entry.ticker, {"n_bars": 0})
-                    last_close = feats.get("close")
-                    atr14 = feats.get("atr14")
-
-                    # Synthesize entry/stop/target from price + ATR
-                    # Convention: entry = current close; stop = 2x ATR
-                    # below; target = entry + 3R (for a 3:1 R/R prior).
-                    # Once we add side-aware logic (LONG vs SHORT), this
-                    # heuristic gets directionally specific.
-                    if last_close and atr14 and atr14 > 0:
-                        entry_zone = float(last_close)
-                        stop_loss = float(last_close - 2 * atr14)
-                        risk = entry_zone - stop_loss
-                        target = float(entry_zone + 3 * risk)
-                    else:
-                        entry_zone = None
-                        stop_loss = None
-                        target = None
 
                     bench_ticker = _benchmark_for(
                         entry.asset_class or "equity", benchmarks_cfg
@@ -553,6 +631,19 @@ def run_scoring_pass(
                     # Stamp the per-pass scale so the scorer normalises
                     # net_bias against this pass's own conviction spread.
                     sig_agg = {**sig_agg, "pass_scale": signal_pass_scale}
+
+                    # Technical agent (scoring/levels.py) — structure-aware
+                    # entry/stop/target. Side comes from the tracked-voice
+                    # bias: only a confident short consensus flips the rails.
+                    # No price or no ATR → no levels at all, never fake ones.
+                    level_side = side_from_signal_bias(sig_agg)
+                    level_set, level_reason = synthesize_levels(feats, side=level_side)
+                    if level_set is not None:
+                        entry_zone = level_set.entry
+                        stop_loss = level_set.stop
+                        target = level_set.target
+                    else:
+                        entry_zone = stop_loss = target = None
                     # Expose the signal aggregate to the composer via
                     # relevant_sources — designed for this purpose.
                     relevant_sources_payload = []
@@ -591,6 +682,8 @@ def run_scoring_pass(
                             asset_class=entry.asset_class or "equity",
                             origins=entry.origins,
                             signal_aggregate=sig_agg or None,
+                            level_set=level_set,
+                            level_reason=level_reason,
                         )
                         persisted_count += 1
                 except Exception as exc:

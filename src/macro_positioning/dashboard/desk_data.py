@@ -665,6 +665,52 @@ def _side_with_levels(tier_str: str, levels: dict | None) -> str:
     return base
 
 
+def _why_now_bullets(r: dict, origins: list[str], lv: dict) -> list[str]:
+    """Scannable "why is this here" bullets — shared by hero cards and
+    watchlist rows so a row opened from the table reads identically to
+    the same asset opened from a hero card."""
+    trail = r.get("trail") or {}
+    why: list[str] = []
+    if trail.get("active_thesis_regime"):
+        why.append(
+            f"Regime fit: {trail['active_thesis_regime']} "
+            f"({trail.get('active_framework_regime', '—')})"
+        )
+    if trail.get("regime_modifier"):
+        why.append(f"Regime modifier: {trail['regime_modifier']:+d}")
+    if origins:
+        why.append("Watchlist source: " + ", ".join(_origins_to_pretty(origins)))
+    if lv.get("hasLevels"):
+        why.append(
+            f"Levels: {lv['setup']} · {lv['rr']:.2f}R · "
+            f"{lv['riskPct'] * 100:.1f}% to invalidation"
+        )
+    return why
+
+
+def _signal_shape(r: dict) -> dict:
+    """The object the SPA's AssetPage consumes. Hero cards and watchlist
+    rows both emit it, so every scored asset opens a full detail page —
+    not just the top 5."""
+    origins = (r.get("trail") or {}).get("watchlist_origins", []) or []
+    lv = _levels_for_row(r)
+    return {
+        "id": r["score_id"],
+        "asset": r["ticker"],
+        "name": r["name"] or r["ticker"],
+        "side": _side_with_levels(r["tier"], r.get("levels")),
+        "score": r["score"],
+        "scorePrev": r["prior_score"] if r["prior_score"] is not None else r["score"],
+        "tier": _tier_str(r["tier"]),
+        "regimeFit": (r.get("trail") or {}).get("active_framework_regime", "unknown"),
+        "whyNow": _why_now_bullets(r, origins, lv),
+        "sources": _origins_to_pretty(origins),
+        "lastUpdate": (r["scored_at"] or "")[11:16],  # HH:MM slice
+        # entry/stop/target/rr/setup + level provenance
+        **lv,
+    }
+
+
 def build_hero_signals_section() -> list[dict]:
     """Top 5 scored setups (from trade_scores).
 
@@ -672,43 +718,7 @@ def build_hero_signals_section() -> list[dict]:
       id, asset, name, side, score, scorePrev, tier, setup,
       regimeFit, entry, stop, target, rr, whyNow[], sources[], lastUpdate
     """
-    rows = _load_latest_scores()
-    top = rows[:5]
-    out = []
-    for r in top:
-        origins = r["trail"].get("watchlist_origins", []) if r["trail"] else []
-        why = []
-        # Translate trail bits into bullets the user can scan
-        if r["trail"].get("active_thesis_regime"):
-            why.append(f"Regime fit: {r['trail']['active_thesis_regime']} ({r['trail'].get('active_framework_regime', '—')})")
-        if r["trail"].get("regime_modifier"):
-            why.append(f"Regime modifier: {r['trail']['regime_modifier']:+d}")
-        if origins:
-            why.append("Watchlist source: " + ", ".join(_origins_to_pretty(origins)))
-
-        lv = _levels_for_row(r)
-        if lv["hasLevels"]:
-            why.append(
-                f"Levels: {lv['setup']} · {lv['rr']:.2f}R · "
-                f"{lv['riskPct'] * 100:.1f}% to invalidation"
-            )
-
-        out.append({
-            "id": r["score_id"],
-            "asset": r["ticker"],
-            "name": r["name"] or r["ticker"],
-            "side": _side_with_levels(r["tier"], r.get("levels")),
-            "score": r["score"],
-            "scorePrev": r["prior_score"] if r["prior_score"] is not None else r["score"],
-            "tier": _tier_str(r["tier"]),
-            "regimeFit": r["trail"].get("active_framework_regime", "unknown"),
-            "whyNow": why,
-            "sources": _origins_to_pretty(origins),
-            "lastUpdate": (r["scored_at"] or "")[11:16],  # HH:MM slice
-            # entry/stop/target/rr/setup + level provenance
-            **lv,
-        })
-    return out
+    return [_signal_shape(r) for r in _load_latest_scores()[:5]]
 
 
 def build_watchlist_section() -> list[dict]:
@@ -723,27 +733,18 @@ def build_watchlist_section() -> list[dict]:
     for r in rows:
         origins = r["trail"].get("watchlist_origins", []) if r["trail"] else []
         out.append({
-            "asset": r["ticker"],
-            "name": r["name"] or r["ticker"],
+            # Table columns …
             "assetClass": r["asset_class"],
-            "side": _side_with_levels(r["tier"], r.get("levels")),
-            "score": r["score"],
             "dScore": r["d_score"],
-            "tier": _tier_str(r["tier"]),
             "regime": "fit" if r["macro"] >= 12 else ("mix" if r["macro"] >= 6 else "off"),
             "tech": _grade_letter(r["tech"], 20),
             "vol": _grade_letter(r["vol"], 15),
-            # Real planned R/R from the technical agent; falls back to the
-            # old sub-score approximation for rows scored before levels.
-            "rr": (
-                round(float((r.get("levels") or {}).get("rr") or 0.0), 2)
-                if r.get("levels")
-                else (r["rr"] / 10.0 * 4 if r["rr"] else 0)
-            ),
-            "setup": ((r.get("levels") or {}).get("setup") or None),
-            "levelStructural": bool((r.get("levels") or {}).get("structural")),
             "last": (r["scored_at"] or "")[11:16],
             "origins": _origins_to_pretty(origins),
+            # … plus the full AssetPage signal shape (id, levels, whyNow),
+            # so clicking any row opens the same detail page a hero card
+            # does. rr/side/setup come from the technical agent here.
+            **_signal_shape(r),
         })
     return out
 
@@ -763,6 +764,40 @@ def _grade_letter(score: int, max_score: int) -> str:
     return "D"
 
 
+def build_price_series_section(days: int = 180) -> dict[str, list[float]]:
+    """Daily closes per scored ticker — {ticker: [close, …]} oldest first.
+
+    The asset page's PriceChart and the SetupCard divergence check both
+    read `MA_DATA.priceSeries`; before this the key existed only in
+    data.mock.js, so every real asset rendered "No price series".
+    """
+    rows = _load_latest_scores()
+    tickers = [r["ticker"] for r in rows if r.get("ticker")]
+    if not tickers or not settings.sqlite_path.exists():
+        return {}
+    cutoff = (datetime.now(UTC) - timedelta(days=days)).date().isoformat()
+    out: dict[str, list[float]] = {}
+    with sqlite3.connect(settings.sqlite_path) as conn:
+        placeholders = ",".join("?" * len(tickers))
+        cur = conn.execute(
+            f"""
+            SELECT ticker, observed_at, close
+            FROM prices
+            WHERE ticker IN ({placeholders})
+              AND timeframe = '1D'
+              AND observed_at >= ?
+            ORDER BY ticker, observed_at ASC
+            """,
+            (*tickers, cutoff),
+        )
+        for ticker, _observed_at, close in cur.fetchall():
+            if close is None:
+                continue
+            out.setdefault(ticker, []).append(round(float(close), 6))
+    # A 2-point line is noise, not a chart.
+    return {t: v for t, v in out.items() if len(v) >= 10}
+
+
 def build_active_trades_section() -> list[dict]:
     """Trades user has open.
 
@@ -772,6 +807,64 @@ def build_active_trades_section() -> list[dict]:
     """
     # TODO: SELECT * FROM trades WHERE status='active'
     return []
+
+
+def _asset_signals(conn: sqlite3.Connection, ticker: str, limit: int = 8) -> list[dict]:
+    """The tracked-voice calls behind one ticker — what the asset page
+    means by "where it sits in the signals".
+
+    Each row carries the call as drawn (side, conviction, entry/stop/
+    target), who made it, and the chart image it was extracted from so
+    the operator can check the agent's levels against the human's.
+    """
+    try:
+        rows = conn.execute(
+            """
+            SELECT s.signal_id, s.side, s.conviction, s.horizon,
+                   s.entry_zone_low, s.entry_zone_high, s.stop_loss,
+                   s.target_1, s.thesis_summary, s.source_channel,
+                   s.author_id, s.extracted_at,
+                   d.attachment_path, d.attachment_paths_json, d.url,
+                   d.published_at
+            FROM signals s
+            LEFT JOIN documents d ON d.document_id = s.document_id
+            WHERE s.asset_ticker = ?
+              AND s.status = 'active'
+            ORDER BY datetime(COALESCE(d.published_at, s.extracted_at)) DESC
+            LIMIT ?
+            """,
+            (ticker, limit),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return []  # signals table not present on a pre-migration DB
+
+    out: list[dict] = []
+    for r in rows:
+        chart = r[12]
+        if not chart and r[13]:
+            try:
+                paths = json.loads(r[13]) or []
+                chart = paths[0] if paths else None
+            except Exception:
+                chart = None
+        out.append({
+            "signalId": r[0],
+            "side": r[1],
+            "conviction": round(float(r[2]), 2) if r[2] is not None else None,
+            "horizon": r[3],
+            "entryLow": r[4],
+            "entryHigh": r[5],
+            "stop": r[6],
+            "target": r[7],
+            "thesis": (str(r[8])[:220] if r[8] else None),
+            "channel": r[9],
+            "authorId": r[10],
+            # Served by the /uploads mount in api/main.py.
+            "chartUrl": (f"/{chart}" if chart else None),
+            "url": r[14],
+            "at": (r[15] or r[11] or "")[:16].replace("T", " "),
+        })
+    return out
 
 
 def build_reasoning_section() -> dict:
@@ -904,6 +997,14 @@ def build_reasoning_section() -> dict:
         }
         if signal_windows is not None:
             entry["signalWindows"] = signal_windows
+        # The tracked-voice calls behind this ticker, with their charts.
+        try:
+            with sqlite3.connect(settings.sqlite_path) as _sconn:
+                asset_signals = _asset_signals(_sconn, r["ticker"])
+        except Exception:
+            asset_signals = []
+        if asset_signals:
+            entry["assetSignals"] = asset_signals
         # Technical agent provenance for the reasoning trail: which
         # detector fired, whether it was structural, and its notes.
         lv = r.get("levels") or None
@@ -1759,6 +1860,7 @@ def build_desk_snapshot() -> dict:
         ("liveSignals", build_live_signals_section, list),
         ("dataHealth", build_data_health_section, lambda: {"sources": [], "as_of": None}),
         ("watchlist", build_watchlist_section, list),
+        ("priceSeries", build_price_series_section, dict),
         ("activeTrades", build_active_trades_section, list),
         ("reasoning", build_reasoning_section, dict),
         ("closedTrades", build_closed_trades_section, list),

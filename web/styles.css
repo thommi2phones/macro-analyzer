@@ -5220,3 +5220,43 @@ body { font-size: 15.5px; }
 .wl-group-count {
   font-size: 10.5px; color: var(--text-mute-3); margin-left: 8px;
 }
+
+
+/* ── Watchlist rows open the asset page ── */
+.wl-clickable { cursor: pointer; }
+.wl-clickable:hover { background: var(--bg-card-2); }
+.wl-clickable:hover .asset-cell { text-decoration: underline; }
+
+/* ── Signals behind this asset (chart + drawn levels per call) ── */
+.asig-list { display: flex; flex-direction: column; gap: 10px; }
+.asig-row {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px; align-items: start;
+  padding: 10px; border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm); background: var(--bg-card);
+}
+.asig-thumb-wrap { display: block; }
+.asig-thumb {
+  width: 96px; height: 64px; object-fit: cover;
+  border-radius: var(--r-xs); border: 1px solid var(--line-2);
+}
+.asig-thumb-none {
+  width: 96px; height: 64px; display: flex;
+  align-items: center; justify-content: center;
+  border: 1px dashed var(--line-2); border-radius: var(--r-xs);
+  color: var(--text-mute-3); font-size: 10px;
+}
+.asig-body { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.asig-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.asig-conv, .asig-horizon {
+  font-size: 10.5px; color: var(--text-mute);
+  border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 7px;
+}
+.asig-when, .asig-chan { font-size: 10.5px; }
+.asig-levels { display: flex; gap: 12px; flex-wrap: wrap; color: var(--text-mute); }
+.asig-div { color: var(--amber); }
+.asig-thesis {
+  font-size: 12.5px; color: var(--text-mute);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}

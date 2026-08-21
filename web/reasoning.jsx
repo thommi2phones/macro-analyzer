@@ -187,6 +187,78 @@ const LEVELS_REASON = {
 };
 
 // ───────────────────────────────────────────────────────────────
+// AssetSignalCalls — the tracked-voice calls behind this ticker.
+// Answers "which charts drove this, and where does it sit in the tape":
+// each call shows the chart it was read from, the levels the human drew,
+// and how they compare with the agent's own rails.
+// ───────────────────────────────────────────────────────────────
+function AssetSignalCalls({ calls, signal }) {
+  if (!calls || !calls.length) return null;
+  const agentEntry = signal.entry || 0;
+  const kolEntry = (c) => {
+    const lo = c.entryLow, hi = c.entryHigh;
+    if (lo && hi) return (lo + hi) / 2;
+    return lo || hi || null;
+  };
+  return (
+    <div className="rt-section">
+      <div className="rt-section-head">
+        <span className="rt-section-num mono">S</span>
+        <span>Signals behind this asset</span>
+        <span className="rt-section-sub">{calls.length} · newest first</span>
+      </div>
+      <div className="asig-list">
+        {calls.map(c => {
+          const ke = kolEntry(c);
+          // Divergence between the human's entry and the agent's rails —
+          // the whole point of showing them side by side.
+          const div = ke && agentEntry ? ((agentEntry - ke) / ke) * 100 : null;
+          const sideCls = (c.side || "").toLowerCase();
+          return (
+            <div key={c.signalId} className="asig-row">
+              {c.chartUrl ? (
+                <a href={c.chartUrl} target="_blank" rel="noreferrer" className="asig-thumb-wrap">
+                  <img className="asig-thumb" src={c.chartUrl} alt={`${signal.asset} chart`}
+                       onError={(e) => { e.target.style.display = "none"; }} />
+                </a>
+              ) : (
+                <div className="asig-thumb-none mono">no chart</div>
+              )}
+              <div className="asig-body">
+                <div className="asig-head">
+                  <span className={`side-label side-${sideCls}`}>{c.side || "—"}</span>
+                  {c.conviction != null && (
+                    <span className="asig-conv mono" title="extractor conviction (0-5)">
+                      conv {c.conviction.toFixed(1)}
+                    </span>
+                  )}
+                  {c.horizon && <span className="asig-horizon mono">{c.horizon}</span>}
+                  <span className="asig-when mono muted">{c.at}</span>
+                  {c.channel && <span className="asig-chan mono muted">{c.channel}</span>}
+                </div>
+                {(ke || c.stop || c.target) && (
+                  <div className="asig-levels mono small">
+                    {ke && <span>entry {fmtPrice(ke)}</span>}
+                    {c.stop ? <span className="red">stop {fmtPrice(c.stop)}</span> : null}
+                    {c.target ? <span className="green">target {fmtPrice(c.target)}</span> : null}
+                    {div != null && Math.abs(div) >= 1 && (
+                      <span className="asig-div" title="agent entry vs this call's entry">
+                        agent {div > 0 ? "+" : ""}{div.toFixed(1)}%
+                      </span>
+                    )}
+                  </div>
+                )}
+                {c.thesis && <div className="asig-thesis">{c.thesis}</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────
 // AssetPage — full page for a single signal/asset.
 // ───────────────────────────────────────────────────────────────
 function AssetPage({ signal, onBack, returnTo }) {
@@ -708,6 +780,9 @@ function ReasoningTrail({ signal, hideHeader = false, hideFooter = false }) {
           {signal.whyNow.map((b, i) => <li key={i}>{b}</li>)}
         </ul>
       </div>
+
+      {/* S · Signals behind this asset (charts + drawn levels) */}
+      <AssetSignalCalls calls={r.assetSignals} signal={signal} />
 
       {/* C · Sources */}
       <div className="rt-section">

@@ -231,7 +231,10 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
                   {rows.map(r => {
                 const marked = activeConceptByAsset[r.asset];
                 return (
-                <tr key={r.asset} className={`tier-row tier-${r.tier}`}>
+                <tr key={r.asset}
+                    className={`tier-row tier-${r.tier} wl-clickable`}
+                    onClick={() => onOpenReasoning(r)}
+                    title={`Open ${r.asset} detail`}>
                   <td className="mono asset-cell">{r.asset}</td>
                   <td><SideLabel side={r.side} /></td>
                   <td className="num">
@@ -253,7 +256,8 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
                   <td>
                     {marked
                       ? <span className="status-chip status-active">● marked</span>
-                      : <button className="btn-ghost xs" onClick={() => advanceToConcept(r)}>
+                      : <button className="btn-ghost xs"
+                                onClick={(e) => { e.stopPropagation(); advanceToConcept(r); }}>
                           advance →
                         </button>}
                   </td>

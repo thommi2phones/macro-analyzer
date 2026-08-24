@@ -190,6 +190,59 @@ def _headline(alert: dict) -> str:
     return tail or title
 
 
+def _what_changed(alert: dict) -> str | None:
+    """The concrete fact behind an alert, pulled from its payload.
+
+    The direction rules describe their event in prose ("price reached a
+    support level worth charting") but the numbers stay in the payload,
+    so a line could say a level was reached without saying which level,
+    how far away, or from what. The generic clause is the *category*;
+    this is the observation.
+    """
+    payload = alert.get("payload") or {}
+    rule = alert.get("rule") or ""
+
+    if rule == "zone_arrival":
+        zone = payload.get("zone") or {}
+        price = zone.get("price")
+        if isinstance(price, (int, float)):
+            kind = zone.get("kind") or "level"
+            dist = zone.get("distance_pct")
+            away = (f", {abs(dist) * 100:.1f}% away"
+                    if isinstance(dist, (int, float)) else "")
+            touches = zone.get("touches")
+            held = f", held {touches}×" if touches else ""
+            return f"{kind} {price:,.6g}{held}{away}"
+
+    if rule == "horizon_divergence":
+        div = payload.get("divergence") or {}
+        windows = "/".join(div.get("diverging") or [])
+        short, long_ = div.get("short"), div.get("long")
+        if windows and short and long_:
+            return f"{windows} → {str(short).upper()} vs {str(long_).upper()} base"
+
+    if rule == "tape_flip":
+        flip = payload.get("flip") or {}
+        if flip.get("to"):
+            was = str(flip.get("from") or "neutral").upper()
+            return f"tape {was} → {str(flip['to']).upper()}"
+
+    if rule == "conviction_build":
+        build = payload.get("build") or {}
+        if build.get("to") is not None and build.get("from") is not None:
+            return (f"conviction {float(build['from']):+.2f} → "
+                    f"{float(build['to']):+.2f}")
+
+    if rule == "proven_voice_call":
+        voice = payload.get("voice") or {}
+        who = voice.get("display_name") or voice.get("author_id")
+        win = voice.get("setup_win_rate")
+        if who:
+            rate = f" ({win * 100:.0f}% setup win)" if isinstance(win, (int, float)) else ""
+            return f"{who}{rate} called it"
+    return None
+
+
 def _digest_line(alert: dict, *, now: datetime | None = None) -> str:
     """One scannable line: asset · score move · grade+tier · direction.
 
@@ -202,7 +255,10 @@ def _digest_line(alert: dict, *, now: datetime | None = None) -> str:
     dot = _SEVERITY_DOT.get(alert.get("severity"), _DEFAULT_DOT)
     ticker = _esc(alert.get("ticker") or "")
     before, after = alert.get("score_before"), alert.get("score_after")
-    move = f"{before}→{after}" if before is not None else str(after)
+    # A bare number reads as a delta. The direction rules fire on an
+    # event rather than a score move and carry no `score_before`, so
+    # theirs is labelled — "47" and "74→86" must not look alike.
+    move = f"{before}→{after}" if before is not None else f"score {after}"
     grade = _esc(alert.get("grade_after") or "")
     tier = _esc(alert.get("tier_after") or "")
     side = alert.get("side")
@@ -213,7 +269,11 @@ def _digest_line(alert: dict, *, now: datetime | None = None) -> str:
     # move — "74→86" is blank for them, so without this the line says
     # nothing. The digest's detail block drops the first body line as a
     # duplicate, which for these IS the headline.
-    what = _headline(alert)
+    # Prefer the observation over the category. "support 14.92, held 8×,
+    # 0.3% away" tells you what happened; "price reached a support level
+    # worth charting" only tells you what kind of thing happened, and the
+    # detail block below already carries that prose for the lead alert.
+    what = _what_changed(alert) or _headline(alert)
     if what:
         parts.append(f"· {_esc(what)}")
     # Stamp only alerts that didn't fire in this cycle — a redelivery
@@ -245,8 +305,13 @@ def _format_digest(alerts: list[dict]) -> str:
 
     now = datetime.now().astimezone()
     high = [a for a in alerts if a.get("severity") == "high"]
+    # "moved" is a claim about the score. When every alert in the batch
+    # fired on an event instead — a zone touch, a horizon flip — nothing
+    # moved, and saying so sends you looking for a delta that isn't there.
+    scored_moves = [a for a in alerts if a.get("score_before") is not None]
+    verb = "moved" if scored_moves else "flagged"
     head = (
-        f"{len(alerts)} setups moved"
+        f"{len(alerts)} setups {verb}"
         + (f" · {len(high)} crossed a band" if high else "")
     )
     header = [f"🔔 <b>{head}</b>", now.strftime("%a %-d %b · %H:%M"), ""]

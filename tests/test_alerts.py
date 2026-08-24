@@ -474,6 +474,53 @@ def test_side_comes_from_levels_then_voice_consensus(db):
     }) is None
 
 
+def test_event_alerts_label_the_score_instead_of_faking_a_delta():
+    """Direction rules fire on an event and carry no score_before. Bare
+    "47" reads as a move; "score 47" reads as a level."""
+    line = notify._digest_line({
+        "severity": "medium", "ticker": "VIX", "rule": "zone_arrival",
+        "score_before": None, "score_after": 47, "tier_after": "avoid",
+        "grade_after": "",
+    })
+    assert "score 47" in line
+    assert "→" not in line
+
+
+def test_header_says_flagged_when_nothing_actually_moved():
+    alerts = [{"severity": "medium", "ticker": f"T{i}", "rule": "zone_arrival",
+               "score_before": None, "score_after": 50, "tier_after": "tier_3",
+               "grade_after": "", "body": "x\n\ny"} for i in range(3)]
+    assert "3 setups flagged" in notify._format_digest(alerts)
+    alerts[0]["score_before"] = 40
+    assert "3 setups moved" in notify._format_digest(alerts)
+
+
+def test_zone_arrival_states_the_level_not_the_category():
+    """"price reached a support level worth charting" says what kind of
+    thing happened; the operator needs which level, how firm, how far."""
+    what = notify._what_changed({
+        "rule": "zone_arrival",
+        "payload": {"zone": {"price": 14.9213, "kind": "support",
+                             "touches": 8, "distance_pct": 0.014}},
+    })
+    assert "support" in what and "14.9213" in what
+    assert "8×" in what and "1.4% away" in what
+
+
+def test_horizon_divergence_names_the_windows_that_turned():
+    what = notify._what_changed({
+        "rule": "horizon_divergence",
+        "payload": {"divergence": {"short": "short", "long": "long",
+                                   "diverging": ["7d", "14d", "28d"]}},
+    })
+    assert "7d/14d/28d" in what and "SHORT" in what and "LONG" in what
+
+
+def test_unknown_rule_falls_back_to_the_prose_headline():
+    """_what_changed must never blank a line it doesn't recognise."""
+    assert notify._what_changed({"rule": "brand_new_rule", "payload": {}}) is None
+
+
 def test_html_in_a_ticker_cannot_break_the_send():
     text = notify._format({
         "severity": "high", "ticker": "<b>", "title": "A & B <script>",

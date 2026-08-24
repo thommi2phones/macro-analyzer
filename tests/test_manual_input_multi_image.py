@@ -36,7 +36,16 @@ def _payload(paths: list[str]) -> ManualInputPayload:
     return ManualInputPayload(
         text="$BTC breakout retest, multi-timeframe view",
         metadata=ManualMetadata(ticker="BTC", side="LONG", conviction=4, timeframe="4H"),
-        author=AuthorRef(display_name="Capo", channel="BWatch chat", channel_type="telegram"),
+        # Seeded author on purpose. list_recent_inputs only returns docs
+        # whose author is on the seeded allowlist — that gate exists
+        # because the gov-insider / lobbying / social / corp-insider
+        # scrapers all write manual_chart+manual_note rows too, so
+        # content_type can't separate them. An unseeded name like
+        # "Capo/BWatch chat" ingests fine but is correctly hidden from
+        # history, which has nothing to do with the path hydration this
+        # test is actually about.
+        author=AuthorRef(display_name="Big_Nuts", channel="Feather Hands",
+                         channel_type="telegram"),
         attachment_paths=paths,
     )
 

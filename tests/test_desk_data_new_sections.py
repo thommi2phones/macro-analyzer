@@ -150,6 +150,19 @@ def _insert_signal(
 ) -> None:
     _insert_doc(db_path, doc_id=f"d-{sid or ticker}")
     with sqlite3.connect(db_path) as conn:
+        # build_live_signals_section drops any ticker that has no price
+        # history and isn't tracked crypto (desk_data._is_real) — that's
+        # the memecoin/trenching filter on the live feed. A real equity
+        # signal always has bars behind it, so give the fixture one;
+        # without it the whole section comes back empty.
+        conn.execute(
+            "INSERT OR IGNORE INTO prices (price_id, ticker, observed_at, "
+            "timeframe, open, high, low, close, volume, provider, fetched_at) "
+            "VALUES (?, ?, ?, '1D', 100.0, 101.0, 99.0, 100.5, 1000, "
+            "'test', ?)",
+            (f"px-{ticker}", ticker, extracted_at.date().isoformat(),
+             extracted_at.isoformat()),
+        )
         # author_id='self:me' is a stated author (seeded by
         # initialize_database); hero signals only surface allow-listed
         # authors — see authors.SEEDED_AUTHOR_WHERE.
@@ -196,6 +209,13 @@ def test_live_signals_truncates_thesis_summary(db):
     long_thesis = "x" * 500
     _insert_doc(db, "d-long")
     with sqlite3.connect(db) as conn:
+        # Same _is_real gate as _insert_signal covers — NVDA needs bars.
+        conn.execute(
+            "INSERT OR IGNORE INTO prices (price_id, ticker, observed_at, "
+            "timeframe, close, provider, fetched_at) VALUES "
+            "('px-NVDA', 'NVDA', '2026-08-24', '1D', 100.5, 'test', ?)",
+            (datetime.now(UTC).isoformat(),),
+        )
         conn.execute(
             "INSERT INTO signals (signal_id, document_id, extracted_at, "
             "asset_ticker, side, conviction, source_slug, author_id, "

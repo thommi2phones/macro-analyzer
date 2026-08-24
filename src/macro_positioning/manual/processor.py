@@ -294,7 +294,15 @@ def list_recent_inputs(limit: int = 50) -> list[dict]:
                 OR a.author_id LIKE 'stock-unlocked:%'
                 OR a.author_id LIKE 'wolf-of-all-streets:%'
                 OR a.author_id LIKE 'forward-guidance:%'
-                OR a.author_id = 'self:me'
+                -- The whole 'self:' namespace, not just the seeded
+                -- 'self:me'. An author is only created there by someone
+                -- posting through the manual ingest API with
+                -- channel='self' — no scraper writes it (production has
+                -- exactly one such author). Pinning to 'self:me' meant a
+                -- note filed under any other display name vanished from
+                -- history: ingest reported success, the row existed, and
+                -- the list came back empty.
+                OR a.author_id LIKE 'self:%'
                 OR a.author_id LIKE 'archive:%'
               )
             ORDER BY COALESCE(d.published_at, d.ingested_at) DESC

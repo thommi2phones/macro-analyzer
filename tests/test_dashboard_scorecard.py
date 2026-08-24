@@ -7,12 +7,22 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from macro_positioning.db.schema import initialize_database
 from macro_positioning.rules import reset_caches
+
+
+# Every metric in this panel is a 30-day rolling window, so fixture dates
+# have to be relative to the clock. They were pinned to 2026-05-01, which
+# worked the week they were written and silently zeroed every metric once
+# that date aged past 30 days — the failures read as "the scorecard is
+# broken" rather than "the fixtures expired".
+def _days_ago(n: int) -> str:
+    return (datetime.now(UTC) - timedelta(days=n)).isoformat()
 
 
 _EXPECTED_LABELS = [
@@ -67,9 +77,9 @@ def _seed_closed_trade(db: Path, trade_id: str, **fields) -> None:
         cols = {
             "trade_id": trade_id,
             "asset_id": aid,
-            "entry_date": "2026-05-01T00:00:00Z",
+            "entry_date": _days_ago(10),
             "entry_price": 100.0,
-            "exit_date": "2026-05-09T00:00:00Z",
+            "exit_date": _days_ago(2),
             "exit_price": 110.0,
             "position_size": 1.0,
             "stop_loss": 95.0,
@@ -97,7 +107,10 @@ def test_zero_state_when_db_missing(tmp_path: Path):
 
 def test_empty_db_yields_zero_metrics_but_optimistic_portfolio(tmp_path: Path):
     db = tmp_path / "scorecard.db"
-    initialize_database(db)
+    # Via _ensure_db, not initialize_database directly — see its comment:
+    # the autouse fixture has already pointed settings at this path, so a
+    # bare call trips the production-wipe guard.
+    _ensure_db(db)
     from macro_positioning.dashboard import desk_data
     out = desk_data.build_process_scorecard_section()
     assert [m["label"] for m in out["metrics"]] == _EXPECTED_LABELS
@@ -181,13 +194,15 @@ def test_plan_outcome_fidelity(tmp_path: Path):
             """INSERT INTO trade_plans (
                 plan_id, trade_id, created_at,
                 planned_entry, planned_stop, planned_size
-            ) VALUES ('p-a','trd-a','2026-05-01T00:00:00Z',100,95,1)"""
+            ) VALUES ('p-a','trd-a',?,100,95,1)""",
+                (_days_ago(10),)
         )
         conn.execute(
             """INSERT INTO trade_plans (
                 plan_id, trade_id, created_at,
                 planned_entry, planned_stop, planned_size
-            ) VALUES ('p-b','trd-b','2026-05-01T00:00:00Z',100,95,1)"""
+            ) VALUES ('p-b','trd-b',?,100,95,1)""",
+                (_days_ago(10),)
         )
         conn.commit()
     finally:

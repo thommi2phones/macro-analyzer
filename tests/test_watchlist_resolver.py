@@ -9,6 +9,13 @@ import pytest
 from macro_positioning.scoring.watchlist_resolver import resolve_watchlist
 
 
+# Fixed clock for document fixtures. It MUST also be handed to
+# resolve_watchlist(now=...) wherever documents are passed: mention
+# extraction filters on `published_at >= now - window_days`, so a test
+# that pins its docs here but lets the resolver read the real clock
+# silently scans zero documents once this date falls out of the window.
+# That is exactly how these tests rotted — written 2026-05-08, dead by
+# 2026-05-15.
 NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 
 
@@ -64,6 +71,7 @@ def test_mention_extraction_promotes_unanchored_ticker():
         framework_regime="commodity_led_inflation",
         documents=docs,
         mention_min_count=3,
+        now=NOW,
     )
     nvda = next((e for e in result.entries if e.ticker == "NVDA"), None)
     assert nvda is not None
@@ -95,6 +103,7 @@ def test_resolved_watchlist_includes_mention_summary():
         documents=docs,
         mention_windows=(7,),
         mention_min_count=2,
+        now=NOW,
     )
     assert 7 in result.mention_summary
     summary = result.mention_summary[7]

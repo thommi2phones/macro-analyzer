@@ -147,12 +147,23 @@ def author_attribution(
             "n_manual_documents": int(n_manual_docs),
             "n_authors_total": int(n_authors_total),
             "n_signals": 0,
+            # Branch on documents alone. Gating "no manual drops yet" on
+            # `n_authors_total == 0` as well meant it could never fire on a
+            # real database: initialize_database seeds ~15 authors on first
+            # boot, so an empty DB reported "…authors exist, but none
+            # mention an allow-listed ticker" — pointing whoever is
+            # debugging an empty panel at ticker matching when the actual
+            # answer is that nothing has been ingested.
             "message": (
                 "no author-attributed mentions"
-                + (" — no manual drops yet (input_authors is empty too)"
-                   if n_manual_docs == 0 and n_authors_total == 0 else
-                   f" — {n_manual_docs} manual docs and {n_authors_total} authors exist, "
-                   "but none mention an allow-listed ticker")
+                + (
+                    " — no manual drops yet"
+                    + (" (input_authors is empty too)" if n_authors_total == 0
+                       else f" ({n_authors_total} authors seeded, none have posted)")
+                    if n_manual_docs == 0 else
+                    f" — {n_manual_docs} manual docs and {n_authors_total} authors exist, "
+                    "but none mention an allow-listed ticker"
+                )
             ),
         }
         log.info("author_attribution: %s", meta["message"])

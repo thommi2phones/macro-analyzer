@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 
-from macro_positioning.alerts import notify, rules, store
+from macro_positioning.alerts import direction_rules, notify, rules, store
 from macro_positioning.core.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,13 @@ def run_alert_cycle(*, dry_run: bool = False) -> dict:
         cooldown = store.recent_fire_keys(
             hours=settings.alert_cooldown_hours, conn=conn
         )
+        # Score-band rules say the NUMBER moved; direction rules say the
+        # READ moved. Both ride the same cooldown, store and digest.
         fired = rules.evaluate(conn, cooldown_keys=cooldown)
+        try:
+            fired += direction_rules.evaluate(conn, cooldown_keys=cooldown)
+        except Exception:  # noqa: BLE001
+            logger.exception("direction rules failed; score alerts still sent")
 
         if dry_run:
             return {

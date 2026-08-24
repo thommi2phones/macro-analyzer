@@ -171,6 +171,25 @@ def _format(alert: dict) -> str:
     return text[:_MAX_LEN]
 
 
+# Rules whose news is the headline rather than a score crossing.
+_DIRECTION_RULES = {
+    "tape_flip", "horizon_divergence", "conviction_build",
+    "proven_voice_call", "zone_arrival",
+}
+
+
+def _headline(alert: dict) -> str:
+    """The "what changed" phrase from a direction alert's title.
+
+    Titles are "TICKER · headline"; the ticker is already on the line.
+    """
+    if alert.get("rule") not in _DIRECTION_RULES:
+        return ""
+    title = alert.get("title") or ""
+    _, _, tail = title.partition(" · ")
+    return tail or title
+
+
 def _digest_line(alert: dict, *, now: datetime | None = None) -> str:
     """One scannable line: asset · score move · grade+tier · direction.
 
@@ -190,6 +209,13 @@ def _digest_line(alert: dict, *, now: datetime | None = None) -> str:
     parts = [f"{dot} <b>{ticker}</b>", move, f"{grade} · {tier}"]
     if side:
         parts.append(f"<b>{_esc(side)}</b>")
+    # Direction alerts carry their news in the headline, not in the score
+    # move — "74→86" is blank for them, so without this the line says
+    # nothing. The digest's detail block drops the first body line as a
+    # duplicate, which for these IS the headline.
+    what = _headline(alert)
+    if what:
+        parts.append(f"· {_esc(what)}")
     # Stamp only alerts that didn't fire in this cycle — a redelivery
     # after a failed send, or one fired before the bot was configured.
     # Same-cycle alerts are already covered by the header timestamp.

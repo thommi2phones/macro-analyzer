@@ -18,6 +18,8 @@ import base64
 import json
 import logging
 import re
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from macro_positioning.core.models import RawDocument
@@ -35,6 +37,10 @@ logger = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 PERSONAL_CREDENTIALS_PATH = Path("data/personal_gmail_credentials.json")
 
+# One command, quoted the same way everywhere it is suggested, so the
+# thing the log tells you to run is the thing that works.
+REAUTH_COMMAND = ".venv/bin/python scripts/gmail_auth.py"
+
 
 # ---------------------------------------------------------------------------
 # OAuth + service builder
@@ -42,6 +48,119 @@ PERSONAL_CREDENTIALS_PATH = Path("data/personal_gmail_credentials.json")
 
 def _token_path() -> Path:
     return Path(settings.personal_gmail_token_path or "data/personal_gmail_token.json")
+
+
+@dataclass
+class TokenHealth:
+    """Whether the Gmail token can still fetch, and what to do if not."""
+
+    state: str          # ok | expiring | expired | revoked | missing | no_credentials
+    message: str
+    needs_action: bool
+    expiry: datetime | None = None
+    hours_left: float | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "state": self.state, "message": self.message,
+            "needs_action": self.needs_action,
+            "expiry": self.expiry.isoformat() if self.expiry else None,
+            "hours_left": round(self.hours_left, 1) if self.hours_left is not None else None,
+        }
+
+
+def token_health(*, attempt_refresh: bool = True) -> TokenHealth:
+    """Report on the cached token, repairing it when a refresh still works.
+
+    Never opens a browser, so it is safe from launchd. `attempt_refresh`
+    is what distinguishes "the access token aged out" (normal, silently
+    fixable) from "the refresh token is dead" (needs a human) — the two
+    are indistinguishable without asking Google.
+
+    Why this exists: the OAuth client is in Google's *Testing* publishing
+    status, and Google expires refresh tokens issued by a testing app
+    after 7 days. That is the weekly breakage. Publishing the consent
+    screen to Production removes it for good; until then this check is
+    what turns a silent STEP FAIL into a prompt.
+    """
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+
+    if not PERSONAL_CREDENTIALS_PATH.exists():
+        return TokenHealth(
+            state="no_credentials", needs_action=True,
+            message=(f"No OAuth client at {PERSONAL_CREDENTIALS_PATH} — "
+                     "Gmail ingestion cannot run at all."),
+        )
+
+    token_path = _token_path()
+    if not token_path.exists():
+        return TokenHealth(
+            state="missing", needs_action=True,
+            message=f"No cached token at {token_path}. Run: {REAUTH_COMMAND}",
+        )
+
+    try:
+        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+    except Exception as exc:  # noqa: BLE001
+        return TokenHealth(
+            state="missing", needs_action=True,
+            message=f"Cached token unreadable ({exc}). Run: {REAUTH_COMMAND}",
+        )
+
+    expiry = getattr(creds, "expiry", None)
+    if expiry is not None and expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=UTC)
+    hours_left = (
+        (expiry - datetime.now(UTC)).total_seconds() / 3600.0
+        if expiry else None
+    )
+
+    if creds.valid:
+        return TokenHealth(
+            state="ok", needs_action=False, expiry=expiry, hours_left=hours_left,
+            message=f"Token valid for another {hours_left:.1f}h." if hours_left
+                    else "Token valid.",
+        )
+
+    if not (creds.expired and creds.refresh_token):
+        return TokenHealth(
+            state="expired", needs_action=True, expiry=expiry, hours_left=hours_left,
+            message=f"Token expired with no refresh token. Run: {REAUTH_COMMAND}",
+        )
+
+    if not attempt_refresh:
+        return TokenHealth(
+            state="expired", needs_action=True, expiry=expiry, hours_left=hours_left,
+            message="Access token expired; refresh not attempted.",
+        )
+
+    try:
+        creds.refresh(Request())
+        _save_credentials(creds)
+        new_expiry = getattr(creds, "expiry", None)
+        if new_expiry is not None and new_expiry.tzinfo is None:
+            new_expiry = new_expiry.replace(tzinfo=UTC)
+        return TokenHealth(
+            state="ok", needs_action=False, expiry=new_expiry,
+            hours_left=((new_expiry - datetime.now(UTC)).total_seconds() / 3600.0
+                        if new_expiry else None),
+            message="Access token refreshed silently.",
+        )
+    except Exception as exc:  # noqa: BLE001
+        # invalid_grant is the tell: Google revoked the refresh token,
+        # which for a testing-status app happens 7 days after issue.
+        revoked = "invalid_grant" in str(exc)
+        return TokenHealth(
+            state="revoked" if revoked else "expired",
+            needs_action=True, expiry=expiry, hours_left=hours_left,
+            message=(
+                ("Refresh token rejected (invalid_grant) — Google expires these "
+                 "after 7 days while the OAuth consent screen is in Testing. "
+                 if revoked else f"Token refresh failed: {exc}. ")
+                + f"Run: {REAUTH_COMMAND}"
+            ),
+        )
 
 
 def get_credentials():

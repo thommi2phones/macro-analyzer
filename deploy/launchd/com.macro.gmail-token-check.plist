@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.macro.gmail-token-check</string>
+
+    <!-- Same interpreter rationale as the other jobs: this venv python
+         holds Full Disk Access, so launchd can reach the repo under
+         ~/Documents. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/thom/Documents/Personal/Code Projects/Macro Analyzer/.venv/bin/python</string>
+        <string>scripts/gmail_auth.py</string>
+        <string>--check</string>
+        <string>--notify</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/thom/Documents/Personal/Code Projects/Macro Analyzer</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/thom/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- 05:45 daily, ahead of the 06:00 free-ingest run: if the token is
+         dead the reminder lands before the job that would have failed on
+         it, so a morning re-auth restores that same run.
+
+         Daily rather than weekly on purpose. The refresh token dies 7
+         days after issue, not on a fixed weekday, so a weekly ping would
+         be up to 6 days late. This checks every morning and stays silent
+         unless a human is actually needed — on a healthy day it renews
+         the access token and says nothing. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key><integer>5</integer>
+        <key>Minute</key><integer>45</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/thom/Library/Logs/macro-gmail-token-check.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/thom/Library/Logs/macro-gmail-token-check.err.log</string>
+</dict>
+</plist>

@@ -33,6 +33,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("alert_watch")
 
+# Providers put credentials in the URL (FRED's api_key query param,
+# Telegram's bot token path segment) and httpx logs every request line at
+# INFO. launchd sends this job's output to ~/Library/Logs, so without
+# this the key lands on disk on every run.
+from macro_positioning.core.log_redaction import install as _install_redaction  # noqa: E402
+_install_redaction()
+
 
 def _refresh_prices() -> str:
     """Pull fresh daily bars for everything the scorer will look at.

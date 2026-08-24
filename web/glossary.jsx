@@ -95,7 +95,11 @@ const MA_GLOSSARY = {
     vol: "Volume confirmation as a letter grade — its share of the 15 points available.",
     regime: "Macro alignment bucket: fit ≥12 of 15 · mixed ≥6 · off below 6.",
     setup: "Which detector produced the levels — a structural read, or mechanical ATR rails when no structure was found.",
-    levels: "Entry, stop and target from the technical agent. Structural stops sit at invalidation; mechanical rails are a 2×ATR stop with a 3R target.",
+    levels: "Entry, stop and target from the technical agent. Stops clear the far edge of a real swing zone; targets are the next supply zone overhead. Where the chart has nothing overhead the target is an honest R-multiple projection, labelled 'open field'.",
+    levelSource:
+      "Chart structure = a swing zone, scored by touches, recency, volume and whether it flipped polarity. Trusted voices = levels your own followed sources drew, weighted by their backtested setup win rate. Open field = no zone in range, so the target is a 3R projection rather than an observed level.",
+    refusedLevel:
+      "A level that was considered and rejected — stale, on the wrong side of price, or implying risk outside the tradeable band. Shown rather than hidden so a missing human target is never silent.",
     side: "LONG/SHORT come from the tracked-voice bias; WATCH and AVOID come from the tier.",
     notRanking:
       "This component returned the same value for every asset in the pass, so it shifts every total equally and separates nothing. Checked per pass — the flag clears itself once the component starts discriminating.",

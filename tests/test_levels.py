@@ -156,3 +156,170 @@ def test_side_from_signal_bias():
         {"bias_direction": "short", "bias_confidence": 0.8}) == "SHORT"
     assert side_from_signal_bias(
         {"bias_direction": "exit_bias", "bias_confidence": 1.0}) == "LONG"
+
+
+# ---------------------------------------------------------------------------
+# v2 — structure + trusted-voice fusion
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from macro_positioning.prices.structure import Level, StructureMap  # noqa: E402
+
+
+def _feats(close=100.0, atr=4.0, **kw):
+    base = {"close": close, "atr14": atr, "n_bars": 200}
+    base.update(kw)
+    return base
+
+
+def _zone(price, kind, *, low=None, high=None, strength=0.8, touches=3):
+    return Level(
+        price=price, low=low if low is not None else price - 0.5,
+        high=high if high is not None else price + 0.5,
+        kind=kind, touches=touches, last_touch_bars=10, span_bars=60,
+        strength=strength, basis=f"{kind} {price:.4g}, held {touches}×",
+    )
+
+
+def _consensus(price, *, trusted=True, win=0.8, name="OG Whales"):
+    contributor = SimpleNamespace(
+        author_id=name.lower(), display_name=name, price=price, weight=0.7,
+        setup_win_rate=win, meaningful=trusted, n_calls=60, conviction=4.0,
+        at="2026-08-22 09:00", thesis=None, chart_url=None,
+        __dict__={"display_name": name, "setup_win_rate": win,
+                  "meaningful": trusted, "at": "2026-08-22 09:00"},
+    )
+    return SimpleNamespace(
+        price=price, weight=0.7, contributors=[contributor], trusted=trusted,
+        basis=f"{name} ({int(win * 100)}% setup win over 60 calls)",
+    )
+
+
+def _kol(entry=None, stop=None, target=None):
+    return SimpleNamespace(
+        entry=entry, stop=stop, target=target, n_signals=3, side="LONG",
+    )
+
+
+# --- structure drives the rails ----------------------------------------
+
+def test_target_comes_from_the_next_supply_zone_not_an_r_multiple():
+    st = StructureMap(supports=[_zone(94, "support")], resistances=[_zone(118, "resistance")])
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=st)
+    assert ls.target == 118 - 0.5, "sell into the near edge of the zone"
+    assert ls.version == "v2"
+    target_row = next(p for p in ls.provenance if p["role"] == "target")
+    assert target_row["source"] == "structure"
+    assert "held 3×" in target_row["basis"]
+
+
+def test_stop_clears_the_far_edge_of_the_support_zone():
+    st = StructureMap(supports=[_zone(96, "support", low=95.0, high=97.0)], resistances=[])
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=st)
+    assert ls.stop < 95.0, "a stop inside the zone gets hit by noise"
+    assert ls.structural is True
+
+
+def test_no_overhead_structure_says_open_field_rather_than_faking_a_level():
+    """A name at all-time highs has nothing above it. The R-multiple is
+    fine there — pretending it's an observed level is not."""
+    st = StructureMap(supports=[_zone(94, "support")], resistances=[])
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=st)
+    target_row = next(p for p in ls.provenance if p["role"] == "target")
+    assert target_row["source"] == "open_field"
+    assert "no supply zone in range" in target_row["basis"]
+
+
+def test_a_wisp_of_resistance_is_not_a_target():
+    weak = StructureMap(supports=[_zone(94, "support")],
+                        resistances=[_zone(118, "resistance", strength=0.05)])
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=weak)
+    assert next(p for p in ls.provenance if p["role"] == "target")["source"] == "open_field"
+
+
+# --- the gates on borrowed levels --------------------------------------
+
+def test_a_target_behind_price_is_refused_as_already_played_out():
+    ls, _ = synthesize_levels(_feats(), side="LONG", kol=_kol(target=_consensus(80)))
+    assert not any(p["role"] == "target" and p["source"] == "trusted_voices"
+                   for p in ls.provenance)
+    assert any("already played out" in r["reason"] for r in ls.rejected)
+
+
+def test_a_stop_on_the_wrong_side_of_price_is_refused():
+    ls, _ = synthesize_levels(_feats(), side="LONG", kol=_kol(stop=_consensus(120)))
+    assert any("wrong side of price" in r["reason"] for r in ls.rejected)
+
+
+def test_a_level_from_a_different_price_regime_is_refused():
+    ls, _ = synthesize_levels(_feats(), side="LONG", kol=_kol(target=_consensus(900)))
+    assert any("different regime" in r["reason"] for r in ls.rejected)
+
+
+def test_a_human_stop_implying_untradeable_risk_is_refused():
+    """0.1 ATR of risk is noise, not invalidation."""
+    ls, _ = synthesize_levels(_feats(), side="LONG", kol=_kol(stop=_consensus(99.6)))
+    assert any("outside the tradeable band" in r["reason"] for r in ls.rejected)
+
+
+def test_refusals_are_recorded_rather_than_silently_dropped():
+    ls, _ = synthesize_levels(_feats(), side="LONG", kol=_kol(target=_consensus(80)))
+    assert ls.rejected and ls.rejected[0]["who"], "a refusal must name whose level it was"
+
+
+# --- how structure and humans combine ----------------------------------
+
+def test_a_trusted_target_is_used_when_the_chart_offers_nothing():
+    st = StructureMap(supports=[_zone(94, "support")], resistances=[])
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=st,
+                              kol=_kol(target=_consensus(130)))
+    row = next(p for p in ls.provenance if p["role"] == "target")
+    assert row["source"] == "trusted_voices"
+    assert ls.target == 130
+    assert "OG Whales" in row["basis"]
+
+
+def test_a_nearer_human_target_wins_over_a_further_zone():
+    """Taking profit before the chart says to is the conservative error."""
+    st = StructureMap(supports=[_zone(94, "support")], resistances=[_zone(140, "resistance")])
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=st,
+                              kol=_kol(target=_consensus(120)))
+    assert ls.target == 120
+    assert next(p for p in ls.provenance if p["role"] == "target")["source"] == "trusted_voices"
+
+
+def test_a_further_human_target_does_not_override_the_zone():
+    st = StructureMap(supports=[_zone(94, "support")], resistances=[_zone(118, "resistance")])
+    # 130 is inside the distance gate (7.5 ATR) but beyond the zone, so
+    # it survives as a cross-check instead of moving the target.
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=st,
+                              kol=_kol(target=_consensus(130)))
+    assert next(p for p in ls.provenance if p["role"] == "target")["source"] == "structure"
+    check = next(p for p in ls.provenance if p["role"] == "target_crosscheck")
+    assert check["basis"] == "reaches beyond the zone"
+
+
+def test_structure_keeps_the_stop_and_the_human_becomes_corroboration():
+    st = StructureMap(supports=[_zone(96, "support", low=95.0, high=97.0)], resistances=[])
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=st,
+                              kol=_kol(stop=_consensus(94.6)))
+    assert next(p for p in ls.provenance if p["role"] == "stop")["source"] == "structure"
+    assert any(p["role"] == "stop_crosscheck" for p in ls.provenance)
+
+
+def test_every_rail_carries_a_reason():
+    st = StructureMap(supports=[_zone(94, "support")], resistances=[_zone(118, "resistance")])
+    ls, _ = synthesize_levels(_feats(), side="LONG", structure=st,
+                              kol=_kol(entry=_consensus(99)))
+    for role in ("entry", "stop", "target"):
+        row = next(p for p in ls.provenance if p["role"] == role)
+        assert row["basis"], f"{role} has no stated basis"
+        assert row["source"]
+
+
+def test_v1_behaviour_is_unchanged_without_context():
+    """Callers with only bars must still get levels."""
+    ls, _ = synthesize_levels(_feats())
+    assert ls.version == "v1"
+    assert ls.provenance == []

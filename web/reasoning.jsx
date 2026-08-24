@@ -198,6 +198,93 @@ const LEVELS_REASON = {
 };
 
 // ───────────────────────────────────────────────────────────────
+// LevelProvenance — why each rail sits where it sits.
+// A price with no reason behind it is the thing this desk is trying not
+// to be: every entry/stop/target names its source (a swing zone with its
+// touch count, a trusted voice with their resolution rate, or an honest
+// open-field projection), and refused levels stay visible with the reason
+// they were refused.
+// ───────────────────────────────────────────────────────────────
+const RAIL_SOURCE = {
+  structure: { label: "chart structure", cls: "prov-structure" },
+  trusted_voices: { label: "trusted voices", cls: "prov-voices" },
+  open_field: { label: "open field", cls: "prov-open" },
+  mechanical_v0: { label: "ATR fallback", cls: "prov-mech" },
+};
+
+function LevelProvenance({ provenance, rejected }) {
+  const rows = (provenance || []).filter(p => ["entry", "stop", "target"].includes(p.role));
+  const checks = (provenance || []).filter(p => (p.role || "").endsWith("_crosscheck"));
+  if (!rows.length) return null;
+  const srcOf = (s) => RAIL_SOURCE[s] || { label: (s || "").replace(/_/g, " "), cls: "prov-mech" };
+  return (
+    <div className="rt-section">
+      <div className="rt-section-head">
+        <span className="rt-section-num mono">L</span>
+        <span>How these levels were set</span>
+        <span className="rt-section-sub">{rows.length} rails · {checks.length} cross-checks</span>
+      </div>
+      <div className="prov-list">
+        {rows.map(p => {
+          const src = srcOf(p.source);
+          return (
+            <div key={p.role} className="prov-row">
+              <div className="prov-role mono">{p.role.toUpperCase()}</div>
+              <div className="prov-val mono">{fmtPrice(p.value)}</div>
+              <div className="prov-body">
+                <span className={`prov-chip mono ${src.cls}`}>{src.label}</span>
+                <span className="prov-basis">{p.basis}</span>
+                {(p.contributors || []).length > 0 && (
+                  <div className="prov-who">
+                    {p.contributors.map((c, i) => (
+                      <span key={i} className="prov-author" title={c.thesis || ""}>
+                        {c.display_name}
+                        <span className="muted">
+                          {" · "}
+                          {c.meaningful && c.setup_win_rate != null
+                            ? `${Math.round(c.setup_win_rate * 100)}% setup win`
+                            : "unproven"}
+                          {c.at ? ` · ${c.at}` : ""}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {checks.length > 0 && (
+        <div className="prov-checks">
+          {checks.map((p, i) => (
+            <div key={i} className="prov-check mono small">
+              <span className="prov-check-role">{p.role.replace("_crosscheck", "")} cross-check</span>
+              {" · "}{fmtPrice(p.value)}{" · "}{p.basis}
+              {p.who ? ` — ${p.who}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(rejected || []).length > 0 && (
+        <div className="prov-rejected">
+          <div className="prov-rej-head mono small">refused</div>
+          {rejected.map((p, i) => (
+            <div key={i} className="prov-check mono small">
+              <span className="prov-check-role">{p.role}</span>
+              {" · "}{fmtPrice(p.value)}{" · "}{p.reason}
+              {p.who ? ` — ${p.who}` : ""}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────
 // AssetSignalCalls — the tracked-voice calls behind this ticker.
 // Answers "which charts drove this, and where does it sit in the tape":
 // each call shows the chart it was read from, the levels the human drew,
@@ -805,6 +892,9 @@ function ReasoningTrail({ signal, hideHeader = false, hideFooter = false }) {
           {signal.whyNow.map((b, i) => <li key={i}>{b}</li>)}
         </ul>
       </div>
+
+      {/* L · Level provenance — the reason behind every rail */}
+      <LevelProvenance provenance={signal.levelProvenance} rejected={signal.levelRejected} />
 
       {/* S · Signals behind this asset (charts + drawn levels) */}
       <AssetSignalCalls calls={r.assetSignals} signal={signal} />

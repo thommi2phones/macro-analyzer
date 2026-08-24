@@ -5295,3 +5295,33 @@ body { font-size: 15.5px; }
 .ssb-is-flat .ssb-label { color: var(--text-mute-2); }
 .ssb-is-flat .ssb-fill { opacity: 0.45; }
 .ssb-note-flat { color: var(--text-mute-2); font-style: italic; }
+
+
+/* ── Level provenance: why each rail sits where it does ── */
+.prov-list { display: flex; flex-direction: column; gap: 8px; }
+.prov-row {
+  display: grid; grid-template-columns: 62px 96px minmax(0, 1fr);
+  gap: 10px; align-items: baseline;
+  padding: 9px 10px; border: 1px solid var(--line-soft);
+  border-radius: var(--r-sm); background: var(--bg-card);
+}
+.prov-role { font-size: 10px; letter-spacing: 0.08em; color: var(--text-mute-2); }
+.prov-val { font-size: 14px; font-weight: 600; }
+.prov-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.prov-chip {
+  align-self: flex-start; font-size: 9.5px; letter-spacing: 0.05em;
+  text-transform: uppercase; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--line-2); color: var(--text-mute);
+}
+.prov-structure { color: var(--green); border-color: color-mix(in srgb, var(--green) 45%, var(--line-2)); }
+.prov-voices    { color: var(--violet); border-color: color-mix(in srgb, var(--violet) 45%, var(--line-2)); }
+.prov-open      { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 45%, var(--line-2)); border-style: dashed; }
+.prov-mech      { color: var(--text-mute-3); border-style: dashed; }
+.prov-basis { font-size: 12px; color: var(--text-mute); }
+.prov-who { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; }
+.prov-author { color: var(--text); }
+.prov-checks, .prov-rejected { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.prov-rejected { opacity: 0.75; }
+.prov-rej-head { color: var(--red); letter-spacing: 0.08em; text-transform: uppercase; font-size: 9.5px; }
+.prov-check { color: var(--text-mute-2); }
+.prov-check-role { color: var(--text-mute); text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.06em; }

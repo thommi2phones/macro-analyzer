@@ -655,6 +655,10 @@ def _levels_for_row(r: dict) -> dict:
         "levelNotes": lv.get("notes") or [],
         # The framework-vocabulary name macro alignment scores against.
         "frameworkSetup": lv.get("frameworkSetup"),
+        # Where each rail came from (structure zone / trusted voice /
+        # open-field projection) and what was refused, with reasons.
+        "levelProvenance": lv.get("provenance") or [],
+        "levelRejected": lv.get("rejected") or [],
         "levelsReason": None,
     }
 
@@ -1050,6 +1054,8 @@ def build_reasoning_section() -> dict:
                 "version": lv.get("version"),
                 "notes": lv.get("notes") or [],
                 "frameworkSetup": lv.get("frameworkSetup"),
+                "provenance": lv.get("provenance") or [],
+                "rejected": lv.get("rejected") or [],
             }
         elif r.get("levels_reason"):
             entry["levels"] = {"reason": r["levels_reason"]}

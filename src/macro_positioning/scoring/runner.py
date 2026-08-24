@@ -37,9 +37,14 @@ from macro_positioning.market.fred_history import (
     latest_value,
 )
 from macro_positioning.prices.fetcher import load_recent_prices
+from macro_positioning.prices.structure import build_structure
 from macro_positioning.prices.technicals import (
     compute_technical_features,
     compute_volume_features,
+)
+from macro_positioning.scoring.kol_levels import (
+    author_weights,
+    kol_levels_for_ticker,
 )
 from macro_positioning.scoring.levels import (
     LevelSet,
@@ -468,6 +473,9 @@ def _persist_trade_score(
                 "version": level_set.version,
                 "notes": level_set.notes,
                 "frameworkSetup": framework_setup,
+                # Where each rail came from, and what was refused.
+                "provenance": level_set.provenance,
+                "rejected": level_set.rejected,
             }
         }
     elif level_reason:
@@ -584,11 +592,17 @@ def run_scoring_pass(
         ticker_features: dict[str, dict] = {}
         ticker_volume_features: dict[str, dict] = {}
         ticker_returns_20d: dict[str, float] = {}
+        # Swing-zone map per ticker — the level synthesizer places stops
+        # and targets on these instead of ATR multiples.
+        ticker_structure: dict[str, object] = {}
         for entry in resolved.entries:
             try:
                 bars = load_recent_prices(entry.ticker, days=200, conn=conn)
                 ticker_features[entry.ticker] = compute_technical_features(bars)
                 ticker_volume_features[entry.ticker] = compute_volume_features(bars)
+                ticker_structure[entry.ticker] = build_structure(
+                    bars, ticker_features[entry.ticker].get("atr14")
+                )
                 if len(bars) >= 21 and bars[-21].close:
                     ticker_returns_20d[entry.ticker] = (
                         bars[-1].close - bars[-21].close
@@ -596,6 +610,14 @@ def run_scoring_pass(
             except Exception:
                 ticker_features[entry.ticker] = {"n_bars": 0}
                 ticker_volume_features[entry.ticker] = {"n_volume_bars": 0}
+
+        # Backtested author weights for the trusted-voice level fusion.
+        # Computed once per pass, not per ticker — source_accuracy scans
+        # the whole call_outcomes table.
+        try:
+            pass_author_weights = author_weights()
+        except Exception:
+            pass_author_weights = {}
 
         # Theme rollup (one pass over docs)
         asset_themes_cfg = _load_asset_themes_config()
@@ -701,7 +723,23 @@ def run_scoring_pass(
                     # bias: only a confident short consensus flips the rails.
                     # No price or no ATR → no levels at all, never fake ones.
                     level_side = side_from_signal_bias(sig_agg)
-                    level_set, level_reason = synthesize_levels(feats, side=level_side)
+                    # Trusted-voice levels for this ticker: what the
+                    # operator's own sources drew, weighted by how often
+                    # their setups actually resolve.
+                    try:
+                        ticker_kol = kol_levels_for_ticker(
+                            conn, entry.ticker,
+                            atr=feats.get("atr14"),
+                            weights=pass_author_weights,
+                        )
+                    except Exception:
+                        ticker_kol = None
+                    level_set, level_reason = synthesize_levels(
+                        feats,
+                        side=level_side,
+                        structure=ticker_structure.get(entry.ticker),
+                        kol=ticker_kol,
+                    )
                     if level_set is not None:
                         entry_zone = level_set.entry
                         stop_loss = level_set.stop

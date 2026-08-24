@@ -217,6 +217,110 @@ def test_delta_pass_is_alertable_despite_being_thin(db):
     assert _rules_for(rules.evaluate(db)) == {("T0", "grade_cross_tier1")}
 
 
+# ── called levels ─────────────────────────────────────────────────────
+
+def _signal(db, ticker, side, stop, target, *, ago_hours=2, author="og-whales:x"):
+    db.execute(
+        "INSERT INTO documents (document_id, source_id, title, content_type,"
+        " published_at, ingested_at, raw_text, cleaned_text, tags_json)"
+        " VALUES (?, 'manual:t', '', 'manual_chart', datetime('now'),"
+        " datetime('now'), '', '', '[]')",
+        (f"doc-{ticker}-{stop}-{target}",),
+    )
+    db.execute(
+        """
+        INSERT INTO signals (signal_id, document_id, extracted_at, asset_ticker,
+            side, conviction, source_slug, author_id, extractor_name,
+            extractor_version, status, stop_loss, target_1)
+        VALUES (?, ?, ?, ?, ?, 3.0, 'manual', ?, 'manual_chart_extractor',
+                'v1', 'active', ?, ?)
+        """,
+        (f"sig-{ticker}-{stop}-{target}", f"doc-{ticker}-{stop}-{target}",
+         (datetime.now(UTC) - timedelta(hours=ago_hours)).isoformat(),
+         ticker, side, author, stop, target),
+    )
+    db.commit()
+
+
+def _price(db, ticker, close):
+    db.execute(
+        "INSERT OR REPLACE INTO prices (price_id, ticker, observed_at, timeframe,"
+        " close, provider, fetched_at) VALUES (?, ?, ?, '1D', ?, 'test', ?)",
+        (f"px-{ticker}", ticker, datetime.now(UTC).date().isoformat(), close,
+         datetime.now(UTC).isoformat()),
+    )
+    db.commit()
+
+
+def test_stale_called_levels_are_excluded_not_averaged(db):
+    """Real data: BTC closed at 77,755 while LONG "stops" ran to 130,000.
+    Averaging produced a median stop above spot — not a stop at all. Only
+    calls that still bracket the price describe a trade available now."""
+    _price(db, "BTC", 77_755)
+    _signal(db, "BTC", "LONG", 76_500, 84_000)     # brackets spot — live
+    _signal(db, "BTC", "LONG", 104_884, 110_000)   # stop above spot — stale
+    _signal(db, "BTC", "LONG", 130_000, 165_000)   # ditto
+    out = rules._called_levels(db, "BTC", "LONG", datetime.now(UTC).isoformat())
+    assert out["n_calls"] == 3
+    assert out["n_live"] == 1
+    assert out["live"][0]["stop"] == 76_500
+
+
+def test_short_calls_bracket_in_the_opposite_direction(db):
+    _price(db, "ETH", 2_000)
+    _signal(db, "ETH", "SHORT", 2_200, 1_800)      # stop above, target below — live
+    _signal(db, "ETH", "SHORT", 1_500, 1_200)      # already played out
+    out = rules._called_levels(db, "ETH", "SHORT", datetime.now(UTC).isoformat())
+    assert out["n_live"] == 1
+    assert out["live"][0]["stop"] == 2_200
+
+
+def test_called_levels_ignore_non_directional_sides(db):
+    """WATCH/EXIT/AVOID are not entries — a target on a WATCH row is not a
+    trade level."""
+    _price(db, "SOL", 100)
+    _signal(db, "SOL", "WATCH", 90, 120)
+    assert rules._called_levels(db, "SOL", "WATCH", datetime.now(UTC).isoformat()) is None
+
+
+def test_body_names_the_author_and_date_of_a_live_call(db):
+    _price(db, "SOL", 100)
+    _signal(db, "SOL", "LONG", 91.7, 108.5, author="feather-hands:big-nuts")
+    _score(db, "SOL", 74, ago_hours=24, pass_key="aaaaaaaa")
+    _score(db, "SOL", 86, ago_hours=1, pass_key="bbbbbbbb",
+           levels={"side": "LONG", "entry": 100, "stop": 95, "target": 115,
+                   "rr": 3.0, "setup": "20-bar breakout", "structural": True})
+    body = rules.evaluate(db)[0].body
+    assert "big-nuts" in body
+    assert "91.7" in body and "108.5" in body
+    assert "still bracket" in body
+
+
+def test_body_says_so_when_every_called_level_is_stale(db):
+    """"No levels" would be wrong — levels were published, they just no
+    longer describe an available trade."""
+    _price(db, "BTC", 77_755)
+    _signal(db, "BTC", "LONG", 104_884, 110_000)
+    _score(db, "BTC", 74, ago_hours=24, pass_key="aaaaaaaa")
+    _score(db, "BTC", 86, ago_hours=1, pass_key="bbbbbbbb",
+           levels={"side": "LONG", "entry": 77_755, "stop": 70_000,
+                   "target": 90_000, "rr": 3.0, "setup": "rails",
+                   "structural": False})
+    body = rules.evaluate(db)[0].body
+    assert "none still bracket" in body
+    assert "1 call(s) carried levels" in body
+
+
+def test_mechanical_agent_levels_are_labelled_as_placeholders(db):
+    """mechanical_v0 is a 2xATR guess, not a read. Presenting it as "the
+    levels" is how you act on a number nobody stands behind."""
+    _score(db, "ADM", 74, ago_hours=24, pass_key="aaaaaaaa")
+    _score(db, "ADM", 86, ago_hours=1, pass_key="bbbbbbbb",
+           levels={"side": "LONG", "entry": 50, "stop": 47, "target": 59,
+                   "rr": 3.0, "setup": "mechanical rails", "structural": False})
+    assert "placeholder rails" in rules.evaluate(db)[0].body
+
+
 # ── ordering + delivery shaping ───────────────────────────────────────
 
 def test_high_severity_leads_the_batch(db):

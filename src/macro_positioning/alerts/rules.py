@@ -189,6 +189,88 @@ def _side(row: dict) -> str | None:
     return None
 
 
+def _ref_price(conn: sqlite3.Connection, ticker: str, as_of: str) -> float | None:
+    """Latest close at or before `as_of` — the yardstick a level is judged against."""
+    row = conn.execute(
+        """
+        SELECT close FROM prices
+        WHERE ticker = ? AND timeframe = '1D' AND observed_at <= ?
+        ORDER BY observed_at DESC LIMIT 1
+        """,
+        (ticker.upper(), as_of[:10]),
+    ).fetchone()
+    return float(row[0]) if row and row[0] is not None else None
+
+
+def _called_levels(
+    conn: sqlite3.Connection, ticker: str, side: str | None, as_of: str,
+    *, days: int = 21,
+) -> dict | None:
+    """Published levels from tracked calls that are still live.
+
+    Distinct from `_levels`, which is the *technical agent's* synthesis.
+    Both matter: for the crypto majors the agent falls back to
+    `mechanical_v0` (2xATR stop / 3R target, flagged "placeholder until
+    structure forms") while the calls behind the same ticker carry real
+    published stops and targets.
+
+    "Still live" is load-bearing, and the reason this does not simply
+    average them. Aggregating 21 days of calls produced nonsense on real
+    data: BTC closed at 77,755 while the median LONG "stop" came out at
+    104,884 — above spot, i.e. not a stop at all. The values are a mix of
+    stale calls (correct when made, at a different price) and extraction
+    errors (SOL stops of 0.0004). A level only informs a trade you could
+    take now if it still brackets the current price in the direction of
+    the call, so that is the filter, and what it discards is reported
+    rather than hidden.
+    """
+    if side not in ("LONG", "SHORT"):
+        return None
+    rows = conn.execute(
+        """
+        SELECT extracted_at, author_id, stop_loss, target_1
+        FROM signals
+        WHERE asset_ticker = ? AND side = ? AND status = 'active'
+          AND extracted_at <= ?
+          AND extracted_at >= datetime(?, ?)
+          AND stop_loss IS NOT NULL AND target_1 IS NOT NULL
+        ORDER BY extracted_at DESC
+        """,
+        (ticker.upper(), side, as_of, as_of, f"-{int(days)} day"),
+    ).fetchall()
+    if not rows:
+        return None
+
+    ref = _ref_price(conn, ticker, as_of)
+    if ref is None or ref <= 0:
+        return {"n_calls": len(rows), "n_live": 0, "n_authors": 0,
+                "window_days": days, "ref_price": None, "live": []}
+
+    live = []
+    for extracted_at, author_id, stop, target in rows:
+        try:
+            stop, target = float(stop), float(target)
+        except (TypeError, ValueError):
+            continue
+        # Still live = spot sits between the stop and the target, on the
+        # correct side. A LONG whose stop is already above spot has been
+        # invalidated (or was never a stop); one whose target is below
+        # spot has already played out.
+        brackets = (stop < ref < target) if side == "LONG" else (target < ref < stop)
+        if brackets:
+            live.append({"extracted_at": extracted_at, "author_id": author_id,
+                         "stop": stop, "target": target})
+
+    return {
+        "n_calls": len(rows),
+        "n_live": len(live),
+        "n_authors": len({c["author_id"] for c in live if c["author_id"]}),
+        "window_days": days,
+        "ref_price": ref,
+        "live": live[:2],          # newest first, from the ORDER BY above
+    }
+
+
 def _band_label(score: int) -> str:
     if score >= A_PLUS_BAND:
         return "A+"
@@ -201,28 +283,69 @@ def _band_label(score: int) -> str:
     return "below watch"
 
 
-def _body(row: dict, prev: dict, *, headline: str) -> str:
+def _body(
+    row: dict, prev: dict, *, headline: str,
+    conn: sqlite3.Connection | None = None,
+) -> str:
     """The message the operator actually reads. Everything here has to
     earn its line: what changed, what the trade is, and where to look.
+
+    Levels come from two independent places and the message names which
+    is which — the technical agent's synthesis, and what the tracked
+    voices actually called. Conflating them would be the worst outcome:
+    the agent's `mechanical_v0` fallback is a 2xATR placeholder, not a
+    read, and presenting it as "the levels" while real published targets
+    exist is how you act on a number nobody stands behind.
     """
     lines = [headline, ""]
     lines.append(
         f"Score {prev['score']} → {row['score']} "
         f"({prev['grade']} → {row['grade']}, {row['tier']})"
     )
+
     lv = _levels(row)
+    side = _side(row)
     if lv and lv.get("entry"):
         rr = lv.get("rr")
+        structural = bool(lv.get("structural"))
         lines.append(
-            f"{lv.get('side', 'LONG')}  entry {lv['entry']:,.4g} · "
+            f"{lv.get('side', side or 'LONG')}  entry {lv['entry']:,.4g} · "
             f"stop {lv.get('stop', 0):,.4g} · target {lv.get('target', 0):,.4g}"
             + (f" · {rr:.1f}R" if isinstance(rr, (int, float)) else "")
         )
-        if lv.get("setup"):
-            lines.append(f"Setup: {lv['setup']}"
-                         + ("" if lv.get("structural") else " (mechanical rails)"))
-    else:
-        lines.append("No levels synthesized — structure hasn't formed yet.")
+        lines.append(
+            f"Agent: {lv.get('setup') or lv.get('method') or 'levels'}"
+            + ("" if structural else " — placeholder rails, no structure yet")
+        )
+
+    called = _called_levels(conn, row["ticker"], side, row["scored_at"]) if conn else None
+    if called and called["live"]:
+        ref = called["ref_price"]
+        lines.append(
+            f"Called levels — {called['n_live']} of {called['n_calls']} calls "
+            f"({called['n_authors']} author(s)) still bracket {ref:,.6g}:"
+        )
+        for c in called["live"]:
+            who = (c["author_id"] or "unknown").split(":")[-1]
+            lines.append(
+                f"  {who} {c['extracted_at'][:10]}: "
+                f"stop {c['stop']:,.6g} · target {c['target']:,.6g}"
+            )
+    elif called:
+        # Say so explicitly. "No levels" would be wrong — levels were
+        # published, they just no longer describe a trade available now.
+        lines.append(
+            f"{called['n_calls']} call(s) carried levels in {called['window_days']}d, "
+            f"but none still bracket "
+            + (f"{called['ref_price']:,.6g}" if called["ref_price"] else "spot")
+            + " — all played out, invalidated, or mis-extracted."
+        )
+    elif not lv or not lv.get("entry"):
+        lines.append(
+            "No levels — the technical agent found no structure and no "
+            "tracked call published one."
+        )
+
     lines.append("")
     lines.append("Open the chart before acting. This is a prompt to look, not a trade.")
     return "\n".join(lines)
@@ -273,7 +396,7 @@ def evaluate(
                 severity=severity,
                 ticker=ticker,
                 title=headline,
-                body=_body(now_row, prev_row, headline=headline),
+                body=_body(now_row, prev_row, headline=headline, conn=conn),
                 score_before=prev_row["score"],
                 score_after=now_row["score"],
                 grade_before=prev_row["grade"],
@@ -283,6 +406,9 @@ def evaluate(
                 score_id=now_row["score_id"],
                 payload={
                     "levels": _levels(now_row),
+                    "called_levels": _called_levels(
+                        conn, ticker, _side(now_row), now_row["scored_at"]
+                    ),
                     "prev_scored_at": prev_row["scored_at"],
                     "scored_at": now_row["scored_at"],
                     "delta": delta,

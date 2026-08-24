@@ -72,6 +72,11 @@ class ScoringRunSummary(BaseModel):
     watchlist_size: int
     scored: int
     persisted: int
+    # Rows the pass computed but didn't write because the state was
+    # identical to the last row (skip_unchanged=True). Always 0 for a
+    # normal snapshot pass.
+    skipped_unchanged: int = 0
+    pass_kind: str = "manual"
     errors: list[dict] = Field(default_factory=list)
     mention_summary: dict = Field(default_factory=dict)
 
@@ -83,6 +88,35 @@ class ScoringRunSummary(BaseModel):
 def _connect() -> sqlite3.Connection:
     initialize_database(settings.sqlite_path)
     return sqlite3.connect(settings.sqlite_path)
+
+
+def _load_last_persisted_state(conn: sqlite3.Connection) -> dict[str, tuple]:
+    """Most recent (score, grade, tier, signal_alignment) per ticker.
+
+    Feeds `skip_unchanged`: if a re-score reproduces this tuple exactly,
+    there is no state change to record. Deliberately ignores the
+    component sub-scores — they can wobble by a point without moving the
+    decision, and writing a row for that defeats the purpose.
+    """
+    rows = conn.execute(
+        """
+        WITH ranked AS (
+            SELECT a.ticker AS ticker,
+                   ts.adjusted_total_score, ts.grade,
+                   ts.position_size_tier, ts.signal_alignment_score,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY a.ticker ORDER BY ts.scored_at DESC
+                   ) AS rn
+            FROM trade_scores ts
+            JOIN technical_setups tset ON tset.setup_id = ts.setup_id
+            JOIN assets a ON a.asset_id = tset.asset_id
+        )
+        SELECT ticker, adjusted_total_score, grade,
+               position_size_tier, signal_alignment_score
+        FROM ranked WHERE rn = 1
+        """
+    ).fetchall()
+    return {str(r[0]).upper(): (r[1], r[2], r[3], r[4]) for r in rows}
 
 
 def _regime_read_from_blend(conn: sqlite3.Connection):
@@ -337,6 +371,7 @@ def _persist_trade_score(
     level_set: "LevelSet | None" = None,
     level_reason: str | None = None,
     framework_setup: str | None = None,
+    pass_kind: str = "manual",
 ) -> None:
     """Insert one row into trade_scores. Caller wraps in a transaction.
 
@@ -450,8 +485,8 @@ def _persist_trade_score(
             raw_total_score, adjusted_total_score,
             grade, position_size_tier,
             feature_vector_json, reasoning_trail_json,
-            signal_alignment_score, signal_aggregate_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            signal_alignment_score, signal_aggregate_json, pass_kind
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score.score_id,
@@ -477,6 +512,7 @@ def _persist_trade_score(
             # remains recoverable from signal_aggregate_json below.
             score.signal_alignment_score,
             json.dumps(signal_aggregate, default=str) if signal_aggregate else None,
+            pass_kind,
         ),
     )
 
@@ -490,6 +526,8 @@ def run_scoring_pass(
     framework_regime_hint: str | None = None,
     persist: bool = True,
     docs_window_days: int = 90,
+    pass_kind: str | None = None,
+    skip_unchanged: bool = False,
 ) -> ScoringRunSummary:
     """End-to-end scoring pass.
 
@@ -501,9 +539,22 @@ def run_scoring_pass(
         (useful for testing). Default True.
       docs_window_days: how far back to pull documents for mention
         extraction. 90d covers the longest mention window by default.
+      pass_kind: provenance stamped on every persisted row —
+        'scheduled' (launchd jobs), 'manual' (hand-run), or 'whatif'
+        (regime-hinted backtest). Defaults to 'whatif' when a hint is
+        given, else 'manual', so only a caller that says so gets treated
+        as an alertable pass by macro_positioning.alerts.
+      skip_unchanged: when True, don't write a row for a ticker whose
+        score, grade, tier and signal alignment all match its most recent
+        row. Lets the hourly alert watcher re-score cheaply without
+        adding ~1,500 identical rows a day; the surviving rows are exactly
+        the state *changes*, which is also what the alert rules compare.
     """
     run_id = str(uuid.uuid4())
     started_at = datetime.now(UTC)
+    if pass_kind is None:
+        pass_kind = "whatif" if framework_regime_hint else "manual"
+    skipped_unchanged = 0
 
     # 2. Load recent docs (for mention extraction)
     conn = _connect()
@@ -604,6 +655,14 @@ def run_scoring_pass(
         # ticker is normalised against the same pass.
         signal_pass_scale = directional_scale(ticker_signal_aggregates)
 
+        # 4c. Last persisted state per ticker — only needed when the
+        # caller asked us to write changes rather than a full snapshot.
+        # Read before BEGIN: mixing reads into the write transaction is
+        # the deadlock the price preload above already warns about.
+        last_state: dict[str, tuple] = {}
+        if persist and skip_unchanged:
+            last_state = _load_last_persisted_state(conn)
+
         # 5. Score each + persist
         errors: list[dict] = []
         scored_count = 0
@@ -693,19 +752,32 @@ def run_scoring_pass(
                     scored_count += 1
 
                     if persist:
-                        _persist_trade_score(
-                            conn,
-                            score=score,
-                            asset_id=f"asset-{entry.ticker.lower()}",
-                            asset_ticker=entry.ticker,
-                            asset_class=entry.asset_class or "equity",
-                            origins=entry.origins,
-                            signal_aggregate=sig_agg or None,
-                            level_set=level_set,
-                            level_reason=level_reason,
-                            framework_setup=framework_setup,
+                        current_state = (
+                            score.adjusted_total_score,
+                            score.grade,
+                            score.position_size_tier,
+                            score.signal_alignment_score,
                         )
-                        persisted_count += 1
+                        if (
+                            skip_unchanged
+                            and last_state.get(entry.ticker.upper()) == current_state
+                        ):
+                            skipped_unchanged += 1
+                        else:
+                            _persist_trade_score(
+                                conn,
+                                score=score,
+                                asset_id=f"asset-{entry.ticker.lower()}",
+                                asset_ticker=entry.ticker,
+                                asset_class=entry.asset_class or "equity",
+                                origins=entry.origins,
+                                signal_aggregate=sig_agg or None,
+                                level_set=level_set,
+                                level_reason=level_reason,
+                                framework_setup=framework_setup,
+                                pass_kind=pass_kind,
+                            )
+                            persisted_count += 1
                 except Exception as exc:
                     errors.append({"ticker": entry.ticker, "error": f"{type(exc).__name__}: {exc}"})
 
@@ -726,6 +798,8 @@ def run_scoring_pass(
             watchlist_size=resolved.total_count,
             scored=scored_count,
             persisted=persisted_count,
+            skipped_unchanged=skipped_unchanged,
+            pass_kind=pass_kind,
             errors=errors,
             mention_summary=resolved.mention_summary,
         )

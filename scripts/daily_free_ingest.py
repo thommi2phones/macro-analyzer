@@ -133,9 +133,21 @@ def main() -> int:
 
     def _scoring():
         from macro_positioning.scoring.runner import run_scoring_pass
-        s = run_scoring_pass()
+        # pass_kind='scheduled' is what makes this pass alertable — the
+        # alerts evaluator ignores hand-run and what-if passes so it never
+        # compares across two different regime assumptions.
+        s = run_scoring_pass(pass_kind="scheduled")
         return f"{s.persisted} scored"
     summary["scoring"] = _step("scoring", _scoring)
+
+    # Alerts ride on the scoring pass above: the twice-daily run gets the
+    # same notification treatment as the hourly watcher, so a state change
+    # here isn't silently waiting for the next :00.
+    def _alerts():
+        from macro_positioning.alerts import run_alert_cycle
+        r = run_alert_cycle()
+        return f"{r['derived']} derived, {r['delivered']} delivered"
+    summary["alerts"] = _step("alerts", _alerts)
 
     def _regime_snapshot():
         from macro_positioning.regime.snapshots import record_daily_regime_snapshot

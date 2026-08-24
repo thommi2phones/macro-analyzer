@@ -4,6 +4,109 @@ Append-only. Never delete entries. Most recent first.
 
 ---
 
+## 2026-08-24 — Alerts: the tracker pushes, it no longer waits to be read
+
+**Decision:** A new `macro_positioning.alerts` package turns scoring-pass
+*state changes* into a Telegram push, delivered by a new hourly launchd
+job (`com.macro.alert-watch`, `scripts/alert_watch.py`). Four decisions
+inside that are worth recording:
+
+1. **Provenance beats heuristics for filtering passes.**
+   `trade_scores.pass_kind` (`scheduled` | `scheduled_delta` | `manual` |
+   `whatif`) is now stamped by `run_scoring_pass`, and the alert
+   evaluator reads only the two scheduled kinds. Row-count and score
+   heuristics were tried first and were wrong: the 2026-08-21 A→D→A
+   "round trip" was not a partial pass, it was hand-run passes scored
+   under `transitional_chop` (−8) sitting in the same table as scheduled
+   ones under `monetary_debasement_hard_asset` (+6). Historical rows were
+   backfilled by launchd slot time (~10:0x / ~17:0x UTC → scheduled).
+
+2. **The hourly pass writes changes, not snapshots.**
+   `run_scoring_pass(skip_unchanged=True)` skips a ticker whose score,
+   grade, tier and signal alignment all match its last row. A quiet hour
+   writes ~3 rows instead of 66, which is what makes hourly cadence
+   affordable on a live shared DB. Consequence: `desk_data` `dScore` now
+   means "change since the score last moved", not "change since the last
+   pass" — strictly more informative, but it is a semantic shift.
+
+3. **One message per cycle, not one per alert.** A regime-modifier flip
+   moves the whole board: 2026-08-20 crossed 14 names at once off a
+   single cause. Per-alert delivery is how a channel gets muted, which
+   would reproduce the original bug in a new place. `notify.send_batch`
+   digests a cycle, keeps full levels detail for the loudest alert, and
+   collapses the tail past `alert_digest_max_lines`.
+
+4. **Telegram bot, not the Telethon user session.** The listener holds an
+   exclusive lock on `data/telegram.session`; a second process opening it
+   risks wedging ingestion (CLAUDE.md). A bot is a separate identity with
+   no shared state, so the alert path cannot take ingestion down.
+
+**Rationale:** The scoring layer already knew. ETH was graded A (82) on
+2026-08-17 and tier_1 (86) on the 20th; BTC crossed A (83) on the 20th —
+all before or at the breakout, all invisible because the only delivery
+mechanism was "the operator opens the SPA." Two trades were missed.
+
+**Validated by replay, not by assertion.** `rules.evaluate(as_of=...)`
+replays history on a DB copy. Over 34 scheduled passes (2026-08-01 →
+08-24) the shipped ruleset fires on ETH 08-17 and BTC 08-20 — the two
+missed trades — at **0.65 messages/day**. The first draft fired 3.1
+alerts/day; two thirds of that was `score_jump` landing in the D band
+("QQQ +18 to 54"), hence `alert_score_jump_min_score=75`.
+
+**Amended same day — the watch band at 75.** The operator asked to hear
+about anything clearing 75, below the framework's own A boundary at 80.
+Added as `grade_cross_watch` (medium severity, priority below the A and
+tier_1 crossings). It buys real lead time: ETH cleared 75 on 08-12, five
+days before its A cross and a week before the candle.
+
+Two things fell out of that, both caught by replay rather than review:
+
+- **Cooldown must be applied after per-ticker dedupe, not before.** One
+  move can clear 75, 80 and 85 at once. Filtering by cooldown first let a
+  suppressed `grade_cross_a` fall through and re-announce the same move
+  as a quieter watch item.
+- **Band re-arm belongs on the exit, not the entry.** Scores parked on a
+  boundary re-fired every ~48h ("LMT cleared 75 · 75" on the 18th, 20th
+  and 22nd). The first fix — requiring a crossing to *start* 3+ below the
+  band — silenced ETH's 78 → 82 into A and BTC's 83 → 88 into tier_1,
+  i.e. the whole point of the system: a band crossing normally does start
+  just below the band. Replaced with `_REARM_MARGIN`: a band can only
+  announce again once the score has actually dropped 3+ below it. Net
+  0.76 messages/day with all four ETH/BTC alerts intact.
+
+**Notification line format and colour semantics (operator-directed).**
+The line is `<dot> TICKER  before→after  GRADE · tier  SIDE`, e.g.
+`🟢 ETH  74→86  A · tier_1  LONG`. Colour encodes **conviction, not
+alarm**: 🟢 high (crossed into A or tier_1 — tradeable), 🟡 medium
+(cleared the 75 watch band), 🔴 low (a big jump that hasn't cleared a
+band). The first cut used 🔴 for the strongest signals, which reads
+backwards to anyone who looks at markets all day. `score_jump` dropped
+from medium to low severity so all three colours carry distinct meaning.
+
+`SIDE` resolves from `levels.side` (the side the technical agent laid
+rails on — the actual proposed trade) and falls back to
+`signal_bias.direction` (voice consensus) when no levels exist, which is
+~12 of 79 scored tickers. It is **omitted, never defaulted**:
+`side_from_signal_bias` returns LONG for anything that isn't a confident
+short, so printing that as direction on a neutral name would be a
+fabricated read.
+
+**Telegram delivery is live** (bot `8854570939`, DM chat). Note for
+future work: httpx logs the request URL at INFO, and the bot token is a
+*path segment* of every Telegram API URL — unguarded, the hourly launchd
+job would write the token to `~/Library/Logs/macro-alert-watch.err.log`
+once an hour. `notify._quiet_httpx()` and `notify._redact()` close that;
+the same exposure exists today for `MPA_FRED_API_KEY`, which is a query
+parameter on every FRED URL the ingest job logs.
+
+**Scope deliberately cut:** exit-side rules (stop breached, score
+collapse) and price-vs-trigger-level crossing were considered and left
+out of v1. Adding either is a new rule in `rules.py`; store, cooldown,
+digest and delivery already handle them. There is no in-app alert feed —
+the `alerts` table holds the record, nothing renders it yet.
+
+---
+
 ## 2026-07-20 — `signal_alignment` is a first-class scoring component (15 pts)
 
 **Decision:** The tracked-voice conviction aggregate

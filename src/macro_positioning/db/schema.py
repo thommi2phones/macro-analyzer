@@ -844,6 +844,46 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_calibration_history_scope
         ON signal_calibration_history (scope_kind, scope_key, recorded_at DESC)
     """,
+    # ─── Alerts ───────────────────────────────────────────────────────
+    # One row per fired alert. The tracker computes a "buy now" state
+    # twice-plus daily; without this table that state was only visible to
+    # someone who happened to open the SPA (see: the Aug-2026 ETH/BTC
+    # breakout, flagged A/tier_1 on the 17th, seen by nobody).
+    #
+    # The row is the durable record; delivery is best-effort on top of it.
+    # `delivered_json` maps channel → status, so a send that failed (or a
+    # channel that wasn't configured yet) can be retried on the next cycle
+    # without re-deriving the alert.
+    """
+    CREATE TABLE IF NOT EXISTS alerts (
+        alert_id        TEXT PRIMARY KEY,
+        fired_at        TEXT NOT NULL,
+        rule            TEXT NOT NULL,       -- 'grade_cross' | 'score_jump'
+        severity        TEXT NOT NULL,       -- 'high' | 'medium'
+        ticker          TEXT NOT NULL,
+        title           TEXT NOT NULL,
+        body            TEXT NOT NULL,
+        score_before    INTEGER,
+        score_after     INTEGER,
+        grade_before    TEXT,
+        grade_after     TEXT,
+        tier_after      TEXT,
+        side            TEXT,                -- 'LONG' | 'SHORT' | NULL
+        score_id        TEXT,                -- trade_scores row that triggered it
+        payload_json    TEXT,
+        delivered_json  TEXT,                -- {"telegram": "ok" | "error: ..."}
+        acked_at        TEXT
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_alerts_fired
+        ON alerts (fired_at DESC)
+    """,
+    # Dedupe/cooldown lookup: "has (ticker, rule) fired in the last N hours?"
+    """
+    CREATE INDEX IF NOT EXISTS idx_alerts_dedupe
+        ON alerts (ticker, rule, fired_at DESC)
+    """,
 ]
 
 
@@ -905,6 +945,21 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # contributed without re-running aggregation.
     ("trade_scores", "signal_alignment_score", "INTEGER"),
     ("trade_scores", "signal_aggregate_json", "TEXT"),
+    # Provenance of the scoring pass that produced this row:
+    #   'scheduled' — full snapshot from the launchd free-ingest job
+    #   'scheduled_delta' — hourly alert-watch pass, changed tickers only
+    #   'manual'    — a hand-run pass (CLI, notebook, a worker chat)
+    #   'whatif'    — run with framework_regime_hint, i.e. a backtest
+    # The alerts evaluator compares 'scheduled' rows only. Mixing the
+    # kinds is what made 2026-08-21 look like ETH round-tripping A→D→A
+    # inside 90 minutes: those low passes were hand-run under
+    # transitional_chop (−8 modifier) while the scheduled ones ran under
+    # monetary_debasement_hard_asset (+6). Legacy rows are NULL and are
+    # treated as untrusted for alerting.
+    ("trade_scores", "pass_kind", "TEXT"),
+    # Trade direction carried onto the alert so the notification can say
+    # LONG/SHORT without re-reading the score row at delivery time.
+    ("alerts", "side", "TEXT"),
 ]
 
 

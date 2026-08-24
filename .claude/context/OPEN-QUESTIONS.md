@@ -4,6 +4,26 @@ Active items waiting on user input or external action.
 
 ---
 
+## Alerts — Telegram bot token (blocks delivery)
+
+- [2026-08-24] The alerts layer is built, tested, replayed against August
+  history, and scheduled hourly (`com.macro.alert-watch`). It is
+  **deriving and recording alerts but cannot deliver them** until the
+  operator creates a Telegram bot — this is the one step that can't be
+  automated, because @BotFather only talks to a human:
+
+  1. Message **@BotFather** → `/newbot` → copy the token
+  2. Send the new bot any message (bots cannot open a chat with you)
+  3. `MPA_TELEGRAM_BOT_TOKEN=<token>` in `.env`, then
+     `python scripts/alert_watch.py --whoami` to print the chat id
+  4. `MPA_TELEGRAM_ALERT_CHAT_ID=<chat id>` in `.env`
+  5. Verify with `python scripts/alert_watch.py --test-send`
+
+  Nothing fired in the meantime is lost: undelivered alerts are retried
+  for `alert_redelivery_window_hours` (24h) after the token lands.
+
+---
+
 ## ML / learning loop scope
 
 - [2026-05-09] Priority order for the 7 ML-loop items in STATE.md

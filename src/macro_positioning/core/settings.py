@@ -101,6 +101,60 @@ class Settings(BaseSettings):
         },
     })
 
+    # ─── Alerts ──────────────────────────────────────────────────────
+    # Outbound notification for the scoring layer. The tracker knew ETH
+    # was tier_1 on 2026-08-17 and BTC on the 20th; nothing told anyone.
+    #
+    # Delivery is a Telegram *bot* (not the Telethon user session): the
+    # listener holds an exclusive lock on data/telegram.session, so a
+    # second process cannot reuse it. Create the bot with @BotFather,
+    # then message it once so it can reply to you, and set:
+    #   MPA_TELEGRAM_BOT_TOKEN=123456:ABC-...
+    #   MPA_TELEGRAM_ALERT_CHAT_ID=<your numeric chat id>
+    # `scripts/alert_watch.py --whoami` resolves the chat id for you.
+    #
+    # Unset = alerts are still computed and recorded in the `alerts`
+    # table, just undelivered; the next cycle retries them once the
+    # token lands, so nothing is lost by configuring this late.
+    telegram_bot_token: str = ""
+    telegram_alert_chat_id: str = ""
+
+    # Cooldown per (ticker, rule): suppress a repeat of the same alert
+    # inside this window. Grade crosses are transitions and can't repeat
+    # without first dropping out of the band, but a score oscillating on
+    # the A/B boundary would otherwise nag twice a day.
+    alert_cooldown_hours: int = 48
+
+    # score_jump rule: absolute change between consecutive scores that is
+    # worth an interrupt on its own, before any grade band is crossed.
+    alert_score_jump: int = 15
+
+    # ...but only when it lands somewhere that could become a trade. An
+    # August 2026 replay fired "QQQ jumped +18 to 54" and "TLT +20 to 58";
+    # a big move into the D band is a statistic, not a setup, and it was
+    # two thirds of all score_jump traffic. 75 = within striking distance
+    # of the A band at 80.
+    alert_score_jump_min_score: int = 75
+
+    # Alerts derived in one cycle are delivered as a single message. A
+    # regime modifier flip moves the whole board at once — 2026-08-20 saw
+    # 14 alerts in one pass — and 14 pings for one cause is how a channel
+    # gets muted. The digest lists every one of them; it only truncates
+    # if the rendered message would exceed Telegram's 4096-char limit
+    # (~70 alerts), so there is no line cap to configure.
+
+    # A scoring pass that scored far fewer tickers than usual is a partial
+    # or failed run (2026-08-21 had several: 57 rows, prices missing, ETH
+    # briefly graded D). Comparing against one manufactures phantom
+    # crosses, so passes below this fraction of the recent median are
+    # ignored by the alert evaluator.
+    alert_min_pass_completeness: float = 0.8
+
+    # Re-attempt delivery for alerts fired inside this window that have no
+    # successful channel yet. Covers transient network failures and the
+    # first run after the bot token is configured.
+    alert_redelivery_window_hours: int = 24
+
     # LLM Brain — direct APIs (multi-model)
     # Primary synthesis model
     gemini_api_key: str = ""           # Google Gemini direct API key

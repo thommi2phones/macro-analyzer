@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.macro.alert-watch</string>
+
+    <!-- Same interpreter rationale as com.macro.free-ingest: this venv
+         python has Full Disk Access, so launchd can reach the repo under
+         ~/Documents. `uv`/`bash` lack that grant and get TCC denials. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/thom/Documents/Personal/Code Projects/Macro Analyzer/.venv/bin/python</string>
+        <string>scripts/alert_watch.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/thom/Documents/Personal/Code Projects/Macro Analyzer</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/thom/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Hourly. StartInterval (not StartCalendarInterval) because it
+         fires once on wake if the Mac slept through a slot, rather than
+         replaying every missed hour. Crypto trades 24/7, so there is no
+         market-hours window worth gating on. -->
+    <key>StartInterval</key>
+    <integer>3600</integer>
+
+    <!-- One-shot batch job: exits when done, so no KeepAlive. Not run at
+         load — the free-ingest pass already covers startup. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/thom/Library/Logs/macro-alert-watch.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/thom/Library/Logs/macro-alert-watch.err.log</string>
+</dict>
+</plist>

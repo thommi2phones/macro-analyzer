@@ -43,7 +43,15 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def _ensure_db(db: Path) -> None:
     if not db.exists():
-        initialize_database(db)
+        # allow_reinit=True is correct here, not a guard bypass: `db` is a
+        # per-test tmp_path file that this fixture owns. The guard treats
+        # "brand-new DB at settings.sqlite_path" as the production-wipe
+        # signature, and this file can't dodge it by initializing before
+        # the redirect — test_zero_state_when_db_missing requires the DB
+        # to be absent at fixture time, so creation must stay lazy.
+        # tests/conftest.py's forbid_production_database is what actually
+        # keeps the real DB safe here.
+        initialize_database(db, allow_reinit=True)
 
 
 def _seed_closed_trade(db: Path, trade_id: str, **fields) -> None:

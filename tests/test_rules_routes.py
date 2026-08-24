@@ -19,10 +19,16 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     reset_caches()
     from macro_positioning.core.settings import settings
 
-    monkeypatch.setattr(settings, "base_dir", tmp_path)
-    monkeypatch.setattr(settings, "database_url", "sqlite:///rules.db")
+    # Create the schema BEFORE pointing settings at this file.
+    # initialize_database refuses to create a *brand-new* DB at whatever
+    # path settings currently resolves to — that guard exists because a
+    # smoke test once fell back to the production path and wiped it. A
+    # test legitimately building its own temp DB has to init first, then
+    # redirect, which is the order the other fixtures in tests/ use.
     db_path = tmp_path / "rules.db"
     initialize_database(db_path)
+    monkeypatch.setattr(settings, "base_dir", tmp_path)
+    monkeypatch.setattr(settings, "database_url", "sqlite:///rules.db")
 
     # Bring config files into tmp so the loaders find them under base_dir.
     cfg_dir = tmp_path / "config"

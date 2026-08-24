@@ -23,11 +23,17 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # redirect both so the routes (and feedback_writer's calibration log
     # under base_dir/data/) land in tmp.
     from macro_positioning.core.settings import settings
-    monkeypatch.setattr(settings, "base_dir", tmp_path)
-    monkeypatch.setattr(settings, "database_url", "sqlite:///routes.db")
+    # Create the schema BEFORE pointing settings at this file.
+    # initialize_database refuses to create a *brand-new* DB at whatever
+    # path settings currently resolves to — that guard exists because a
+    # smoke test once fell back to the production path and wiped it. A
+    # test legitimately building its own temp DB has to init first, then
+    # redirect, which is the order the other fixtures in tests/ use.
     (tmp_path / "data").mkdir(exist_ok=True)
     db_path = tmp_path / "routes.db"
     initialize_database(db_path)
+    monkeypatch.setattr(settings, "base_dir", tmp_path)
+    monkeypatch.setattr(settings, "database_url", "sqlite:///routes.db")
 
     from macro_positioning.api.journal_routes import router
 

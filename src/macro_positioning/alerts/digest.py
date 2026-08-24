@@ -172,11 +172,15 @@ def build_digest() -> list[tuple[str, str]]:
     """(name, html) for each drop, in send order."""
     from macro_positioning.dashboard import desk_data
 
+    from macro_positioning.alerts import sentiment
+
     out = []
     for name, builder, formatter in (
         ("live", desk_data.build_live_signals_section, build_live_signals_message),
         ("hero", desk_data.build_hero_signals_section, build_hero_signals_message),
         ("watchlist", desk_data.build_watchlist_section, build_watchlist_message),
+        # Which way names are turning — the earlier read than the score.
+        ("sentiment", sentiment.load_shifts, sentiment.build_message),
     ):
         try:
             msg = formatter(builder())

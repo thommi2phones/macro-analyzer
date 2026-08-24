@@ -46,6 +46,7 @@ from macro_positioning.scoring.kol_levels import (
     author_weights,
     kol_levels_for_ticker,
 )
+from macro_positioning.scoring.logic_version import compute_logic_version
 from macro_positioning.scoring.levels import (
     LevelSet,
     side_from_signal_bias,
@@ -493,8 +494,9 @@ def _persist_trade_score(
             raw_total_score, adjusted_total_score,
             grade, position_size_tier,
             feature_vector_json, reasoning_trail_json,
-            signal_alignment_score, signal_aggregate_json, pass_kind
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            signal_alignment_score, signal_aggregate_json, pass_kind,
+            logic_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             score.score_id,
@@ -521,6 +523,7 @@ def _persist_trade_score(
             score.signal_alignment_score,
             json.dumps(signal_aggregate, default=str) if signal_aggregate else None,
             pass_kind,
+            compute_logic_version(),
         ),
     )
 

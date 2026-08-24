@@ -98,7 +98,8 @@ def _load_alertable_rows(
         """
         SELECT a.ticker, ts.scored_at, ts.adjusted_total_score, ts.grade,
                ts.position_size_tier, ts.score_id, ts.setup_id,
-               ts.feature_vector_json, ts.pass_kind, ts.reasoning_trail_json
+               ts.feature_vector_json, ts.pass_kind, ts.reasoning_trail_json,
+               ts.logic_version
         FROM trade_scores ts
         JOIN technical_setups tset ON tset.setup_id = ts.setup_id
         JOIN assets a ON a.asset_id = tset.asset_id
@@ -114,6 +115,7 @@ def _load_alertable_rows(
         "grade": r[3], "tier": r[4], "score_id": r[5],
         "pass_key": _pass_key(str(r[6])),
         "feature_vector_json": r[7], "pass_kind": r[8], "trail_json": r[9],
+        "logic_version": r[10],
     } for r in rows]
 
 
@@ -391,6 +393,18 @@ def evaluate(
             continue                    # no prior state = no transition
         now_row, prev_row = history[0], history[1]
         if now_row["score"] is None or prev_row["score"] is None:
+            continue
+        # A move is only a move if the same code produced both numbers.
+        # On 2026-08-24 the conviction clock changed at 18:36 and the
+        # hourly pass ran at 18:38: FCX went 74 -> 76 on the new
+        # measurement alone and this layer announced "FCX cleared 75".
+        # Suppressing one round after a scoring change is the cheap side
+        # of that trade.
+        if now_row["logic_version"] != prev_row["logic_version"]:
+            logger.info(
+                "skipping %s — scoring logic changed between passes (%s -> %s)",
+                ticker, prev_row["logic_version"], now_row["logic_version"],
+            )
             continue
         delta = now_row["score"] - prev_row["score"]
 

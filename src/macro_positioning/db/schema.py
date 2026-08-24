@@ -960,6 +960,10 @@ _ADDED_COLUMNS: list[tuple[str, str, str]] = [
     # Trade direction carried onto the alert so the notification can say
     # LONG/SHORT without re-reading the score row at delivery time.
     ("alerts", "side", "TEXT"),
+    # Fingerprint of the scoring code that produced the row. Comparing a
+    # score against one computed by different logic measures the change,
+    # not the market — see scoring/logic_version.py.
+    ("trade_scores", "logic_version", "TEXT"),
 ]
 
 

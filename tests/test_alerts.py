@@ -34,6 +34,7 @@ def _score(
     pass_key: str,
     pass_kind: str = "scheduled",
     levels: dict | None = None,
+    logic_version: str = "testlogic001",
 ) -> None:
     """Write one trade_scores row the way scoring/runner.py does."""
     from macro_brain.orchestrator.feature_vector import (
@@ -63,15 +64,15 @@ def _score(
             technical_structure_score, volume_flow_score, risk_reward_score,
             relative_strength_score, psychology_score,
             raw_total_score, adjusted_total_score, grade, position_size_tier,
-            feature_vector_json, reasoning_trail_json, pass_kind
-        ) VALUES (?, ?, ?, NULL, 0,0,0,0,0,0,0,0, ?, ?, ?, ?, ?, '{}', ?)
+            feature_vector_json, reasoning_trail_json, pass_kind, logic_version
+        ) VALUES (?, ?, ?, NULL, 0,0,0,0,0,0,0,0, ?, ?, ?, ?, ?, '{}', ?, ?)
         """,
         (
             f"score-{ticker}-{pass_key}", setup_id, at, score, score,
             assign_grade(score),
             assign_position_size_tier(score, invalidation_defined=True),
             json.dumps({"levels": levels}) if levels else None,
-            pass_kind,
+            pass_kind, logic_version,
         ),
     )
     db.commit()
@@ -186,6 +187,27 @@ def test_cooldown_suppresses_a_repeat(db):
     _score(db, "ETH", 74, ago_hours=24, pass_key="aaaaaaaa")
     _score(db, "ETH", 82, ago_hours=1, pass_key="bbbbbbbb")
     assert rules.evaluate(db, cooldown_keys={("ETH", "grade_cross_a")}) == []
+
+
+def test_a_scoring_logic_change_does_not_fire_an_alert(db):
+    """2026-08-24: the conviction clock changed at 18:36, the hourly pass
+    ran at 18:38, FCX moved 74 -> 76 on the new measurement alone, and
+    this layer announced "FCX cleared 75". A score is only comparable to
+    one computed by the same code."""
+    _score(db, "FCX", 74, ago_hours=24, pass_key="aaaaaaaa",
+           logic_version="before-change")
+    _score(db, "FCX", 76, ago_hours=1, pass_key="bbbbbbbb",
+           logic_version="after-change")
+    assert rules.evaluate(db) == []
+
+
+def test_the_same_move_fires_once_logic_is_stable(db):
+    """The guard must suppress only the version boundary, not the move."""
+    _score(db, "FCX", 74, ago_hours=24, pass_key="aaaaaaaa",
+           logic_version="same")
+    _score(db, "FCX", 76, ago_hours=1, pass_key="bbbbbbbb",
+           logic_version="same")
+    assert _rules_for(rules.evaluate(db)) == {("FCX", "grade_cross_watch")}
 
 
 def test_manual_passes_are_not_alertable(db):

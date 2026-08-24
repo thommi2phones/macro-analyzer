@@ -44,6 +44,25 @@ from macro_positioning.manual.authors import seeded_author_ids
 
 
 # Sides that imply "buy this" vs "sell this" vs "get out" buckets.
+# Recency here means "when was the call made" — the document's publish
+# time, NOT `signals.extracted_at`, which records when the extractor ran.
+# A bulk re-extraction stamps a whole archive with one date: the
+# 2026-08-21 batch wrote 9,295 signals at a median publish lag of 113
+# days, and the 7-day window then saw 10,851 signals where only 3,598
+# calls had actually been made. Ordinary days extract same-day (median
+# lag 0.0d), so this only ever bit after a backfill.
+#
+# It mattered well beyond the reprocessed asset. scoring/runner.py
+# computes one `signal_pass_scale` per pass and the alignment scorer
+# divides every ticker's net_bias by it, so inflating one archive raises
+# the shared denominator and *depresses everyone else*: across that batch
+# BTC went 229 -> 405 signals and net_bias 5.9 -> 74.8, while ETH's
+# alignment fell 15 -> 11 and its score 86 -> 82 for no reason of its own.
+#
+# Rows keep the column name `extracted_at` downstream so the parsing and
+# window code is untouched; only which clock fills it has changed. Falls
+# back to extracted_at when a signal has no document, matching
+# learning/call_accuracy.py, which has always read publish time.
 _LONG_SIDES = {"LONG", "ADD"}
 _SHORT_SIDES = {"SHORT", "HEDGE"}
 _EXIT_SIDES = {"EXIT", "TRIM"}
@@ -110,12 +129,23 @@ _TF_KEYWORDS: list[tuple[str, float]] = [
 
 
 def _parse_dt(s: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO timestamp, always returning a UTC-aware datetime.
+
+    Naive values are assumed UTC rather than rejected. `documents.
+    published_at` is a mix — the Telegram listener writes offset-aware
+    ("…+00:00") while some feed parsers write bare local-looking strings
+    ("2026-05-28T16:35:00") — and every producer stores UTC. Returning
+    the naive value unchanged blew up window comparisons with
+    `can't compare offset-naive and offset-aware datetimes` the moment
+    this module started reading publish time instead of extraction time.
+    """
     if not s:
         return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except ValueError:
+        parsed = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
         return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _recency_weight(age_days: float, *, half_life_days: float) -> float:
@@ -442,16 +472,20 @@ def aggregate_for_ticker(
         allowed = seeded_author_ids(conn)
         rows = [dict(r) for r in conn.execute(
             """
-            SELECT signal_id, side, conviction, weighted_score,
-                   source_slug, source_channel, author_id,
-                   source_trust_weight, author_trust_weight,
-                   horizon, catalyst_type, thesis_summary,
-                   instrument_detail_json,
-                   extractor_name, extracted_at
-            FROM signals
-            WHERE asset_ticker = ?
-              AND status = 'active'
-              AND extracted_at >= datetime('now', '-' || ? || ' days')
+            SELECT s.signal_id, s.side, s.conviction, s.weighted_score,
+                   s.source_slug, s.source_channel, s.author_id,
+                   s.source_trust_weight, s.author_trust_weight,
+                   s.horizon, s.catalyst_type, s.thesis_summary,
+                   s.instrument_detail_json,
+                   s.extractor_name,
+                   COALESCE(d.published_at, d.ingested_at, s.extracted_at)
+                       AS extracted_at
+            FROM signals s
+            LEFT JOIN documents d ON d.document_id = s.document_id
+            WHERE s.asset_ticker = ?
+              AND s.status = 'active'
+              AND COALESCE(d.published_at, d.ingested_at, s.extracted_at)
+                  >= datetime('now', '-' || ? || ' days')
             ORDER BY extracted_at DESC
             """,
             (ticker.upper(), max_days),
@@ -705,15 +739,19 @@ def build_signal_timeline_for_ticker(
         allowed = seeded_author_ids(conn)
         rows_all = [dict(r) for r in conn.execute(
             """
-            SELECT signal_id, side, conviction, weighted_score,
-                   source_slug, author_id,
-                   source_trust_weight, author_trust_weight,
-                   horizon, catalyst_type, thesis_summary,
-                   instrument_detail_json, extracted_at
-            FROM signals
-            WHERE asset_ticker = ?
-              AND status = 'active'
-              AND extracted_at >= datetime('now', '-' || ? || ' days')
+            SELECT s.signal_id, s.side, s.conviction, s.weighted_score,
+                   s.source_slug, s.author_id,
+                   s.source_trust_weight, s.author_trust_weight,
+                   s.horizon, s.catalyst_type, s.thesis_summary,
+                   s.instrument_detail_json,
+                   COALESCE(d.published_at, d.ingested_at, s.extracted_at)
+                       AS extracted_at
+            FROM signals s
+            LEFT JOIN documents d ON d.document_id = s.document_id
+            WHERE s.asset_ticker = ?
+              AND s.status = 'active'
+              AND COALESCE(d.published_at, d.ingested_at, s.extracted_at)
+                  >= datetime('now', '-' || ? || ' days')
             ORDER BY extracted_at ASC
             """,
             (ticker.upper(), lookback_days),

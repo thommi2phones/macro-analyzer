@@ -38,22 +38,43 @@ def db(tmp_path: Path, monkeypatch):
     return db_path
 
 
-def _insert_doc(db_path: Path, doc_id: str = "doc-1") -> None:
+def _insert_doc(db_path: Path, doc_id: str = "doc-1",
+                published_at: str | None = None) -> None:
+    """Insert the parent document, dated when the call was made.
+
+    `published_at` matters: aggregation windows on the document's publish
+    time, not signals.extracted_at, because a bulk re-extraction stamps a
+    whole archive with one date. Tests that place a signal N days back
+    must therefore date the *document* N days back — dating only the
+    signal leaves every call looking same-day.
+    """
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             """INSERT OR IGNORE INTO documents
                (document_id, source_id, title, published_at, content_type,
                 raw_text, cleaned_text, tags_json, ingested_at)
                VALUES (?,?,?,?,?,?,?,?,?)""",
-            (doc_id, "manual:x", "t", "2026-06-01", "manual_note",
-             "raw", "clean", "{}", "2026-06-01"),
+            # Default to now, matching Signal.extracted_at's own default:
+            # a seed with no explicit time means "a call made just now",
+            # and dating its document 2026-06-01 would age it out of
+            # every short window.
+            (doc_id, "manual:x", "t",
+             published_at or datetime.now(UTC).isoformat(),
+             "manual_note", "raw", "clean", "{}",
+             datetime.now(UTC).isoformat()),
         )
         conn.commit()
 
 
 def _seed(db_path: Path, **fields) -> str:
-    """Persist a Signal with sensible defaults; returns signal_id."""
-    _insert_doc(db_path, fields.get("document_id", "doc-1"))
+    """Persist a Signal with sensible defaults; returns signal_id.
+
+    Keeps the document's publish time in step with `extracted_at` so a
+    test can express "this call was made 20 days ago" the way it always
+    has, with one field.
+    """
+    _insert_doc(db_path, fields.get("document_id", "doc-1"),
+                published_at=fields.get("extracted_at"))
     defaults = dict(
         document_id="doc-1",
         asset_ticker="AAPL",

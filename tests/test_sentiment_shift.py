@@ -14,13 +14,35 @@ def _w(n, direction, conf):
     return {"n_signals": n, "bias_direction": direction, "bias_confidence": conf}
 
 
+def _dw(n, direction, conf, long_w=1.0, short_w=0.0):
+    return {"n_signals": n, "bias_direction": direction,
+            "bias_confidence": conf, "long_weight": long_w,
+            "short_weight": short_w}
+
+
 def test_empty_window_is_silence_not_neutrality():
     """n_signals=0 must read as 'no data', never as a 0.00 sentiment."""
-    assert sentiment._tilt(_w(0, "long", 1.0)) is None
-    assert sentiment._tilt(None) is None
-    assert sentiment._tilt(_w(3, "long", 0.8)) == 0.8
-    assert sentiment._tilt(_w(3, "short", 0.8)) == -0.8
-    assert sentiment._tilt(_w(3, "neutral", 0.0)) == 0.0
+    assert sentiment._read(_dw(0, "long", 1.0)) == (None, "empty")
+    assert sentiment._read(None) == (None, "empty")
+    assert sentiment._read(_dw(3, "long", 0.8))[0] == 0.8
+    assert sentiment._read(_dw(3, "short", 0.8, 0.0, 1.0))[0] == -0.8
+
+
+def test_watch_only_window_takes_no_side():
+    """COIN's 1d was one WATCH call. Scored 0.00 it dragged COIN into
+    'conviction fading' on the strength of someone declining to call it."""
+    tilt, state = sentiment._read(
+        {"n_signals": 1, "long_weight": 0.0, "short_weight": 0.0,
+         "watch_count": 1, "bias_direction": "watch_only",
+         "bias_confidence": 0.0})
+    assert tilt is None
+    assert state == "watch_only"
+
+
+def test_non_readings_never_render_as_numbers():
+    assert sentiment._cell(None, "empty").strip() == "—"
+    assert sentiment._cell(None, "watch_only").strip() == "wch"
+    assert sentiment._cell(0.84, "directional").strip() == "+0.84"
 
 
 def test_going_quiet_is_not_reported_as_a_reversal():
@@ -31,7 +53,7 @@ def test_going_quiet_is_not_reported_as_a_reversal():
          "tilts": {"1d": None, "3d": None, "7d": -1.0, "14d": -1.0}}],
         "moved": []}
     msg = sentiment.build_message(data)
-    assert "WENT QUIET" in msg
+    assert "NO RECENT SIDE" in msg
     assert "not a reversal" in msg
     assert "BUILDING" not in msg and "FLIPPED" not in msg
     assert "—" in msg              # silence renders as a dash, not +0.00

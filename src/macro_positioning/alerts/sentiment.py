@@ -5,11 +5,15 @@ turning, which is the earlier read: a name whose 1d and 3d blocs have
 flipped against its 14d bloc is changing hands before the composite
 score catches up.
 
-Nothing is recomputed. `signals/aggregation.py` already produces the
-7-window matrix and the scoring pass persists it whole into
-`trade_scores.signal_aggregate_json`, so this reads the exact numbers
-that produced the last score rather than a second opinion computed at a
-different moment.
+Computed fresh, deliberately. The 7-window matrix is persisted in
+`trade_scores.signal_aggregate_json`, and reading it back looks cheaper
+and more consistent — but the hourly watcher runs with
+`skip_unchanged=True`, so a ticker whose *score* has not moved keeps its
+old row. The aggregate can drift underneath a stable score, and on
+2026-08-24 the latest row per ticker spanned 15 days: SOL reported 31
+calls in its 14d window when the current value was 4. Sentiment is a
+statement about now, so it is aggregated now, for every ticker at the
+same instant and under the same code.
 
 Comparability matters here. `net_bias` scales with call volume — BTC's
 268 signals dwarf a name with 4 — so ranking on it would just re-rank by
@@ -37,25 +41,48 @@ _MIN_CALLS = 2
 _MIN_SHIFT = 0.15
 
 
-def _tilt(window: dict | None) -> float | None:
-    """Signed -1..+1 conviction, or None when the window holds no calls.
+def _read(window: dict | None) -> tuple[float | None, str]:
+    """(tilt, state) for one window.
 
-    None rather than 0.0 is the whole point. An empty window is silence,
-    not neutrality, and collapsing the two inverts the reading: the first
-    run of this scored ETH "turning bullish" off `+0.00 +0.00 -1.00
-    -1.00` (it was bearish and then nobody spoke) and PLTR "turning
-    bearish" off `+0.00 +0.00 +1.00 +1.00` (bullish, then silence). Both
-    are the absence of a signal being reported as its reversal.
+    tilt is `bias_confidence` signed by direction: the share of the
+    window's *directional* weight pointing one way, -1.00 (all short) to
+    +1.00 (all long). It measures consensus, not force — one weak call
+    alone reads +1.00 exactly like fifty strong ones, which is why the
+    call count travels beside it on every row.
+
+    None rather than 0.0 whenever there is no directional reading at all,
+    and that covers two distinct cases the first draft collapsed into a
+    misleading "+0.00":
+
+      empty      — nobody spoke. Scored as 0.00 this inverted into a
+                   reversal: ETH read "turning bullish" off
+                   `+0.00 +0.00 -1.00 -1.00` when it was bearish and then
+                   went silent.
+      watch_only — people spoke but took no side. COIN's 1d window was a
+                   single WATCH call; as 0.00 it dragged COIN into
+                   "conviction fading" on the strength of someone
+                   declining to call it.
     """
-    if not window or not int(window.get("n_signals") or 0):
-        return None
+    if not window:
+        return None, "empty"
+    if not int(window.get("n_signals") or 0):
+        return None, "empty"
+    long_w = float(window.get("long_weight") or 0.0)
+    short_w = float(window.get("short_weight") or 0.0)
+    if long_w + short_w <= 0:
+        # WATCH / AVOID / EXIT rows only — flagged, not called.
+        return None, "watch_only"
     direction = str(window.get("bias_direction") or "").lower()
     confidence = float(window.get("bias_confidence") or 0.0)
     if direction == "long":
-        return confidence
+        return confidence, "directional"
     if direction == "short":
-        return -confidence
-    return 0.0
+        return -confidence, "directional"
+    return 0.0, "directional"
+
+
+def _tilt(window: dict | None) -> float | None:
+    return _read(window)[0]
 
 
 def _mean(values: list[float | None]) -> float | None:
@@ -63,40 +90,26 @@ def _mean(values: list[float | None]) -> float | None:
     return sum(present) / len(present) if present else None
 
 
-def load_shifts(conn: sqlite3.Connection | None = None) -> dict:
-    """Per-ticker sentiment trajectory from the most recent scored pass."""
-    own = conn is None
-    conn = conn or sqlite3.connect(f"file:{settings.sqlite_path}?mode=ro", uri=True)
-    try:
-        rows = conn.execute(
-            """
-            WITH ranked AS (
-              SELECT a.ticker AS ticker, ts.signal_aggregate_json AS agg,
-                     ROW_NUMBER() OVER (
-                       PARTITION BY a.ticker ORDER BY ts.scored_at DESC) AS rn
-              FROM trade_scores ts
-              JOIN technical_setups s ON s.setup_id = ts.setup_id
-              JOIN assets a ON a.asset_id = s.asset_id
-              WHERE ts.pass_kind LIKE 'scheduled%'
-                AND ts.signal_aggregate_json IS NOT NULL)
-            SELECT ticker, agg FROM ranked WHERE rn = 1
-            """
-        ).fetchall()
-    finally:
-        if own:
-            conn.close()
+def load_shifts(tickers: list[str] | None = None) -> dict:
+    """Per-ticker sentiment trajectory, aggregated live."""
+    from macro_positioning.scoring.watchlist_resolver import resolve_watchlist
+    from macro_positioning.signals.aggregation import aggregate_for_tickers
+
+    if tickers is None:
+        resolved = resolve_watchlist(framework_regime="commodity_led_inflation")
+        tickers = sorted({e.ticker for e in resolved.entries})
+    aggregates = aggregate_for_tickers(tickers)
 
     moved, quiet, thin = [], [], 0
-    for ticker, raw in rows:
-        try:
-            agg = json.loads(raw)
-        except Exception:  # noqa: BLE001
-            continue
-        windows = agg.get("windows") or {}
+    for ticker in tickers:
+        windows = (aggregates.get(ticker.upper()) or {}).get("windows") or {}
         if not windows:
+            thin += 1
             continue
 
-        tilts = {w: _tilt(windows.get(w)) for w in WINDOWS}
+        reads = {w: _read(windows.get(w)) for w in WINDOWS}
+        tilts = {w: reads[w][0] for w in WINDOWS}
+        states = {w: reads[w][1] for w in WINDOWS}
         calls = int((windows.get("14d") or {}).get("n_signals") or 0)
         if calls < _MIN_CALLS:
             thin += 1
@@ -110,11 +123,11 @@ def load_shifts(conn: sqlite3.Connection | None = None) -> dict:
             thin += 1
             continue
         if recent is None:
-            # Coverage stopped. Real and worth knowing, but it is a
-            # different fact from "sentiment reversed" and must not be
-            # dressed up as one.
-            quiet.append({"ticker": ticker, "tilts": tilts, "calls": calls,
-                          "base": base})
+            # Coverage stopped, or the recent calls took no side. Real and
+            # worth knowing, but a different fact from "sentiment
+            # reversed" and it must not be dressed up as one.
+            quiet.append({"ticker": ticker, "tilts": tilts, "states": states,
+                          "calls": calls, "base": base})
             continue
 
         shift = recent - base
@@ -123,6 +136,7 @@ def load_shifts(conn: sqlite3.Connection | None = None) -> dict:
         moved.append({
             "ticker": ticker,
             "tilts": tilts,
+            "states": states,
             "calls": calls,
             "recent": recent,
             "base": base,
@@ -134,12 +148,17 @@ def load_shifts(conn: sqlite3.Connection | None = None) -> dict:
 
     moved.sort(key=lambda m: -abs(m["shift"]))
     quiet.sort(key=lambda q: -abs(q["base"]))
-    return {"moved": moved, "quiet": quiet, "thin": thin, "scored": len(rows)}
+    return {"moved": moved, "quiet": quiet, "thin": thin, "scored": len(tickers)}
 
 
-def _cell(v: float | None) -> str:
-    """'  —  ' for silence, so it never reads as a neutral score."""
-    return "  —  " if v is None else f"{v:+.2f}"
+def _cell(v: float | None, state: str = "empty") -> str:
+    """Never render a non-reading as a number.
+
+    '  —  ' nobody spoke · ' wch ' spoke but took no side.
+    """
+    if v is not None:
+        return f"{v:+.2f}"
+    return " wch " if state == "watch_only" else "  —  "
 
 
 def _side_word(v: float) -> str:
@@ -147,7 +166,9 @@ def _side_word(v: float) -> str:
 
 
 def _row(m: dict) -> str:
-    cells = "  ".join(_cell(m["tilts"][w]) for w in WINDOWS)
+    states = m.get("states") or {}
+    cells = "  ".join(
+        _cell(m["tilts"][w], states.get(w, "empty")) for w in WINDOWS)
     tail = f"{m['calls']} calls"
     if "base" in m and "recent" in m:
         # Name the side so "fading" is never mistaken for a reversal.
@@ -166,7 +187,8 @@ def build_message(data: dict | None = None) -> str | None:
     header = [
         f"🔄 <b>Sentiment shift</b> · {' / '.join(WINDOWS)}",
         _now_line(),
-        "<i>signed conviction per window, -1.00 short … +1.00 long</i>",
+        "<i>share of directional weight: -1.00 all short … +1.00 all long</i>",
+        "<i>— nobody spoke · wch spoke, no side taken</i>",
         "",
     ]
     # Classify by what actually changed, not by the sign of the delta.
@@ -190,7 +212,7 @@ def build_message(data: dict | None = None) -> str | None:
         lines.append("")
 
     if quiet:
-        lines.append("🔇 <b>WENT QUIET</b> <i>(no recent calls — not a reversal)</i>")
+        lines.append("🔇 <b>NO RECENT SIDE</b> <i>(silent or watch-only — not a reversal)</i>")
         lines.extend(_row(q) for q in quiet)
         lines.append("")
 

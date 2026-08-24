@@ -219,13 +219,20 @@ def test_delta_pass_is_alertable_despite_being_thin(db):
 
 # ── called levels ─────────────────────────────────────────────────────
 
-def _signal(db, ticker, side, stop, target, *, ago_hours=2, author="og-whales:x"):
+def _signal(db, ticker, side, stop, target, *, ago_hours=2, author="og-whales:x",
+            published_ago_hours=None):
+    """published_ago_hours defaults to ago_hours. They differ in reality:
+    extracted_at is when the extractor ran, published_at when the call was
+    actually made, and a re-extraction batch separates them by months."""
+    published = (datetime.now(UTC)
+                 - timedelta(hours=published_ago_hours
+                             if published_ago_hours is not None else ago_hours))
     db.execute(
         "INSERT INTO documents (document_id, source_id, title, content_type,"
         " published_at, ingested_at, raw_text, cleaned_text, tags_json)"
-        " VALUES (?, 'manual:t', '', 'manual_chart', datetime('now'),"
-        " datetime('now'), '', '', '[]')",
-        (f"doc-{ticker}-{stop}-{target}",),
+        " VALUES (?, 'manual:t', '', 'manual_chart', ?, datetime('now'),"
+        " '', '', '[]')",
+        (f"doc-{ticker}-{stop}-{target}", published.isoformat()),
     )
     db.execute(
         """
@@ -264,6 +271,20 @@ def test_stale_called_levels_are_excluded_not_averaged(db):
     assert out["n_calls"] == 3
     assert out["n_live"] == 1
     assert out["live"][0]["stop"] == 76_500
+
+
+def test_recency_uses_publish_time_not_extraction_time(db):
+    """A re-extraction batch stamps a year of archived charts with one
+    date. Windowing on extracted_at made 17-month-old BTC calls look like
+    this week's, and showed a 2025-03-30 level under a 2026-08-21 date.
+    47% of real signals have >7d between the two timestamps."""
+    _price(db, "BTC", 77_755)
+    # Extracted an hour ago, but the KOL actually posted it 400 days back.
+    _signal(db, "BTC", "LONG", 76_500, 84_000,
+            ago_hours=1, published_ago_hours=400 * 24)
+    out = rules._called_levels(db, "BTC", "LONG", datetime.now(UTC).isoformat(),
+                               days=21)
+    assert out is None, "a 400-day-old call must not enter a 21-day window"
 
 
 def test_short_calls_bracket_in_the_opposite_direction(db):

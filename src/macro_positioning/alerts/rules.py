@@ -226,15 +226,24 @@ def _called_levels(
     """
     if side not in ("LONG", "SHORT"):
         return None
+    # published_at, NOT extracted_at. extracted_at is when the extractor
+    # ran, and a re-extraction batch stamps a year of archived charts with
+    # one date: 47% of signals were extracted >7d after publication, mean
+    # lag 62 days, max 588. Windowing on it made 17-month-old BTC calls
+    # look like this week's, and displayed a 2025-03-30 level under a
+    # 2026-08-21 date. ingested_at is the fallback for rows with no
+    # publish time, matching what call_accuracy.py already does.
     rows = conn.execute(
         """
-        SELECT extracted_at, author_id, stop_loss, target_1
-        FROM signals
-        WHERE asset_ticker = ? AND side = ? AND status = 'active'
-          AND extracted_at <= ?
-          AND extracted_at >= datetime(?, ?)
-          AND stop_loss IS NOT NULL AND target_1 IS NOT NULL
-        ORDER BY extracted_at DESC
+        SELECT COALESCE(d.published_at, d.ingested_at) AS called_at,
+               s.author_id, s.stop_loss, s.target_1
+        FROM signals s
+        JOIN documents d ON d.document_id = s.document_id
+        WHERE s.asset_ticker = ? AND s.side = ? AND s.status = 'active'
+          AND COALESCE(d.published_at, d.ingested_at) <= ?
+          AND COALESCE(d.published_at, d.ingested_at) >= datetime(?, ?)
+          AND s.stop_loss IS NOT NULL AND s.target_1 IS NOT NULL
+        ORDER BY called_at DESC
         """,
         (ticker.upper(), side, as_of, as_of, f"-{int(days)} day"),
     ).fetchall()
@@ -247,7 +256,7 @@ def _called_levels(
                 "window_days": days, "ref_price": None, "live": []}
 
     live = []
-    for extracted_at, author_id, stop, target in rows:
+    for called_at, author_id, stop, target in rows:
         try:
             stop, target = float(stop), float(target)
         except (TypeError, ValueError):
@@ -258,7 +267,7 @@ def _called_levels(
         # spot has already played out.
         brackets = (stop < ref < target) if side == "LONG" else (target < ref < stop)
         if brackets:
-            live.append({"extracted_at": extracted_at, "author_id": author_id,
+            live.append({"called_at": called_at, "author_id": author_id,
                          "stop": stop, "target": target})
 
     return {
@@ -328,7 +337,7 @@ def _body(
         for c in called["live"]:
             who = (c["author_id"] or "unknown").split(":")[-1]
             lines.append(
-                f"  {who} {c['extracted_at'][:10]}: "
+                f"  {who} {c['called_at'][:10]}: "
                 f"stop {c['stop']:,.6g} · target {c['target']:,.6g}"
             )
     elif called:

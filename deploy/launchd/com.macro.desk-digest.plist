@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.macro.desk-digest</string>
+
+    <!-- Same interpreter rationale as the other jobs: this venv python
+         holds Full Disk Access, so launchd can reach the repo. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/thom/Documents/Personal/Code Projects/Macro Analyzer/.venv/bin/python</string>
+        <string>scripts/desk_digest.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/thom/Documents/Personal/Code Projects/Macro Analyzer</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/thom/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- 06:20 and 13:25, behind the free-ingest job that starts at 06:00
+         and 13:00. Those runs finished at 06:09 and 13:13 on 2026-08-24,
+         so this reads a freshly-scored board rather than yesterday's. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Hour</key><integer>6</integer>
+            <key>Minute</key><integer>20</integer>
+        </dict>
+        <dict>
+            <key>Hour</key><integer>13</integer>
+            <key>Minute</key><integer>25</integer>
+        </dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/thom/Library/Logs/macro-desk-digest.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/thom/Library/Logs/macro-desk-digest.err.log</string>
+</dict>
+</plist>

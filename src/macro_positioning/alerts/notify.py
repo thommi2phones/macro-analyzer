@@ -290,6 +290,12 @@ def send(alert: dict) -> str:
     return _post(_format(alert))
 
 
+def send_text(text: str) -> str:
+    """Send pre-formatted HTML. For the scheduled desk digest, which
+    composes its own layout rather than describing a single alert."""
+    return _post(text[:_MAX_LEN])
+
+
 def send_batch(alerts: list[dict]) -> str:
     """Deliver a cycle's alerts as one message. Same return contract as
     `send`, applied to every alert in the batch.

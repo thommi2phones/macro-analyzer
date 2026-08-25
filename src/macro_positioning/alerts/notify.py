@@ -244,58 +244,68 @@ def _what_changed(alert: dict) -> str | None:
 
 
 def _digest_line(alert: dict, *, now: datetime | None = None) -> str:
-    """One scannable line: asset · score move · grade+tier · direction.
+    """One alert as a short block, sized for a phone.
 
-        🟢 ETH  74→86  A · tier_1  LONG
+        🟡 NVDA · 72 · tier_2 · LONG
+        support 214.655 · held 6× · 0.0% away
+        price reached a support level worth charting
 
-    Direction is omitted rather than guessed when neither the synthesized
-    levels nor the voice consensus is directional — a blank is honest,
-    "LONG" by default is not.
+    Telegram's mobile column is roughly 38 characters. The previous
+    single-line form packed identity, observation and timestamp together,
+    which wrapped three ways and dropped the indent on every continuation
+    — "charting" landed back at the left margin and the two-level
+    hierarchy collapsed into a paragraph. Three short lines beat one long
+    one at that width.
+
+    Line 1 is identity: who, where it stands, which way. Line 2 is the
+    observation. Line 3 is the rule's own note, italicised so it reads as
+    commentary rather than data.
     """
     dot = _SEVERITY_DOT.get(alert.get("severity"), _DEFAULT_DOT)
     ticker = _esc(alert.get("ticker") or "")
     before, after = alert.get("score_before"), alert.get("score_after")
-    # A bare number reads as a delta. The direction rules fire on an
-    # event rather than a score move and carry no `score_before`, so
-    # theirs is labelled — "47" and "74→86" must not look alike.
+    # "74→86" for a band crossing; "score 47" for an event alert, which
+    # carries no `score_before`. Labelled rather than bare: in the same
+    # slot as an arrow, a lone number reads as a delta that never
+    # happened.
     move = f"{before}→{after}" if before is not None else f"score {after}"
-    grade = _esc(alert.get("grade_after") or "")
-    tier = _esc(alert.get("tier_after") or "")
+
+    ident = [f"{dot} <b>{ticker}</b>", move]
+    # Grade and tier are both derived from the score, but they are the
+    # framework's own vocabulary and the operator reads in it. Included
+    # when present — the direction rules set tier without a grade.
+    grade = alert.get("grade_after")
+    if grade:
+        ident.append(_esc(grade))
+    tier = alert.get("tier_after")
+    if tier:
+        ident.append(_esc(tier))
     side = alert.get("side")
-    parts = [f"{dot} <b>{ticker}</b>", move, f"{grade} · {tier}"]
     if side:
-        parts.append(f"<b>{_esc(side)}</b>")
-    # Direction alerts carry their news in the headline, not in the score
-    # move — "74→86" is blank for them, so without this the line says
-    # nothing. The digest's detail block drops the first body line as a
-    # duplicate, which for these IS the headline.
-    # Numbers lead, the rule's own prose sits beneath. The observation is
-    # what you act on — "support 214.655, held 6×, 0.0% away" says price
-    # is sitting *on* a six-touch level right now, which the prose alone
-    # never tells you — but the prose carries the framing that stops a
-    # level touch reading as a trade signal ("worth charting", and every
-    # direction body ends "chart it before acting — these are not trade
-    # levels"). Keeping both costs one indented line.
-    observation = _what_changed(alert)
-    prose = _headline(alert)
-    what = observation or prose
-    if what:
-        parts.append(f"· {_esc(what)}")
-    # Stamp only alerts that didn't fire in this cycle — a redelivery
-    # after a failed send, or one fired before the bot was configured.
-    # Same-cycle alerts are already covered by the header timestamp.
+        ident.append(f"<b>{_esc(side)}</b>")
+
+    # Only stamp a redelivery — an alert that fired in an earlier cycle.
+    # Same-cycle alerts are covered by the header, and on a narrow column
+    # a repeated timestamp is pure noise.
     now = now or datetime.now().astimezone()
     fired = _local(alert.get("fired_at"))
     if fired and (now - fired).total_seconds() > 900:
-        parts.append(f"· fired {_when(alert.get('fired_at'), now=now)}")
+        ident.append(f"<i>{_when(alert.get('fired_at'), now=now)}</i>")
 
-    line = "  ".join(parts)
-    if observation and prose and prose != observation:
+    lines = [" · ".join(ident)]
+
+    observation = _what_changed(alert)
+    prose = _headline(alert)
+    if observation:
+        lines.append(_esc(observation))
+    if prose and prose != observation:
         # Verbatim, never reworded: these strings live in
         # direction_rules.py, and paraphrasing them here would silently
         # drift the moment that module is edited.
-        line += f"\n       {_esc(prose)}"
-    return line
+        lines.append(f"<i>{_esc(prose)}</i>")
+    elif not observation and prose:
+        lines.append(_esc(prose))
+    return "\n".join(lines)
 
 
 def _format_digest(alerts: list[dict]) -> str:
@@ -354,7 +364,8 @@ def _format_digest(alerts: list[dict]) -> str:
             body_lines.append(f"…and {remaining} more (message limit)")
             break
         body_lines.append(line)
-        budget -= len(line) + 1
+        body_lines.append("")          # breathing room between blocks
+        budget -= len(line) + 2
 
     return "\n".join(header + body_lines + footer)[:_MAX_LEN]
 

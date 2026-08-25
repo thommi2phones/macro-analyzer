@@ -445,6 +445,35 @@ def test_digest_line_carries_asset_move_tier_and_direction(db):
     assert "LONG" in text
 
 
+def test_identity_line_fits_a_phone_column():
+    """Telegram's mobile column is ~38 chars. The single-line form wrapped
+    three ways and lost its indent on every continuation, collapsing the
+    hierarchy into a paragraph."""
+    import re
+    line = notify._digest_line({
+        "severity": "high", "ticker": "NVDA", "score_before": None,
+        "score_after": 72, "tier_after": "tier_2", "side": "LONG",
+        "grade_after": "B", "rule": "zone_arrival",
+        "payload": {"zone": {"price": 214.655, "kind": "support",
+                             "touches": 6, "distance_pct": 0.0}},
+    }).split("\n")
+    plain = [re.sub(r"<[^>]+>", "", ln) for ln in line]
+    assert len(plain[0]) <= 38, f"identity line too wide: {plain[0]!r}"
+    assert len(plain[1]) <= 40, f"observation line too wide: {plain[1]!r}"
+    assert "support 214.655" in plain[1]
+
+
+def test_blocks_are_separated_so_they_do_not_run_together():
+    alerts = [{"severity": "medium", "ticker": f"T{i}", "rule": "zone_arrival",
+               "score_before": None, "score_after": 50, "tier_after": "tier_3",
+               "grade_after": "", "body": "x\n\ny",
+               "payload": {"zone": {"price": 10.0, "kind": "support",
+                                    "touches": 2, "distance_pct": 0.01}}}
+              for i in range(3)]
+    out = notify._format_digest(alerts)
+    assert "\n\n🟡" in out          # a blank line before each block
+
+
 def test_green_is_highest_conviction_red_is_lowest():
     """Red-for-strongest read backwards to anyone who looks at markets."""
     def dot(sev):

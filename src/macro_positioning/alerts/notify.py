@@ -269,11 +269,16 @@ def _digest_line(alert: dict, *, now: datetime | None = None) -> str:
     # move — "74→86" is blank for them, so without this the line says
     # nothing. The digest's detail block drops the first body line as a
     # duplicate, which for these IS the headline.
-    # Prefer the observation over the category. "support 14.92, held 8×,
-    # 0.3% away" tells you what happened; "price reached a support level
-    # worth charting" only tells you what kind of thing happened, and the
-    # detail block below already carries that prose for the lead alert.
-    what = _what_changed(alert) or _headline(alert)
+    # Numbers lead, the rule's own prose sits beneath. The observation is
+    # what you act on — "support 214.655, held 6×, 0.0% away" says price
+    # is sitting *on* a six-touch level right now, which the prose alone
+    # never tells you — but the prose carries the framing that stops a
+    # level touch reading as a trade signal ("worth charting", and every
+    # direction body ends "chart it before acting — these are not trade
+    # levels"). Keeping both costs one indented line.
+    observation = _what_changed(alert)
+    prose = _headline(alert)
+    what = observation or prose
     if what:
         parts.append(f"· {_esc(what)}")
     # Stamp only alerts that didn't fire in this cycle — a redelivery
@@ -283,7 +288,14 @@ def _digest_line(alert: dict, *, now: datetime | None = None) -> str:
     fired = _local(alert.get("fired_at"))
     if fired and (now - fired).total_seconds() > 900:
         parts.append(f"· fired {_when(alert.get('fired_at'), now=now)}")
-    return "  ".join(parts)
+
+    line = "  ".join(parts)
+    if observation and prose and prose != observation:
+        # Verbatim, never reworded: these strings live in
+        # direction_rules.py, and paraphrasing them here would silently
+        # drift the moment that module is edited.
+        line += f"\n       {_esc(prose)}"
+    return line
 
 
 def _format_digest(alerts: list[dict]) -> str:

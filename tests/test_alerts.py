@@ -271,12 +271,22 @@ def _signal(db, ticker, side, stop, target, *, ago_hours=2, author="og-whales:x"
     db.commit()
 
 
-def _price(db, ticker, close):
+def _price(db, ticker, close, *, days_ago: int = 1):
+    """Seed a daily bar dated safely before the scores under test.
+
+    Dating it "today UTC" looked equivalent and was not: _ref_price takes
+    the newest bar at or before the scoring moment — correctly, since a
+    bar stamped with the in-progress day is not a close the pass could
+    have seen — and a score written `ago_hours=1` lands on the *previous*
+    UTC date for the hour after midnight. The fixture then had no usable
+    price and every called level read as unbracketed, but only between
+    00:00 and 01:00 UTC.
+    """
+    observed = (datetime.now(UTC) - timedelta(days=days_ago)).date().isoformat()
     db.execute(
         "INSERT OR REPLACE INTO prices (price_id, ticker, observed_at, timeframe,"
         " close, provider, fetched_at) VALUES (?, ?, ?, '1D', ?, 'test', ?)",
-        (f"px-{ticker}", ticker, datetime.now(UTC).date().isoformat(), close,
-         datetime.now(UTC).isoformat()),
+        (f"px-{ticker}", ticker, observed, close, datetime.now(UTC).isoformat()),
     )
     db.commit()
 

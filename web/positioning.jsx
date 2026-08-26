@@ -53,23 +53,16 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
       if (onAdvanceToConcept) onAdvanceToConcept();
       return;
     }
-    const id = `concept-${Date.now().toString(36)}`;
-    D.concepts = (D.concepts || []).concat([{
-      id,
+    markConcept({
       asset: row.asset,
+      side: row.side,
+      score: row.score,
+      tier: row.tier,
       source: "watchlist_manual",
-      status: "active",
-      suggestedBySystem: false,
-      suggestionReason: null,
-      scoreAtMark: row.score,
-      tierAtMark: row.tier,
-      sideAtMark: row.side,
-      thesis: "",
-      markedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
-      tradePlanId: null,
-    }]);
-    rerender();
-    if (onAdvanceToConcept) onAdvanceToConcept();
+    }).then(() => {
+      rerender();
+      if (onAdvanceToConcept) onAdvanceToConcept();
+    });
   };
 
   // ── Watchlist filtering + sorting ────────────────────────────
@@ -129,7 +122,8 @@ function Positioning({ onOpenReasoning, onOpenTradeForm, onAdvanceToConcept }) {
 
       {/* ── Live signals (direct from extractors, last 72h) ─ */}
       {Array.isArray(D.liveSignals) && D.liveSignals.length > 0 && (
-        <LiveSignalsPanel signals={D.liveSignals} />
+        <LiveSignalsPanel signals={D.liveSignals}
+                          onAdvanceToConcept={onAdvanceToConcept} />
       )}
 
       {/* ── Hero signals ────────────────────────────────── */}
@@ -632,6 +626,94 @@ function DataFreshnessStrip({ dh }) {
 // Reads directly from the signals table — visible BEFORE a scoring pass
 // rolls them into trade_scores. So the positioning desk surfaces real
 // extracted intelligence within seconds of ingestion.
+// A live call carries its own thesis and levels — seed the concept with
+// them so step ② starts from what the author actually said, not a blank.
+function conceptSeedFromSignal({ ticker, side, conviction, score, thesis_summary,
+                                 stop_loss, target_1, target_2, who, when }) {
+  const levels = [
+    stop_loss != null ? `stop ${stop_loss}` : null,
+    target_1 != null ? `target ${target_1}` : null,
+    target_2 != null ? `/ ${target_2}` : null,
+  ].filter(Boolean).join(" ");
+  const thesis = [
+    thesis_summary,
+    levels || null,
+    who ? `— ${who}${when ? `, ${when}` : ""}` : null,
+  ].filter(Boolean).join("\n");
+  return {
+    asset: ticker,
+    side,
+    // No score: the watchlist's score_at_mark is a 0-100 composite, and a
+    // 0-5 conviction is not the same measurement. It travels in the
+    // reason line instead, where its unit is stated.
+    score: null,
+    thesis,
+    source: "live_signal",
+    reason: `live signal · ${who || "unknown source"} · conviction ${
+      conviction != null ? conviction.toFixed(1) : "—"}/5${
+      score != null ? ` · weighted ${score}` : ""}`,
+  };
+}
+
+// ── Mark a concept (funnel step ②) ──────────────────────────────────────
+// Writes through to /api/funnel/concepts so the mark survives a reload,
+// and mirrors the row into MA_DATA in the client shape /concepts renders.
+// The POST de-dupes server-side: marking an asset that already has an
+// active concept returns that concept instead of a second row.
+async function markConcept({ asset, side, score, tier, thesis, source, reason }) {
+  const local = {
+    id: `concept-${Date.now().toString(36)}`,
+    asset,
+    source: source || "watchlist_manual",
+    status: "active",
+    suggestedBySystem: false,
+    suggestionReason: reason || null,
+    scoreAtMark: score != null ? score : null,
+    tierAtMark: tier != null ? tier : null,
+    sideAtMark: side || null,
+    thesis: thesis || "",
+    markedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
+    tradePlanId: null,
+  };
+  let deduped = false;
+  try {
+    const r = await fetch("/api/funnel/concepts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asset_id: asset,
+        source: local.source,
+        thesis_text: local.thesis,
+        score_at_mark: local.scoreAtMark,
+        tier_at_mark: local.tierAtMark != null ? String(local.tierAtMark) : null,
+        side_at_mark: local.sideAtMark,
+        suggestion_reason: local.suggestionReason,
+      }),
+    });
+    if (r.ok) {
+      const j = await r.json();
+      const c = j.concept || {};
+      deduped = !!j.deduped;
+      local.id = c.concept_id || local.id;
+      local.markedAt = (c.marked_at || local.markedAt).replace("T", " ").slice(0, 16);
+      if (deduped) local.thesis = c.thesis_text || local.thesis;
+    }
+  } catch (e) {
+    // Offline / static preview: keep the optimistic row so the funnel
+    // still moves. It just won't survive the next reload.
+  }
+  const D = window.MA_DATA;
+  const existing = (D.concepts || []).find(
+    c => c.asset === asset && c.status === "active"
+  );
+  if (existing) {
+    Object.assign(existing, { id: local.id, thesis: existing.thesis || local.thesis });
+  } else {
+    D.concepts = (D.concepts || []).concat([local]);
+  }
+  return { concept: local, deduped: deduped || !!existing };
+}
+
 // Age of a timestamp, in the shortest unit that still reads precisely.
 function sigAge(iso) {
   if (!iso) return "—";
@@ -656,11 +738,40 @@ function sigStamp(iso) {
   } catch (e) { return ""; }
 }
 
-function LiveSignalsPanel({ signals }) {
+function LiveSignalsPanel({ signals, onAdvanceToConcept }) {
   // signal_id of the card being drilled into — the modal fetches the full
   // provenance chain (chart, caption, extractor, model) on open.
   const [openId, setOpenId] = useStateP(null);
+  // ticker → concept id for marks made this session, so a card can say
+  // "marked" instead of offering the same mark twice.
+  const [marked, setMarked] = useStateP({});
   const fmtAge = sigAge;
+
+  const conceptFor = (ticker) => {
+    if (marked[ticker]) return marked[ticker];
+    const c = (window.MA_DATA.concepts || []).find(
+      x => x.asset === ticker && x.status === "active"
+    );
+    return c ? c.id : null;
+  };
+
+  const toConcept = (s, { navigate = true } = {}) => {
+    const who = s.source_channel || s.source_slug;
+    return markConcept(conceptSeedFromSignal({
+      ticker: s.ticker,
+      side: s.side,
+      conviction: s.conviction,
+      score: s.weighted_score,
+      thesis_summary: s.thesis_summary,
+      stop_loss: s.stop_loss, target_1: s.target_1, target_2: s.target_2,
+      who,
+      when: sigStamp(s.published_at || s.extracted_at),
+    })).then(({ concept }) => {
+      setMarked(m => ({ ...m, [s.ticker]: concept.id }));
+      if (navigate && onAdvanceToConcept) onAdvanceToConcept();
+      return concept;
+    });
+  };
   const sideKind = (side) => {
     const s = (side || "").toUpperCase();
     if (s === "LONG" || s === "ADD") return "long";
@@ -726,7 +837,20 @@ function LiveSignalsPanel({ signals }) {
                 {s.target_2 != null && <> / {s.target_2}</>}
               </div>
             )}
-            <div className="ls-drill mono">source ↗</div>
+            <div className="ls-actions">
+              <span className="ls-drill mono">source ↗</span>
+              {conceptFor(s.ticker) ? (
+                <span className="ls-marked mono" title="already an active concept">
+                  ✓ concept
+                </span>
+              ) : (
+                <button className="ls-mark mono"
+                        title="mark as a concept (funnel step ②)"
+                        onClick={(e) => { e.stopPropagation(); toConcept(s); }}>
+                  → concept
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -735,6 +859,21 @@ function LiveSignalsPanel({ signals }) {
           signalId={openId}
           onClose={() => setOpenId(null)}
           onOpenSignal={setOpenId}
+          conceptFor={conceptFor}
+          onMarkConcept={(sig, doc) => toConcept({
+            ticker: sig.asset_ticker,
+            side: sig.side,
+            conviction: sig.conviction,
+            weighted_score: sig.weighted_score,
+            thesis_summary: sig.thesis_summary,
+            stop_loss: sig.stop_loss,
+            target_1: sig.target_1,
+            target_2: sig.target_2,
+            source_channel: sig.source_channel,
+            source_slug: sig.source_slug,
+            published_at: doc && doc.published_at,
+            extracted_at: sig.extracted_at,
+          }, { navigate: false })}
         />
       )}
     </section>
@@ -745,9 +884,11 @@ function LiveSignalsPanel({ signals }) {
 // "Where is this coming from?" — the full chain behind one live signal:
 //   source channel → author → document (chart + caption) → extractor/model
 // Fetched from /api/signals/{id}/provenance on open.
-function SignalProvenanceModal({ signalId, onClose, onOpenSignal }) {
+function SignalProvenanceModal({ signalId, onClose, onOpenSignal,
+                                 conceptFor, onMarkConcept }) {
   const [data, setData] = useStateP(null);
   const [err, setErr] = useStateP(null);
+  const [marking, setMarking] = useStateP(false);
 
   useEffectP(() => {
     let live = true;
@@ -801,7 +942,27 @@ function SignalProvenanceModal({ signalId, onClose, onOpenSignal }) {
               {" · "}{sigAge((doc && doc.published_at) || sig.extracted_at)} ago
             </span>
           )}
-          <button className="filter-pill sp-close" onClick={onClose}>✕ close</button>
+          <div className="sp-head-actions">
+            {sig && onMarkConcept && (
+              conceptFor && conceptFor(sig.asset_ticker) ? (
+                <span className="mono sp-marked" title="already an active concept">
+                  ✓ concept
+                </span>
+              ) : (
+                <button className="filter-pill sp-mark mono"
+                        disabled={marking}
+                        title="mark as a concept (funnel step ②)"
+                        onClick={() => {
+                          setMarking(true);
+                          Promise.resolve(onMarkConcept(sig, doc))
+                            .finally(() => setMarking(false));
+                        }}>
+                  {marking ? "marking…" : "→ concept"}
+                </button>
+              )
+            )}
+            <button className="filter-pill sp-close" onClick={onClose}>✕ close</button>
+          </div>
         </div>
 
         {err && <div className="sp-body sp-empty">Could not load provenance: {err}</div>}

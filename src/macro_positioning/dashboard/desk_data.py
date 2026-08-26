@@ -39,7 +39,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from datetime import UTC, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Optional
 
 from macro_positioning.core.settings import settings
 from macro_positioning.dashboard.checklist import load_checklist
@@ -1738,6 +1738,58 @@ def build_live_signals_section() -> list[dict]:
     return out
 
 
+def build_funnel_concepts_section() -> list[dict] | None:
+    """Marked concepts (funnel step ②) from `trade_concepts`.
+
+    Returns None while the table is empty so the mock rows in
+    data.mock.js survive the shallow merge — the funnel view keeps its
+    demo content until the desk marks something real, then switches to
+    live rows. Shape is the SPA's client contract (camelCase), not the
+    API's row shape.
+    """
+    if not settings.sqlite_path.exists():
+        return None
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT concept_id, asset_id, source, status,
+                       suggested_by_system, suggestion_reason,
+                       score_at_mark, tier_at_mark, side_at_mark,
+                       thesis_text, trade_plan_id,
+                       marked_at, promoted_at, retired_at
+                FROM trade_concepts
+                ORDER BY marked_at DESC
+                LIMIT 200
+                """
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return None       # pre-migration DB — keep the mock
+    if not rows:
+        return None
+
+    def _stamp(v: Optional[str]) -> Optional[str]:
+        return str(v).replace("T", " ")[:16] if v else None
+
+    return [{
+        "id": r["concept_id"],
+        "asset": r["asset_id"],
+        "source": r["source"],
+        "status": r["status"],
+        "suggestedBySystem": bool(r["suggested_by_system"]),
+        "suggestionReason": r["suggestion_reason"],
+        "scoreAtMark": r["score_at_mark"],
+        "tierAtMark": r["tier_at_mark"],
+        "sideAtMark": r["side_at_mark"],
+        "thesis": r["thesis_text"] or "",
+        "tradePlanId": r["trade_plan_id"],
+        "markedAt": _stamp(r["marked_at"]),
+        "promotedAt": _stamp(r["promoted_at"]),
+        "retiredAt": _stamp(r["retired_at"]),
+    } for r in rows]
+
+
 def build_data_health_section() -> dict:
     """Per-source freshness so the operator can spot stalled pipelines.
 
@@ -1899,6 +1951,7 @@ def build_desk_snapshot() -> dict:
         ("heroSignals", build_hero_signals_section, list),
         ("liveSignals", build_live_signals_section, list),
         ("dataHealth", build_data_health_section, lambda: {"sources": [], "as_of": None}),
+        ("concepts", build_funnel_concepts_section, lambda: None),
         ("watchlist", build_watchlist_section, list),
         ("priceSeries", build_price_series_section, dict),
         ("activeTrades", build_active_trades_section, list),

@@ -5060,11 +5060,32 @@ body { font-size: 15.5px; }
 .live-signal-card:focus-visible {
   outline: 2px solid rgba(255,255,255,0.4); outline-offset: 2px;
 }
+.ls-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 4px;
+}
 .ls-drill {
   font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
-  color: rgba(237,239,245,0.28); margin-top: 2px;
+  color: rgba(237,239,245,0.28);
 }
 .live-signal-card:hover .ls-drill { color: rgba(237,239,245,0.6); }
+.ls-mark {
+  font: inherit; font-size: 9.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; cursor: pointer;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.14);
+  color: rgba(237,239,245,0.72);
+  border-radius: 999px; padding: 3px 9px;
+}
+.ls-mark:hover {
+  background: rgba(255,255,255,0.14);
+  border-color: rgba(255,255,255,0.3);
+  color: #fff;
+}
+.ls-marked {
+  font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #7dd87d; opacity: 0.85; padding: 3px 2px;
+}
 
 /* ── Signal provenance modal (Live signals drill-down) ─────────────── */
 .sp-backdrop {
@@ -5100,7 +5121,19 @@ body { font-size: 15.5px; }
   .sp-head { flex-wrap: wrap; }
   .sp-head-when { margin-left: 0; }
 }
-.sp-close { margin-left: auto; font-size: 10px; }
+.sp-head-actions {
+  margin-left: auto; display: flex; align-items: center; gap: 8px;
+}
+.sp-close { font-size: 10px; }
+.sp-mark {
+  font-size: 10px; cursor: pointer;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+.sp-mark[disabled] { opacity: 0.6; cursor: default; }
+.sp-marked {
+  font-size: 10px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #3f9e4d;
+}
 .sp-body {
   display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr);
   gap: 18px; padding: 18px; overflow-y: auto;

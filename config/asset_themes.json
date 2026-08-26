@@ -47,7 +47,7 @@
       "exposure_type": "structural",
       "preferred_regimes": ["monetary_debasement_hard_asset", "commodity_led_inflation"],
       "thesis_regime_alignment": ["inflation_shock", "war_escalation", "broad_panic"],
-      "watchlist_tickers": ["GLD", "SLV", "GDX", "GDXJ", "SILJ", "NEM", "AEM"],
+      "watchlist_tickers": ["GLD", "PHYS", "SLV", "PSLV", "GDX", "GDXJ", "SILJ", "NEM", "AEM"],
       "bullish_conditions": [
         "Dollar weakening",
         "Real rates falling",

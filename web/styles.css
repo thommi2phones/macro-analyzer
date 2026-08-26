@@ -2664,6 +2664,14 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 .concept-row.passed:hover { opacity: 0.85; }
 .passed-list { padding-top: 0; }
 .sug-reraised { color: #d9a441; margin-top: 3px; letter-spacing: 0.02em; }
+/* Voice suggestions have no composite score — the chip stands in for the
+   tier colour so the row still reads at a glance. */
+.wl-score.tier-voice {
+  background: rgba(122,162,247,0.14);
+  color: #7aa2f7;
+  border: 1px solid rgba(122,162,247,0.3);
+}
+.voice-chip { color: #7aa2f7; opacity: 0.85; }
 .link-btn {
   background: none; border: none; padding: 0; cursor: pointer;
   font: inherit; color: rgba(237,239,245,0.55);

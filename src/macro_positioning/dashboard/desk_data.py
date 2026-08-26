@@ -1738,6 +1738,330 @@ def build_live_signals_section() -> list[dict]:
     return out
 
 
+# ── Concept suggestions (funnel step ② intake) ────────────────────────────
+#
+# What earns a place in "suggested by system": not a high score on its own,
+# but a name the desk could act on today. Two streams feed it.
+#
+#   scored — the top of the live watchlist, filtered down to setups with
+#            real levels behind them (a stop off structure, or a target a
+#            trusted voice actually drew) rather than the 2×ATR/3R
+#            placeholders the scorer fills in while structure forms.
+#   voice  — a trusted author making a levelled call on a ticker the
+#            watchlist does not score at all. Without this stream those
+#            names are invisible here: they never enter the scoring set,
+#            so no score threshold can ever surface them.
+#
+# Anything already being worked — an active concept, a live or draft plan,
+# an open trade — is excluded; suggesting it again is noise.
+
+SUGGEST_SCORE_FLOOR = 70          # tier-1/2 territory on the 0-100 composite
+SUGGEST_MAX_TIER = 2
+SUGGEST_MIN_RR = 2.0
+SUGGEST_VOICE_MIN_CONVICTION = 3.5
+SUGGEST_VOICE_MAX_AGE_DAYS = 21
+# A lower R bar than the scored stream on purpose, and measured from
+# today's price rather than the author's entry: what matters is the trade
+# still available, not the one they got. Chart calls are also staged —
+# the stored targets are waypoints, not the thesis's ceiling — so the
+# ratio here understates more often than it flatters.
+SUGGEST_VOICE_MIN_RR = 1.0
+# A call is only actionable while price is still near where it was made.
+# Past this, the levels are a chart annotation from a move that already
+# happened (CCJ called at 15.47 while it trades at 106.96).
+SUGGEST_VOICE_MAX_DRIFT = 0.15
+# Stops closer than this to entry are extraction artifacts, not risk
+# definitions, and they manufacture enormous R ratios.
+SUGGEST_VOICE_MIN_RISK_PCT = 0.02
+SUGGEST_VOICE_MAX_RISK_PCT = 0.35
+# How much of the call's original risk band price may have eaten and the
+# idea still be worth taking. Past half, the trade is mostly a loss in
+# progress — and measuring R from a price sitting just above the stop
+# manufactures huge ratios out of nearly-invalidated calls.
+SUGGEST_VOICE_MAX_RISK_CONSUMED = 0.5
+# R is capped for ranking only. An 800-to-1124 target off a stop 2% away
+# computes as 25R and would outrank every real setup on the list.
+SUGGEST_RANK_RR_CAP = 8.0
+SUGGEST_LIMIT = 8
+SUGGEST_VOICE_LIMIT = 3
+
+
+def _latest_prices(conn: sqlite3.Connection) -> dict[str, float]:
+    """Most recent close per ticker, for judging whether a call is still live."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT ticker, close FROM prices p
+            WHERE observed_at = (
+                SELECT MAX(observed_at) FROM prices WHERE ticker = p.ticker
+            )
+            """
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {
+        str(t).upper(): float(c)
+        for t, c in rows if t and c is not None
+    }
+
+
+def _assets_already_in_flight(conn: sqlite3.Connection) -> set[str]:
+    """Tickers with an active concept, an open plan, or an open trade."""
+    taken: set[str] = set()
+    for sql in (
+        "SELECT asset_id FROM trade_concepts WHERE status = 'active'",
+        "SELECT asset_id FROM trade_plans WHERE status IN ('draft', 'live')",
+        "SELECT asset_id FROM trades WHERE status = 'open'",
+    ):
+        try:
+            taken.update(str(r[0]).upper() for r in conn.execute(sql) if r[0])
+        except sqlite3.OperationalError:
+            continue
+    # trades/plans key by asset_id; map those back to tickers.
+    try:
+        rows = conn.execute(
+            "SELECT asset_id, ticker FROM assets WHERE asset_id IN "
+            "(SELECT asset_id FROM trade_plans WHERE status IN ('draft','live') "
+            " UNION SELECT asset_id FROM trades WHERE status='open')"
+        ).fetchall()
+        taken.update(str(t).upper() for _, t in rows if t)
+    except sqlite3.OperationalError:
+        pass
+    return taken
+
+
+def _level_basis(row: dict) -> tuple[bool, str | None]:
+    """Is this setup levelled by something real, and who drew it?
+
+    Mechanical rails alone don't qualify — those are the scorer's
+    placeholder until structure forms, and suggesting a trade off them
+    would be suggesting arithmetic, not a setup.
+    """
+    for prov in row.get("levelProvenance") or []:
+        if prov.get("source") != "trusted_voices":
+            continue
+        contributors = prov.get("contributors") or []
+        if contributors:
+            lead = contributors[0].get("display_name")
+            extra = len(contributors) - 1
+            if lead:
+                return True, (f"{lead} +{extra}" if extra > 0 else lead)
+        who = prov.get("who")
+        if who:
+            # `who` is a rendered summary ("Name (64% setup win over 380
+            # calls)") — the name alone is what belongs in a one-line reason.
+            return True, who.split(" (")[0].split(",")[0]
+    return bool(row.get("levelStructural")), None
+
+
+def _scored_suggestions(rows: list[dict], taken: set[str]) -> list[dict]:
+    out: list[dict] = []
+    for r in rows:
+        if (r.get("asset") or "").upper() in taken:
+            continue
+        if r.get("side") not in ("LONG", "SHORT"):
+            continue
+        if (r.get("score") or 0) < SUGGEST_SCORE_FLOOR:
+            continue
+        if (r.get("tier") or 99) > SUGGEST_MAX_TIER:
+            continue
+        if not r.get("hasLevels") or (r.get("rr") or 0) < SUGGEST_MIN_RR:
+            continue
+        levelled, voice = _level_basis(r)
+        if not levelled:
+            continue
+        basis = (
+            f"target drawn by {voice}" if voice
+            else "stop off market structure"
+        )
+        # `regime` is only worth a clause when it's fit/mix. It reads "off"
+        # for nearly every name right now — setup types aren't in the
+        # regime's PREFERRED_SETUPS, so macro_alignment lands ≤6/15 across
+        # the board — and a constant is not information. The penalty is
+        # already inside the score this row leads with.
+        regime = r.get("regime")
+        reason = (
+            f"score {r['score']} · T{r.get('tier')} · {r.get('rr'):.2f}R · {basis}"
+            + (f" · regime {regime}" if regime in ("fit", "mix") else "")
+        )
+        out.append({
+            "asset": r["asset"],
+            "side": r["side"],
+            "score": r["score"],
+            "dScore": r.get("dScore", 0),
+            "tier": r.get("tier"),
+            "regime": r.get("regime"),
+            "reason": reason,
+            "origin": "scored",
+            "entry": r.get("entry"),
+            "stop": r.get("stop"),
+            "target": r.get("target"),
+            "rr": r.get("rr"),
+            "setup": r.get("setup"),
+            "voice": voice,
+            "sources": r.get("origins") or [],
+            "whyNow": r.get("whyNow") or [],
+        })
+    out.sort(key=lambda s: (-(s["score"] or 0), -(s["rr"] or 0)))
+    return out
+
+
+def _voice_suggestions(conn: sqlite3.Connection, scored: set[str],
+                       taken: set[str], *, now: datetime) -> list[dict]:
+    cutoff = (now - timedelta(days=SUGGEST_VOICE_MAX_AGE_DAYS)).isoformat()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT s.asset_ticker, s.side, s.conviction, s.weighted_score,
+                   s.thesis_summary, s.entry_zone_low, s.stop_loss,
+                   s.target_1, s.target_2, s.source_channel, s.source_slug,
+                   s.extracted_at, s.author_trust_weight, s.horizon,
+                   ia.display_name, s.asset_class
+            FROM signals s
+            LEFT JOIN input_authors ia ON ia.author_id = s.author_id
+            WHERE s.status = 'active'
+              AND s.side IN ('LONG', 'SHORT')
+              AND s.conviction >= ?
+              AND s.extracted_at >= ?
+              AND s.stop_loss IS NOT NULL
+              AND s.target_1 IS NOT NULL
+              AND s.author_id IN (
+                  SELECT author_id FROM input_authors WHERE {SEEDED_AUTHOR_WHERE}
+              )
+            ORDER BY s.conviction DESC, s.extracted_at DESC
+            """,
+            (SUGGEST_VOICE_MIN_CONVICTION, cutoff),
+        ).fetchall()
+    except sqlite3.OperationalError as exc:
+        import sys
+        print(f"[desk] voice suggestions unavailable: {exc}", file=sys.stderr)
+        return []
+
+    # The same real-asset gate the discovery feeds use: one channel's DEX
+    # meme pairs would otherwise dominate this stream, since they arrive
+    # with maximum conviction and a full set of levels.
+    from macro_positioning.dashboard.streams_builders import (
+        _crypto_majors,
+        _signal_is_real_asset,
+    )
+    universe = _crypto_majors()
+    prices = _latest_prices(conn)
+
+    best: dict[str, dict] = {}
+    for r in rows:
+        ticker = (r[0] or "").upper()
+        if not ticker or ticker in scored or ticker in taken or ticker in best:
+            continue
+        if not _signal_is_real_asset(
+            {"asset_ticker": ticker, "asset_class": r[15],
+             "thesis_summary": r[4]}, universe
+        ):
+            continue
+        side, conviction = r[1], r[2]
+        entry, stop, t1, t2 = r[5], r[6], r[7], r[8]
+        # Furthest target: these calls are staged, and the author is
+        # playing for the far one.
+        target = max([t for t in (t1, t2) if t is not None], default=None)
+        if not (entry and stop and target):
+            continue
+        risk_pct = abs(entry - stop) / entry if entry else 0
+        if not (SUGGEST_VOICE_MIN_RISK_PCT <= risk_pct <= SUGGEST_VOICE_MAX_RISK_PCT):
+            continue
+
+        # Everything below asks the same question: is this call still live?
+        # Without a price we cannot answer it, and an unverifiable call is
+        # not an actionable one (gold called at 1264 would sail through).
+        price = prices.get(ticker)
+        if not price:
+            continue
+        if abs(price - entry) / entry > SUGGEST_VOICE_MAX_DRIFT:
+            continue
+        long_side = side == "LONG"
+        if long_side and not (stop < price < target):
+            continue          # stop already taken out, or target already hit
+        if not long_side and not (target < price < stop):
+            continue
+        # Fraction of the original entry→stop band price has already eaten.
+        # Negative means the call is in profit.
+        consumed = (entry - price) / (entry - stop) if entry != stop else 1.0
+        if not long_side:
+            consumed = (price - entry) / (stop - entry)
+        if consumed > SUGGEST_VOICE_MAX_RISK_CONSUMED:
+            continue
+        rr = round(abs(target - price) / abs(price - stop), 2)
+        if rr < SUGGEST_VOICE_MIN_RR:
+            continue
+
+        who = r[14] or r[9] or r[10] or "a trusted source"
+        best[ticker] = {
+            "asset": ticker,
+            "side": side,
+            # No composite score: this name was never scored — that is the
+            # whole reason it needs surfacing. Conviction travels instead.
+            "score": None,
+            "dScore": 0,
+            "tier": None,
+            "conviction": conviction,
+            "regime": "unscored",
+            "reason": (
+                f"not scored · {who} at conviction {conviction:.1f}/5 · "
+                f"{rr:.2f}R left from {price:g} (stop {stop:g}, target "
+                f"{target:g}) · called at {entry:g}"
+            ),
+            "price": price,
+            "origin": "voice",
+            "entry": entry,
+            "stop": stop,
+            "target": target,
+            "target2": t2,
+            "rr": rr,
+            "setup": r[13] or "",
+            "voice": who,
+            "thesis": r[4],
+            "sources": [who],
+            "whyNow": [],
+        }
+    # Conviction first, then how much room the call has — ties at 5/5 are
+    # common, and the wider trade is the better use of a slot.
+    ranked = sorted(
+        best.values(),
+        key=lambda s: (
+            -(s.get("conviction") or 0),
+            -min(s.get("rr") or 0, SUGGEST_RANK_RR_CAP),
+        ),
+    )
+    return ranked[:SUGGEST_VOICE_LIMIT]
+
+
+def build_concept_suggestions_section(
+    watchlist_rows: list[dict] | None = None,
+) -> list[dict]:
+    """Names the system puts forward as concepts, most actionable first.
+
+    Takes the already-built watchlist rows so a payload build doesn't pay
+    for a second full score load.
+    """
+    if not settings.sqlite_path.exists():
+        return []
+    rows = watchlist_rows if watchlist_rows is not None else build_watchlist_section()
+    now = datetime.now(UTC)
+    with sqlite3.connect(settings.sqlite_path) as conn:
+        taken = _assets_already_in_flight(conn)
+        scored = _scored_suggestions(rows, taken)
+        voice = _voice_suggestions(
+            conn,
+            {(r.get("asset") or "").upper() for r in rows},
+            taken,
+            now=now,
+        )
+    # Scored names lead — they cleared the full model. The voice tail keeps
+    # its slots rather than being truncated away: an unscored name a trusted
+    # voice called is exactly what the score-ranked list can never show, so
+    # letting scored names fill the cap first would defeat the stream.
+    keep = max(1, SUGGEST_LIMIT - len(voice))
+    return scored[:keep] + voice
+
+
 def build_funnel_concepts_section() -> list[dict] | None:
     """Marked concepts (funnel step ②) from `trade_concepts`.
 
@@ -2008,6 +2332,17 @@ def build_desk_snapshot() -> dict:
         if value is None:
             continue
         out[key] = value
+
+    # Suggestions are derived from the watchlist rows just built — passing
+    # them in avoids a second full score load on an already slow payload.
+    try:
+        out["conceptSuggestions"] = build_concept_suggestions_section(
+            out.get("watchlist") or []
+        )
+    except Exception as exc:
+        import sys
+        print(f"[desk] section conceptSuggestions failed: {exc}", file=sys.stderr)
+        out["conceptSuggestions"] = []
     return out
 
 

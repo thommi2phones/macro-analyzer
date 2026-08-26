@@ -53,29 +53,34 @@ function Concepts({ onPromote }) {
   const active = concepts.filter(c => c.status === "active");
   const history = concepts.filter(c => c.status !== "active");
 
-  // Optimistic local mutations of MA_DATA. The mock-first SPA keeps
-  // the snapshot in memory; a real API call to /api/funnel/concepts
-  // can be added in parallel without changing the shape rendered here.
-  const markConcept = (sug) => {
-    const id = `concept-${Date.now().toString(36)}`;
-    D.concepts = (D.concepts || []).concat([{
-      id,
+  // Marking goes through the same write-through helper the watchlist and
+  // live signals use (positioning.jsx), so a suggestion accepted here
+  // survives a reload like any other concept. The suggestion's own levels
+  // seed the thesis — a concept marked off a 5.53R setup should not open
+  // as a blank box.
+  const markFromSuggestion = (sug) => {
+    const levels = [
+      sug.entry != null ? `entry ${sug.entry}` : null,
+      sug.stop != null ? `stop ${sug.stop}` : null,
+      sug.target != null ? `target ${sug.target}` : null,
+      sug.rr != null ? `${sug.rr}R` : null,
+    ].filter(Boolean).join(" · ");
+    const thesis = [sug.thesis || null, levels || null, sug.reason]
+      .filter(Boolean).join("\n");
+    markConcept({
       asset: sug.asset,
-      source: "watchlist_auto",
-      status: "active",
-      suggestedBySystem: true,
-      suggestionReason: sug.reason,
-      scoreAtMark: sug.score,
-      tierAtMark: sug.tier,
-      sideAtMark: sug.side,
-      thesis: "",
-      markedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
-      tradePlanId: null,
-    }]);
-    D.conceptSuggestions = allSuggestions.filter(s => s.asset !== sug.asset);
-    D.conceptSuggestionReviews = (D.conceptSuggestionReviews || [])
-      .filter(x => x.asset !== sug.asset);
-    rerender();
+      side: sug.side,
+      score: sug.score,
+      tier: sug.tier,
+      thesis,
+      source: sug.origin === "voice" ? "voice_suggestion" : "watchlist_auto",
+      reason: sug.reason,
+    }).then(() => {
+      D.conceptSuggestions = allSuggestions.filter(s => s.asset !== sug.asset);
+      D.conceptSuggestionReviews = (D.conceptSuggestionReviews || [])
+        .filter(x => x.asset !== sug.asset);
+      rerender();
+    });
   };
 
   // Passing writes through to /api/funnel/suggestion-reviews so the name
@@ -201,12 +206,29 @@ function Concepts({ onPromote }) {
                 <div className="concept-asset">
                   <div className="mono asset-cell">{s.asset}</div>
                   <SideLabel side={s.side} />
+                  {s.origin === "voice" && (
+                    <span className="concept-source-chip mono small voice-chip"
+                          title="a trusted voice called this; the watchlist doesn't score it">
+                      voice · unscored
+                    </span>
+                  )}
                 </div>
                 <div className="concept-score">
-                  <span className={`wl-score tier-${s.tier}`}>{s.score}</span>
-                  <span className={`mono small ${s.dScore > 0 ? "pos" : s.dScore < 0 ? "neg" : "muted"}`}>
-                    {s.dScore > 0 ? "+" : ""}{s.dScore} Δ
-                  </span>
+                  {s.score != null ? (
+                    <>
+                      <span className={`wl-score tier-${s.tier}`}>{s.score}</span>
+                      <span className={`mono small ${s.dScore > 0 ? "pos" : s.dScore < 0 ? "neg" : "muted"}`}>
+                        {s.dScore > 0 ? "+" : ""}{s.dScore} Δ
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="wl-score tier-voice" title="never scored — surfaced by a trusted call">
+                        {s.conviction != null ? s.conviction.toFixed(1) : "—"}
+                      </span>
+                      <span className="mono small muted">conv</span>
+                    </>
+                  )}
                 </div>
                 <div className="concept-reason muted small">
                   {s.reason}
@@ -216,7 +238,7 @@ function Concepts({ onPromote }) {
                 </div>
                 <div className="concept-actions">
                   <button className="btn-primary sm"
-                    onClick={(e) => { e.stopPropagation(); markConcept(s); }}>
+                    onClick={(e) => { e.stopPropagation(); markFromSuggestion(s); }}>
                     mark as concept ↵
                   </button>
                   <button className="btn-ghost sm"
@@ -369,7 +391,11 @@ function Concepts({ onPromote }) {
       </section>
       <DrillSheet open={!!openSug} onClose={() => setOpenSug(null)}
         title={openSug ? openSug.asset : ""}
-        subtitle={openSug ? `${openSug.side} · score ${openSug.score} · T${openSug.tier}` : ""}>
+        subtitle={openSug
+          ? (openSug.score != null
+              ? `${openSug.side} · score ${openSug.score} · T${openSug.tier}`
+              : `${openSug.side} · unscored · conviction ${openSug.conviction ?? "—"}/5`)
+          : ""}>
         {openSug && <SuggestionDetailPanel s={openSug} />}
       </DrillSheet>
     </div>
@@ -410,9 +436,23 @@ function SuggestionDetailPanel({ s }) {
           <span>Why suggested</span>
         </div>
         <p style={{ margin: "6px 0 0 0", lineHeight: 1.5 }}>{s.reason}</p>
+        {s.thesis && (
+          <p className="muted" style={{ margin: "6px 0 0 0", lineHeight: 1.5 }}>{s.thesis}</p>
+        )}
         <div className="mono small muted" style={{ marginTop: 6 }}>
-          score {s.score} · Δ {s.dScore >= 0 ? "+" : ""}{s.dScore} · tier T{s.tier} · regime {s.regime}
+          {s.score != null
+            ? `score ${s.score} · Δ ${s.dScore >= 0 ? "+" : ""}${s.dScore} · tier T${s.tier} · regime ${s.regime}`
+            : `unscored · conviction ${s.conviction ?? "—"}/5 · called by ${s.voice || "a trusted source"}`}
         </div>
+        {(s.entry != null || s.stop != null || s.target != null) && (
+          <div className="mono small" style={{ marginTop: 6 }}>
+            {[s.entry != null ? `entry ${s.entry}` : null,
+              s.stop != null ? `stop ${s.stop}` : null,
+              s.target != null ? `target ${s.target}` : null,
+              s.rr != null ? `${s.rr}R` : null,
+              s.price != null ? `last ${s.price}` : null].filter(Boolean).join(" · ")}
+          </div>
+        )}
       </div>
 
       {sources.length > 0 && (

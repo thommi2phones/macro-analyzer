@@ -18,6 +18,38 @@ from macro_positioning.core.settings import settings
 logger = logging.getLogger(__name__)
 
 
+def drop_untradeable(fired: list) -> tuple[list, int]:
+    """Remove alerts on tiers that never warrant an interrupt.
+
+    "avoid" is the composer's own verdict that a name is not tradeable
+    right now, so a zone touch on one is a fact about a chart already
+    declined. 2026-08-26 delivered two before breakfast (XLP 46, USO 48).
+
+    Applied in the cycle rather than inside either rule module so it
+    covers score-band and direction alerts alike, and so neither module
+    needs to know about delivery policy — direction_rules.py in
+    particular belongs to concurrent work.
+
+    Filtered before `store.record` deliberately: recording a suppressed
+    alert would burn its (ticker, rule) cooldown key, and a later
+    *tradeable* alert on the same name would then be swallowed as a
+    duplicate. The names stay scored, stay on the watchlist digest, and
+    stay in trade_scores — they simply do not buzz.
+    """
+    suppress = {t.lower() for t in (settings.alert_suppress_tiers or [])}
+    if not suppress:
+        return fired, 0
+    keep = [a for a in fired if (a.tier_after or "").lower() not in suppress]
+    dropped = [a for a in fired if (a.tier_after or "").lower() in suppress]
+    if dropped:
+        logger.info(
+            "suppressed %d alert(s) on non-tradeable tiers (%s): %s",
+            len(dropped), ", ".join(sorted(suppress)),
+            ", ".join(f"{a.ticker}/{a.rule}" for a in dropped),
+        )
+    return keep, len(dropped)
+
+
 def run_alert_cycle(*, dry_run: bool = False) -> dict:
     """Evaluate the current scoring state and deliver anything new.
 
@@ -40,10 +72,13 @@ def run_alert_cycle(*, dry_run: bool = False) -> dict:
         except Exception:  # noqa: BLE001
             logger.exception("direction rules failed; score alerts still sent")
 
+        fired, dropped = drop_untradeable(fired)
+
         if dry_run:
             return {
                 "dry_run": True,
                 "derived": len(fired),
+                "suppressed": dropped,
                 "alerts": [
                     {"ticker": a.ticker, "rule": a.rule,
                      "severity": a.severity, "title": a.title}
@@ -86,6 +121,7 @@ def run_alert_cycle(*, dry_run: bool = False) -> dict:
         return {
             "dry_run": False,
             "derived": len(fired),
+            "suppressed": dropped,
             "pending": len(pending),
             "messages_sent": 1 if pending else 0,
             "delivered": delivered,

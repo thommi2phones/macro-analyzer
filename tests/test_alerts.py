@@ -598,3 +598,56 @@ def test_cooldown_keys_reflect_recorded_fires(db):
     store.record([store.Alert(rule="grade_cross_a", severity="high",
                               ticker="eth", title="t", body="b")], conn=db)
     assert ("ETH", "grade_cross_a") in store.recent_fire_keys(hours=48, conn=db)
+
+
+# ── Non-tradeable tiers never buzz ────────────────────────────────────────
+
+def _alert(ticker, tier, rule="zone_arrival"):
+    from macro_positioning.alerts.store import Alert
+    return Alert(rule=rule, severity="medium", ticker=ticker,
+                 title=f"{ticker} · x", body="x", tier_after=tier)
+
+
+def test_avoid_tier_alerts_are_not_delivered():
+    """2026-08-26 sent two before breakfast — XLP 46 and USO 48, both
+    'avoid'. That tier is the composer saying the name is not tradeable,
+    so a zone touch on one is news about a chart already declined."""
+    from macro_positioning.alerts.runner import drop_untradeable
+
+    kept, dropped = drop_untradeable([
+        _alert("XLP", "avoid"), _alert("USO", "avoid"),
+        _alert("NVDA", "tier_2"),
+    ])
+    assert [a.ticker for a in kept] == ["NVDA"]
+    assert dropped == 2
+
+
+def test_tier_matching_is_case_insensitive_and_null_safe():
+    from macro_positioning.alerts.runner import drop_untradeable
+
+    kept, dropped = drop_untradeable([
+        _alert("A", "AVOID"), _alert("B", None), _alert("C", "tier_1"),
+    ])
+    assert {a.ticker for a in kept} == {"B", "C"}   # unknown tier is not dropped
+    assert dropped == 1
+
+
+def test_suppressed_alerts_do_not_burn_the_cooldown_key(db):
+    """They are filtered before store.record. Recording one would occupy
+    its (ticker, rule) key and swallow a later tradeable alert on the
+    same name as a duplicate."""
+    from macro_positioning.alerts import store
+    from macro_positioning.alerts.runner import drop_untradeable
+
+    kept, _ = drop_untradeable([_alert("XLP", "avoid")])
+    store.record(kept, conn=db)
+    assert store.recent_fire_keys(hours=48, conn=db) == set()
+
+
+def test_the_suppress_list_is_configurable(monkeypatch):
+    from macro_positioning.alerts.runner import drop_untradeable
+    from macro_positioning.core.settings import settings
+
+    monkeypatch.setattr(settings, "alert_suppress_tiers", [])
+    kept, dropped = drop_untradeable([_alert("XLP", "avoid")])
+    assert dropped == 0 and len(kept) == 1

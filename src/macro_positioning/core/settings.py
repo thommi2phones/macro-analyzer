@@ -99,6 +99,19 @@ class Settings(BaseSettings):
             "chat_id": -1003855403507, "author_display": "Trading Operation Desk", "is_dm": False,
             "known_senders": {},
         },
+        # New 2026-08-25 — the user's Stock Unlocked *trades* channel
+        # (equities, not crypto). author_display is "Stock Unlocked" and
+        # NOT the channel title, so posts land on the already-seeded
+        # `stock-unlocked:stock-unlocked` author (trust_weight 1.5) rather
+        # than minting a fresh NULL-trust row the conviction allowlist
+        # would ignore. Artur Unlocked is seeded separately — add his
+        # user_id to known_senders once a smoke test surfaces it.
+        "stock_unlocked": {
+            "chat_id": -1002752726473, "author_display": "Stock Unlocked", "is_dm": False,
+            "known_senders": {
+                # "123456789": "Artur Unlocked",  # discover via telegram_smoke_test
+            },
+        },
     })
 
     # ─── Alerts ──────────────────────────────────────────────────────
@@ -118,6 +131,14 @@ class Settings(BaseSettings):
     # token lands, so nothing is lost by configuring this late.
     telegram_bot_token: str = ""
     telegram_alert_chat_id: str = ""
+
+    # Position-size tiers that never warrant an interrupt. "avoid" is the
+    # composer's own verdict that a name is not tradeable right now, so a
+    # zone touch on one is a fact about a chart you have already declined.
+    # 2026-08-26 delivered two of these before breakfast (XLP 46, USO 48).
+    # They are still scored, still on the watchlist digest, still in the
+    # DB — just not worth a buzz.
+    alert_suppress_tiers: list[str] = ["avoid"]
 
     # Cooldown per (ticker, rule): suppress a repeat of the same alert
     # inside this window. Grade crosses are transitions and can't repeat

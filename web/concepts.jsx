@@ -6,15 +6,50 @@
 // watchlist on /positioning creates an active concept row; promoting
 // jumps to /identify with a draft plan seeded from the concept.
 
+// Should a passed-on suggestion come back? The bar itself is computed
+// server-side (api/funnel.py owns the policy) and arrives on the review
+// row; this only compares today's numbers against it. A name returns when
+// its score clears the bar, when its side flips, or when the pass goes
+// stale — and it says which, so the row can explain itself.
+function reraiseReason(sug, review) {
+  if (!review) return null;              // never passed on — show normally
+  if (review.reraiseAboveScore != null && sug.score != null &&
+      sug.score >= review.reraiseAboveScore) {
+    return `score ${review.scoreAtReview} → ${sug.score} since you passed`;
+  }
+  if (review.sideAtReview && sug.side && review.sideAtReview !== sug.side) {
+    return `side flipped ${review.sideAtReview} → ${sug.side} since you passed`;
+  }
+  if (review.reraiseAfter && new Date(review.reraiseAfter) <= new Date()) {
+    return `passed ${String(review.reviewedAt).slice(0, 10)} · that read is stale`;
+  }
+  return null;                            // still suppressed
+}
+
 function Concepts({ onPromote }) {
   const D = window.MA_DATA;
   const [, force] = React.useState(0);
   const rerender = () => force(n => n + 1);
   const [showHistory, setShowHistory] = React.useState(false);
+  const [showPassed, setShowPassed] = React.useState(false);
   const [openSug, setOpenSug] = React.useState(null);
 
   const concepts = D.concepts || [];
-  const suggestions = D.conceptSuggestions || [];
+  const allSuggestions = D.conceptSuggestions || [];
+  const reviews = D.conceptSuggestionReviews || [];
+  const reviewByAsset = {};
+  for (const r of reviews) reviewByAsset[r.asset] = r;
+
+  // Split, don't drop: a passed name stays visible in its own fold so the
+  // desk can see what it has already said no to, and take it back.
+  const suggestions = [];
+  const passed = [];
+  for (const s of allSuggestions) {
+    const review = reviewByAsset[s.asset];
+    const back = reraiseReason(s, review);
+    if (!review || back) suggestions.push({ ...s, reraised: back });
+    else passed.push({ ...s, review });
+  }
   const active = concepts.filter(c => c.status === "active");
   const history = concepts.filter(c => c.status !== "active");
 
@@ -37,7 +72,56 @@ function Concepts({ onPromote }) {
       markedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
       tradePlanId: null,
     }]);
-    D.conceptSuggestions = suggestions.filter(s => s.asset !== sug.asset);
+    D.conceptSuggestions = allSuggestions.filter(s => s.asset !== sug.asset);
+    D.conceptSuggestionReviews = (D.conceptSuggestionReviews || [])
+      .filter(x => x.asset !== sug.asset);
+    rerender();
+  };
+
+  // Passing writes through to /api/funnel/suggestion-reviews so the name
+  // stays gone across reloads. The optimistic local row carries the same
+  // thresholds the server computes, so the fold is right immediately.
+  const passSuggestion = async (sug) => {
+    const prior = reviewByAsset[sug.asset];
+    const count = prior ? (prior.reviewCount || 1) + 1 : 1;
+    const local = {
+      asset: sug.asset,
+      verdict: "passed",
+      scoreAtReview: sug.score != null ? sug.score : null,
+      sideAtReview: sug.side || null,
+      note: null,
+      reviewCount: count,
+      reviewedAt: new Date().toISOString(),
+      reraiseAboveScore: sug.score != null ? sug.score + 8 * Math.min(count, 3) : null,
+      reraiseAfter: new Date(Date.now() + 45 * 86400000).toISOString(),
+    };
+    try {
+      const r = await fetch("/api/funnel/suggestion-reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asset_id: sug.asset,
+          verdict: "passed",
+          score_at_review: local.scoreAtReview,
+          side_at_review: local.sideAtReview,
+        }),
+      });
+      if (r.ok) Object.assign(local, (await r.json()).review || {});
+    } catch (e) {
+      // Offline preview — keep the optimistic row.
+    }
+    D.conceptSuggestionReviews = (D.conceptSuggestionReviews || [])
+      .filter(x => x.asset !== sug.asset).concat([local]);
+    rerender();
+  };
+
+  const unpassSuggestion = async (asset) => {
+    try {
+      await fetch(`/api/funnel/suggestion-reviews/${encodeURIComponent(asset)}`,
+                  { method: "DELETE" });
+    } catch (e) { /* offline preview */ }
+    D.conceptSuggestionReviews = (D.conceptSuggestionReviews || [])
+      .filter(x => x.asset !== asset);
     rerender();
   };
 
@@ -90,12 +174,23 @@ function Concepts({ onPromote }) {
             <span className="block-sub">
               {suggestions.length} candidate{suggestions.length === 1 ? "" : "s"} ·
               high-score watchlist rows not yet marked
+              {passed.length > 0 && (
+                <>
+                  {" · "}
+                  <button className="link-btn" onClick={() => setShowPassed(v => !v)}>
+                    {passed.length} passed {showPassed ? "▲" : "▼"}
+                  </button>
+                </>
+              )}
             </span>
           </div>
         </header>
         {suggestions.length === 0 ? (
           <div className="empty-state muted small">
-            No system suggestions right now — mark anything on the watchlist manually.
+            {passed.length > 0
+              ? `Nothing new — you've passed on ${passed.length} name${
+                  passed.length === 1 ? "" : "s"}, and they'll come back if the case changes.`
+              : "No system suggestions right now — mark anything on the watchlist manually."}
           </div>
         ) : (
           <div className="concepts-list">
@@ -113,11 +208,55 @@ function Concepts({ onPromote }) {
                     {s.dScore > 0 ? "+" : ""}{s.dScore} Δ
                   </span>
                 </div>
-                <div className="concept-reason muted small">{s.reason}</div>
+                <div className="concept-reason muted small">
+                  {s.reason}
+                  {s.reraised && (
+                    <div className="sug-reraised mono small">↻ back: {s.reraised}</div>
+                  )}
+                </div>
                 <div className="concept-actions">
                   <button className="btn-primary sm"
                     onClick={(e) => { e.stopPropagation(); markConcept(s); }}>
                     mark as concept ↵
+                  </button>
+                  <button className="btn-ghost sm"
+                    title="reviewed — hide until the case for it changes"
+                    onClick={(e) => { e.stopPropagation(); passSuggestion(s); }}>
+                    pass
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {showPassed && passed.length > 0 && (
+          <div className="concepts-list passed-list">
+            {passed.map(s => (
+              <div key={s.asset} className="concept-row passed">
+                <div className="concept-asset">
+                  <div className="mono asset-cell">{s.asset}</div>
+                  <SideLabel side={s.side} />
+                </div>
+                <div className="concept-score">
+                  <span className={`wl-score tier-${s.tier}`}>{s.score}</span>
+                  <span className="mono small muted">now</span>
+                </div>
+                <div className="concept-reason muted small">
+                  passed {String(s.review.reviewedAt).slice(0, 10)}
+                  {s.review.reviewCount > 1 ? ` · ${s.review.reviewCount}×` : ""}
+                  {" · "}
+                  {s.review.reraiseAboveScore != null
+                    ? `back at score ${Math.round(s.review.reraiseAboveScore)}`
+                    : "back on any change"}
+                  {s.review.reraiseAfter
+                    ? ` or on ${String(s.review.reraiseAfter).slice(0, 10)}`
+                    : ""}
+                </div>
+                <div className="concept-actions">
+                  <button className="btn-ghost sm"
+                    title="put it back in the suggestion list now"
+                    onClick={() => unpassSuggestion(s.asset)}>
+                    un-pass
                   </button>
                 </div>
               </div>

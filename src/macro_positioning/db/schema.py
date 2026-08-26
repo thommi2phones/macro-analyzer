@@ -519,6 +519,25 @@ SCHEMA_STATEMENTS = [
     CREATE INDEX IF NOT EXISTS idx_trade_concepts_asset_active
         ON trade_concepts (asset_id, status)
     """,
+    # A reviewed suggestion the desk passed on. The system keeps
+    # proposing names from the watchlist; once the operator has looked at
+    # one and said no, it stays out of the suggestion list until the case
+    # for it actually changes — the score climbs past a threshold, the
+    # side flips, or enough time passes that the old read is stale. The
+    # snapshot columns are what "changed" is measured against, and
+    # review_count raises the bar each time the same name is passed on.
+    """
+    CREATE TABLE IF NOT EXISTS concept_suggestion_reviews (
+        asset_id TEXT PRIMARY KEY,
+        verdict TEXT NOT NULL,                -- passed
+        score_at_review REAL,
+        side_at_review TEXT,
+        note TEXT,
+        review_count INTEGER NOT NULL DEFAULT 1,
+        reviewed_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
     # Trade plans = step ③ Identify. Each plan captures the entry/stop/
     # targets/sizing the operator intends to act on, optionally linked
     # back to the concept it grew from. Status flips draft→live when

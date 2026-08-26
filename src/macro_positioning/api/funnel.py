@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -425,3 +425,114 @@ def activate_plan(plan_id: str) -> dict[str, Any]:
             "SELECT * FROM trade_plans WHERE plan_id = ?", (plan_id,)
         ).fetchone()
     return {"plan": _row_to_plan(plan_row), "trade_id": tid}
+
+
+# ── Reviewed suggestions ──────────────────────────────────────────────────
+#
+# The system proposes watchlist names as concepts. Once the desk has looked
+# at one and passed, it should stop appearing — but not forever: a name
+# passed at score 61 deserves another look at 75, or if the side flips, or
+# if the read is simply old. These constants are that policy, and they live
+# here (not in the SPA) so the re-raise bar is computed once and the client
+# only has to compare numbers.
+
+# Each pass on the same name raises the bar by this much, so a name the
+# desk keeps rejecting has to make a bigger case each time.
+RERAISE_SCORE_STEP = 8.0
+# ...up to this many passes' worth. Beyond that the bar stops climbing.
+RERAISE_STEP_CAP = 3
+# A pass goes stale regardless: the thesis that justified it has moved on.
+RERAISE_AFTER_DAYS = 45
+
+
+def _row_to_suggestion_review(row: sqlite3.Row) -> dict[str, Any]:
+    count = max(1, int(row["review_count"] or 1))
+    step = RERAISE_SCORE_STEP * min(count, RERAISE_STEP_CAP)
+    score = row["score_at_review"]
+    reviewed = row["reviewed_at"]
+    try:
+        stale_after = (
+            datetime.fromisoformat(reviewed) + timedelta(days=RERAISE_AFTER_DAYS)
+        ).isoformat()
+    except (TypeError, ValueError):
+        stale_after = None
+    return {
+        "asset": row["asset_id"],
+        "verdict": row["verdict"],
+        "scoreAtReview": score,
+        "sideAtReview": row["side_at_review"],
+        "note": row["note"],
+        "reviewCount": count,
+        "reviewedAt": reviewed,
+        # Decision inputs for the client: re-raise this name when its score
+        # reaches `reraiseAboveScore`, when its side differs from
+        # `sideAtReview`, or once the clock passes `reraiseAfter`.
+        "reraiseAboveScore": (score + step) if score is not None else None,
+        "reraiseAfter": stale_after,
+    }
+
+
+class SuggestionReviewPayload(BaseModel):
+    asset_id: str
+    verdict: str = Field(default="passed")
+    score_at_review: Optional[float] = None
+    side_at_review: Optional[str] = None
+    note: Optional[str] = None
+
+
+@router.get("/suggestion-reviews")
+def list_suggestion_reviews() -> dict[str, Any]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM concept_suggestion_reviews ORDER BY reviewed_at DESC"
+        ).fetchall()
+    return {"reviews": [_row_to_suggestion_review(r) for r in rows]}
+
+
+@router.post("/suggestion-reviews")
+def review_suggestion(payload: SuggestionReviewPayload) -> dict[str, Any]:
+    """Pass on a suggestion. Re-passing the same name raises its bar."""
+    now = _now()
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT review_count FROM concept_suggestion_reviews WHERE asset_id = ?",
+            (payload.asset_id,),
+        ).fetchone()
+        count = (int(existing["review_count"] or 0) + 1) if existing else 1
+        conn.execute(
+            """
+            INSERT INTO concept_suggestion_reviews (
+                asset_id, verdict, score_at_review, side_at_review,
+                note, review_count, reviewed_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(asset_id) DO UPDATE SET
+                verdict = excluded.verdict,
+                score_at_review = excluded.score_at_review,
+                side_at_review = excluded.side_at_review,
+                note = excluded.note,
+                review_count = excluded.review_count,
+                reviewed_at = excluded.reviewed_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                payload.asset_id, payload.verdict, payload.score_at_review,
+                payload.side_at_review, payload.note, count, now, now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM concept_suggestion_reviews WHERE asset_id = ?",
+            (payload.asset_id,),
+        ).fetchone()
+    return {"review": _row_to_suggestion_review(row)}
+
+
+@router.delete("/suggestion-reviews/{asset_id}")
+def unreview_suggestion(asset_id: str) -> dict[str, Any]:
+    """Undo a pass — the name returns to the suggestion list immediately."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM concept_suggestion_reviews WHERE asset_id = ?", (asset_id,)
+        )
+        conn.commit()
+    return {"asset": asset_id, "removed": cur.rowcount > 0}

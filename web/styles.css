@@ -2658,6 +2658,18 @@ hr.sep { border: 0; border-top: 1px solid var(--line-soft); margin: 14px 0; }
 }
 .concept-row.suggested { border-style: dashed; }
 .concept-row.active { border-color: rgba(224,192,96,0.18); }
+/* Passed-on suggestions sit behind a fold, dimmed — visible enough to
+   audit what was rejected, quiet enough not to compete with live ones. */
+.concept-row.passed { opacity: 0.55; border-style: dashed; }
+.concept-row.passed:hover { opacity: 0.85; }
+.passed-list { padding-top: 0; }
+.sug-reraised { color: #d9a441; margin-top: 3px; letter-spacing: 0.02em; }
+.link-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: inherit; color: rgba(237,239,245,0.55);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.link-btn:hover { color: #fff; }
 .concept-asset { display: flex; flex-direction: column; gap: 4px; }
 .concept-score { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .concept-reason { line-height: 1.4; }

@@ -1790,6 +1790,27 @@ def build_funnel_concepts_section() -> list[dict] | None:
     } for r in rows]
 
 
+def build_suggestion_reviews_section() -> list[dict]:
+    """Suggestions the desk has passed on, with their re-raise bar.
+
+    The policy (how far a score must climb, how long a pass stays good)
+    lives in api/funnel.py; this just serves the computed thresholds so
+    the SPA can filter without re-deriving them.
+    """
+    if not settings.sqlite_path.exists():
+        return []
+    from macro_positioning.api.funnel import _row_to_suggestion_review
+    try:
+        with sqlite3.connect(settings.sqlite_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM concept_suggestion_reviews ORDER BY reviewed_at DESC"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []         # pre-migration DB
+    return [_row_to_suggestion_review(r) for r in rows]
+
+
 def build_data_health_section() -> dict:
     """Per-source freshness so the operator can spot stalled pipelines.
 
@@ -1952,6 +1973,7 @@ def build_desk_snapshot() -> dict:
         ("liveSignals", build_live_signals_section, list),
         ("dataHealth", build_data_health_section, lambda: {"sources": [], "as_of": None}),
         ("concepts", build_funnel_concepts_section, lambda: None),
+        ("conceptSuggestionReviews", build_suggestion_reviews_section, list),
         ("watchlist", build_watchlist_section, list),
         ("priceSeries", build_price_series_section, dict),
         ("activeTrades", build_active_trades_section, list),

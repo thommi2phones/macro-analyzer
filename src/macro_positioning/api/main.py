@@ -14,6 +14,7 @@ from macro_positioning.api.insiders_routes import router as insiders_router
 from macro_positioning.api.journal_routes import router as journal_router
 from macro_positioning.api.manual_input import router as manual_input_router
 from macro_positioning.api.rules_routes import router as rules_router
+from macro_positioning.api.signal_routes import router as signal_router
 from macro_positioning.api.trade_plan_routes import router as trade_plan_router
 from macro_positioning.dashboard.desk_routes import router as desk_router
 from macro_positioning.dashboard.router import router as dashboard_router
@@ -102,6 +103,7 @@ app.include_router(journal_router)
 app.include_router(rules_router)
 app.include_router(trade_plan_router)
 app.include_router(insiders_router)
+app.include_router(signal_router)
 
 initialize_database(settings.sqlite_path)
 repository = SQLiteRepository(settings.sqlite_path)

@@ -1,6 +1,6 @@
 // /positioning — trader desk view.
 
-const { useState: useStateP, useMemo: useMemoP } = React;
+const { useState: useStateP, useMemo: useMemoP, useEffect: useEffectP } = React;
 
 // ── Asset-class buckets ────────────────────────────────────────
 // The scored watchlist mixes on-chain assets, exchange-listed tickers
@@ -633,6 +633,9 @@ function DataFreshnessStrip({ dh }) {
 // rolls them into trade_scores. So the positioning desk surfaces real
 // extracted intelligence within seconds of ingestion.
 function LiveSignalsPanel({ signals }) {
+  // signal_id of the card being drilled into — the modal fetches the full
+  // provenance chain (chart, caption, extractor, model) on open.
+  const [openId, setOpenId] = useStateP(null);
   function fmtAge(iso) {
     if (!iso) return "—";
     try {
@@ -658,13 +661,24 @@ function LiveSignalsPanel({ signals }) {
           <span>Live signals</span>
           <span className="block-sub">
             {signals.length} most recent · last 7d ·
-            direct from manual / insider / vision / LLM extractors
+            direct from manual / insider / vision / LLM extractors ·
+            click a card for its source
           </span>
         </div>
       </header>
       <div className="live-signals-grid">
         {signals.map(s => (
-          <div key={s.signal_id} className={`live-signal-card side-${sideKind(s.side)}`}>
+          <div key={s.signal_id}
+               className={`live-signal-card side-${sideKind(s.side)}`}
+               role="button" tabIndex={0}
+               title="open source — chart, caption, extractor"
+               onClick={() => setOpenId(s.signal_id)}
+               onKeyDown={(e) => {
+                 if (e.key === "Enter" || e.key === " ") {
+                   e.preventDefault();
+                   setOpenId(s.signal_id);
+                 }
+               }}>
             <div className="ls-head">
               <span className="ls-ticker">{s.ticker}</span>
               <span className={`ls-side ls-side-${sideKind(s.side)} mono`}>
@@ -691,11 +705,224 @@ function LiveSignalsPanel({ signals }) {
                 {s.target_2 != null && <> / {s.target_2}</>}
               </div>
             )}
+            <div className="ls-drill mono">source ↗</div>
           </div>
         ))}
       </div>
+      {openId && (
+        <SignalProvenanceModal
+          signalId={openId}
+          onClose={() => setOpenId(null)}
+          onOpenSignal={setOpenId}
+        />
+      )}
     </section>
   );
 }
 
-Object.assign(window, { Positioning, RegimeTape, DataFreshnessStrip, LiveSignalsPanel });
+// ── Signal provenance modal ─────────────────────────────────────────────
+// "Where is this coming from?" — the full chain behind one live signal:
+//   source channel → author → document (chart + caption) → extractor/model
+// Fetched from /api/signals/{id}/provenance on open.
+function SignalProvenanceModal({ signalId, onClose, onOpenSignal }) {
+  const [data, setData] = useStateP(null);
+  const [err, setErr] = useStateP(null);
+
+  useEffectP(() => {
+    let live = true;
+    setData(null); setErr(null);
+    fetch(`/api/signals/${signalId}/provenance`)
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(j => { if (live) setData(j); })
+      .catch(e => { if (live) setErr(e.message || "failed to load"); });
+    return () => { live = false; };
+  }, [signalId]);
+
+  useEffectP(() => {
+    function onKey(e) { if (e.key === "Escape") onClose(); }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const sig = data && data.signal;
+  const doc = data && data.document;
+  const feat = data && data.features;
+  const author = data && data.author;
+  const images = (doc && doc.images) || [];
+  // Chart extractors carry their per-chart read on the signal itself.
+  const detail = (sig && sig.instrument_detail) || {};
+  const setups = (feat && Array.isArray(feat.setups)) ? feat.setups : [];
+
+  const num = (v) => (v === null || v === undefined || v === "" ? null : String(v));
+  const Row = ({ k, v }) => (v === null || v === undefined || v === "" ? null : (
+    <div className="sp-row">
+      <span className="sp-k mono">{k}</span>
+      <span className="sp-v">{v}</span>
+    </div>
+  ));
+
+  return (
+    <div className="sp-backdrop" onClick={onClose}>
+      <div className="sp-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="sp-head">
+          <strong>{sig ? sig.asset_ticker : "…"}</strong>
+          {sig && (
+            <span className="mono sp-head-meta">
+              {sig.side} · conv {sig.conviction != null ? sig.conviction.toFixed(1) : "—"}
+              {sig.weighted_score != null ? ` · score ${sig.weighted_score}` : ""}
+              {sig.status && sig.status !== "active" ? ` · ${sig.status}` : ""}
+            </span>
+          )}
+          <button className="filter-pill sp-close" onClick={onClose}>✕ close</button>
+        </div>
+
+        {err && <div className="sp-body sp-empty">Could not load provenance: {err}</div>}
+        {!err && !data && <div className="sp-body sp-empty">Loading source…</div>}
+
+        {data && (
+          <div className="sp-body">
+            {/* ── Evidence column: what the extractor actually saw ── */}
+            <div className="sp-media">
+              {images.length > 0 ? images.map((im, i) => (
+                <figure key={i} className="sp-figure">
+                  <a href={im.url} target="_blank" rel="noreferrer">
+                    <img className="sp-img" src={im.url} alt={sig.asset_ticker}
+                         onError={(e) => { e.target.style.display = "none"; }} />
+                  </a>
+                  {(im.timeframe || im.role || im.note) && (
+                    <figcaption className="mono sp-figcap">
+                      {[im.timeframe, im.role, im.note].filter(Boolean).join(" · ")}
+                    </figcaption>
+                  )}
+                </figure>
+              )) : (
+                <div className="sp-noimg">
+                  No chart attached — this call was extracted from text.
+                </div>
+              )}
+
+              {(doc && doc.text) ? (
+                <div className="sp-textblock">
+                  <div className="sp-sec-title mono">Source text{doc.text_truncated ? " (truncated)" : ""}</div>
+                  <pre className="sp-pre">{doc.text}</pre>
+                </div>
+              ) : (sig.raw_excerpt && (
+                <div className="sp-textblock">
+                  <div className="sp-sec-title mono">Excerpt the extractor read</div>
+                  <pre className="sp-pre">{sig.raw_excerpt}</pre>
+                </div>
+              ))}
+            </div>
+
+            {/* ── Chain + structured read ── */}
+            <div className="sp-side">
+              <div className="sp-sec">
+                <div className="sp-sec-title mono">Provenance</div>
+                <Row k="channel" v={sig.source_channel || sig.source_slug} />
+                <Row k="author" v={author ? (
+                  <>
+                    {author.display_name}
+                    {author.parent_channel && author.parent_channel !== author.display_name
+                      ? <span className="dim"> · in {author.parent_channel}</span> : null}
+                    {author.trust_weight != null
+                      ? <span className="dim mono"> · trust {author.trust_weight}</span> : null}
+                  </>
+                ) : (doc && doc.author) || null} />
+                <Row k="document" v={doc ? doc.title : null} />
+                <Row k="posted" v={doc ? (doc.published_at || "").replace("T", " ").slice(0, 19) : null} />
+                <Row k="source id" v={doc ? <span className="mono sp-mini">{doc.source_id}</span> : null} />
+                <Row k="extractor" v={
+                  <span className="mono sp-mini">
+                    {sig.extractor_name} {sig.extractor_version}
+                    {sig.extractor_confidence != null ? ` · conf ${sig.extractor_confidence}` : ""}
+                  </span>
+                } />
+                <Row k="model" v={(sig.model_name || sig.model_provider)
+                  ? <span className="mono sp-mini">{[sig.model_provider, sig.model_name].filter(Boolean).join(" / ")}</span>
+                  : null} />
+                <Row k="extracted" v={<span className="mono sp-mini">{(sig.extracted_at || "").replace("T", " ").slice(0, 19)}</span>} />
+                <Row k="signal id" v={<span className="mono sp-mini">{sig.signal_id}</span>} />
+                {(doc && (doc.telegram_link || doc.url)) && (
+                  <div className="sp-links">
+                    {doc.telegram_link && (
+                      <a className="filter-pill" href={doc.telegram_link}
+                         target="_blank" rel="noreferrer">open in Telegram ↗</a>
+                    )}
+                    {doc.url && (
+                      <a className="filter-pill" href={doc.url}
+                         target="_blank" rel="noreferrer">original ↗</a>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="sp-sec">
+                <div className="sp-sec-title mono">The call</div>
+                {sig.thesis_summary && <div className="sp-thesis">{sig.thesis_summary}</div>}
+                <Row k="horizon" v={[sig.horizon, sig.horizon_days ? `${sig.horizon_days}d` : null].filter(Boolean).join(" · ") || null} />
+                <Row k="entry" v={sig.entry_zone_low != null
+                  ? (sig.entry_zone_high != null && sig.entry_zone_high !== sig.entry_zone_low
+                      ? `${sig.entry_zone_low} – ${sig.entry_zone_high}` : num(sig.entry_zone_low))
+                  : null} />
+                <Row k="stop" v={num(sig.stop_loss)} />
+                <Row k="targets" v={[sig.target_1, sig.target_2].filter(v => v != null).join(" / ") || null} />
+                <Row k="invalidation" v={sig.invalidation} />
+                <Row k="catalyst" v={[sig.catalyst_type, sig.catalyst_summary, sig.catalyst_date].filter(Boolean).join(" · ") || null} />
+                <Row k="conviction from" v={sig.conviction_raw} />
+                <Row k="tags" v={Array.isArray(sig.thesis_tags) && sig.thesis_tags.length
+                  ? sig.thesis_tags.join(", ") : null} />
+              </div>
+
+              {(feat || Object.keys(detail).length > 0) && (
+                <div className="sp-sec">
+                  <div className="sp-sec-title mono">Chart read</div>
+                  <Row k="timeframe" v={detail.chart_timeframe || (feat && feat.timeframe)} />
+                  <Row k="call type" v={detail.call_type || (feat && feat.call_type)} />
+                  <Row k="bias" v={detail.bias || (feat && feat.bias)} />
+                  <Row k="stage" v={detail.trade_stage || (feat && feat.trade_stage)} />
+                  <Row k="pattern" v={detail.pattern || (feat && feat.pattern)} />
+                  <Row k="confluence" v={(detail.confluence_score ?? (feat && feat.confluence_score)) != null
+                    ? `${detail.confluence_score ?? feat.confluence_score}/5` : null} />
+                  <Row k="indicators" v={(() => {
+                    const ind = detail.indicators || (feat && feat.indicators_visible);
+                    return Array.isArray(ind) && ind.length ? ind.join(", ") : null;
+                  })()} />
+                  {feat && feat.notes && <div className="sp-notes">{feat.notes}</div>}
+                  {setups.map((st, i) => (
+                    <div key={i} className="sp-setup mono">
+                      setup {i + 1} · {[st.direction, st.status].filter(Boolean).join(" · ")}
+                      {st.entry != null ? ` · entry ${st.entry}` : ""}
+                      {st.stop_loss != null ? ` · stop ${st.stop_loss}` : ""}
+                      {Array.isArray(st.take_profits) && st.take_profits.length
+                        ? ` · tp ${st.take_profits.join(" / ")}` : ""}
+                      {st.final_target != null ? ` · final ${st.final_target}` : ""}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {data.siblings && data.siblings.length > 0 && (
+                <div className="sp-sec">
+                  <div className="sp-sec-title mono">Also from this drop</div>
+                  {data.siblings.map(sb => (
+                    <button key={sb.signal_id} className="sp-sibling"
+                            onClick={() => onOpenSignal(sb.signal_id)}>
+                      <span className="mono">{sb.asset_ticker} · {sb.side}
+                        {sb.conviction != null ? ` · conv ${sb.conviction.toFixed(1)}` : ""}</span>
+                      {sb.thesis_summary && <span className="sp-sib-thesis">{sb.thesis_summary.slice(0, 90)}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, {
+  Positioning, RegimeTape, DataFreshnessStrip, LiveSignalsPanel,
+  SignalProvenanceModal,
+});

@@ -100,8 +100,51 @@ def insert_signal(signal: Signal, *, db_path: Optional[Path] = None) -> str:
                 signal.cost_usd, signal.error_message,
             ),
         )
+        _supersede_older_twins(conn, signal)
         conn.commit()
     return signal.signal_id
+
+
+# Rows written before signal_id became content-derived carry random uuids,
+# so a re-extract of an old document inserts alongside them instead of
+# replacing them. Retire those twins as the doc is re-read.
+def _supersede_older_twins(conn: sqlite3.Connection, signal: Signal) -> None:
+    """Mark any other active row for the same call as superseded.
+
+    Same document + extractor + instrument + side + level set is the same
+    call — see Signal.stable_id(). Nothing is deleted: the older row keeps
+    its history and points at the row that replaced it.
+    """
+    _MISS = -1e18   # stand-in for NULL so IS-NULL pairs compare equal
+    levels = (
+        signal.entry_zone_low, signal.entry_zone_high,
+        signal.stop_loss, signal.target_1, signal.target_2,
+    )
+    level_clause = " AND ".join(
+        f"IFNULL({col}, {_MISS}) = ?"
+        for col in ("entry_zone_low", "entry_zone_high",
+                    "stop_loss", "target_1", "target_2")
+    )
+    conn.execute(
+        f"""
+        UPDATE signals
+           SET status = ?, superseded_by = ?
+         WHERE document_id = ?
+           AND extractor_name = ?
+           AND asset_ticker = ?
+           AND side = ?
+           AND signal_id != ?
+           AND status = ?
+           AND {level_clause}
+        """,
+        (
+            SignalStatus.SUPERSEDED.value, signal.signal_id,
+            signal.document_id, signal.extractor_name, signal.asset_ticker,
+            signal.side.value if hasattr(signal.side, "value") else str(signal.side),
+            signal.signal_id, SignalStatus.ACTIVE.value,
+            *(_MISS if v is None else float(v) for v in levels),
+        ),
+    )
 
 
 def insert_signals(signals: Iterable[Signal], *, db_path: Optional[Path] = None) -> int:
@@ -145,6 +188,36 @@ def record_attempt(
 
 
 # ── Reads ───────────────────────────────────────────────────────────────────
+
+
+def has_successful_attempt(
+    document_id: str,
+    extractor_name: str,
+    extractor_version: str,
+    *,
+    db_path: Optional[Path] = None,
+) -> bool:
+    """Has this doc already been extracted by this extractor at this version?
+
+    `pending_documents()` answers the same question, but its answer is a
+    snapshot: a long run holds a doc list built minutes earlier, so a
+    second run that starts meanwhile sees the doc as pending too and both
+    extract it. Re-asking immediately before the extractor runs closes
+    that window.
+    """
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM signal_extraction_attempts
+            WHERE document_id = ?
+              AND extractor_name = ?
+              AND extractor_version = ?
+              AND status IN ('success', 'no_signal')
+            LIMIT 1
+            """,
+            (document_id, extractor_name, extractor_version),
+        ).fetchone()
+    return row is not None
 
 
 def pending_documents(

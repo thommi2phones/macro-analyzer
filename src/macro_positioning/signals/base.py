@@ -11,6 +11,7 @@ AND the audit trail (latency, model used, errors) for empty/failed runs.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -166,6 +167,45 @@ class Signal(BaseModel):
     output_tokens: Optional[int] = None
     cost_usd: Optional[float] = None
     error_message: Optional[str] = None
+
+    def model_post_init(self, __context: Any) -> None:
+        """Give the row a content-derived id unless one was passed in.
+
+        A uuid4 default made every extraction pass write NEW rows: two
+        overlapping `extract_pending()` runs, or any re-extract of a doc,
+        left the same call in the table two or three times, double-counting
+        it in conviction. Deriving the PK from the natural key makes the
+        insert an upsert — a re-extract updates the row in place.
+        """
+        if "signal_id" not in self.model_fields_set:
+            self.signal_id = self.stable_id()
+
+    def stable_id(self) -> str:
+        """Content-derived primary key.
+
+        The natural key is what makes two rows the same call: the document
+        it came from, which extractor read it, the instrument, the
+        direction, and — for charts that carry several setups — which
+        setup, identified by its level set (see manual_chart_extractor:
+        one Signal per `setups[]` entry is intentional).
+        """
+        setup_idx = (self.instrument_detail or {}).get("setup_index")
+        parts = [
+            self.document_id,
+            self.extractor_name,
+            self.asset_ticker,
+            self.side.value if hasattr(self.side, "value") else str(self.side),
+            "" if setup_idx is None else str(setup_idx),
+            *(("" if v is None else f"{float(v):.10g}") for v in (
+                self.entry_zone_low, self.entry_zone_high,
+                self.stop_loss, self.target_1, self.target_2,
+            )),
+        ]
+        return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:32]
+
+    def natural_key(self) -> str:
+        """Alias for `stable_id` — the value rows are de-duplicated on."""
+        return self.stable_id()
 
     @field_validator("asset_ticker")
     @classmethod

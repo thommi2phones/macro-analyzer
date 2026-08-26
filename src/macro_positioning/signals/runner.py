@@ -29,6 +29,7 @@ class ExtractionRunSummary:
     docs_with_signals: int = 0
     docs_no_signal: int = 0
     docs_error: int = 0
+    docs_skipped: int = 0          # claimed by a concurrent run
     signals_written: int = 0
     by_extractor: dict[str, int] = field(default_factory=dict)
     errors: list[dict] = field(default_factory=list)
@@ -42,6 +43,7 @@ class ExtractionRunSummary:
             "docs_with_signals": self.docs_with_signals,
             "docs_no_signal": self.docs_no_signal,
             "docs_error": self.docs_error,
+            "docs_skipped": self.docs_skipped,
             "signals_written": self.signals_written,
             "by_extractor": self.by_extractor,
             "errors": self.errors[:20],   # cap for printability
@@ -91,10 +93,24 @@ def extract_pending(
 
         any_success = False
         any_signals = False
+        any_skipped = False
         for name in extractor_names:
             extractor = registry.get(name)
             if extractor is None:
                 log.warning("Unknown extractor %s — skipping", name)
+                continue
+
+            # The pending list was built when the run started; another run
+            # may have claimed this doc since. Re-check before spending the
+            # extraction (and before writing a second copy of its signals).
+            if not dry_run and repository.has_successful_attempt(
+                doc["document_id"], name, extractor.version, db_path=db_path
+            ):
+                log.debug(
+                    "doc %s already extracted by %s %s — skipping (run=%s)",
+                    doc["document_id"], name, extractor.version, run_id,
+                )
+                any_skipped = True
                 continue
 
             try:
@@ -133,6 +149,8 @@ def extract_pending(
             summary.docs_with_signals += 1
         elif any_success:
             summary.docs_no_signal += 1
+        elif any_skipped:
+            summary.docs_skipped += 1
         else:
             summary.docs_error += 1
 

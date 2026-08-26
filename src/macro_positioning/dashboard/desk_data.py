@@ -1671,19 +1671,23 @@ def build_live_signals_section() -> list[dict]:
             rows = conn.execute(
                 f"""
                 SELECT
-                    signal_id, asset_ticker, side, conviction, weighted_score,
-                    source_slug, source_channel, author_id,
-                    horizon, catalyst_type, thesis_summary,
-                    extractor_name, extractor_confidence,
-                    stop_loss, target_1, target_2,
-                    extracted_at, status
-                FROM signals
-                WHERE status = 'active'
-                  AND datetime(extracted_at) >= datetime('now', '-72 hours')
-                  AND author_id IN (
+                    s.signal_id, s.asset_ticker, s.side, s.conviction, s.weighted_score,
+                    s.source_slug, s.source_channel, s.author_id,
+                    s.horizon, s.catalyst_type, s.thesis_summary,
+                    s.extractor_name, s.extractor_confidence,
+                    s.stop_loss, s.target_1, s.target_2,
+                    s.extracted_at, s.status,
+                    -- when the call was MADE, not when we read it: the
+                    -- extraction clock lags the drop by hours to days.
+                    COALESCE(d.published_at, d.ingested_at) AS published_at
+                FROM signals s
+                LEFT JOIN documents d ON d.document_id = s.document_id
+                WHERE s.status = 'active'
+                  AND datetime(s.extracted_at) >= datetime('now', '-72 hours')
+                  AND s.author_id IN (
                       SELECT author_id FROM input_authors WHERE {SEEDED_AUTHOR_WHERE}
                   )
-                ORDER BY weighted_score DESC NULLS LAST, extracted_at DESC
+                ORDER BY s.weighted_score DESC NULLS LAST, s.extracted_at DESC
                 LIMIT 120
                 """
             ).fetchall()
@@ -1729,6 +1733,7 @@ def build_live_signals_section() -> list[dict]:
             "target_1": r["target_1"],
             "target_2": r["target_2"],
             "extracted_at": r["extracted_at"],
+            "published_at": r["published_at"],
         })
     return out
 

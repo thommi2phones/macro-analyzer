@@ -5053,6 +5053,9 @@ body { font-size: 15.5px; }
 .ls-meta        { font-size: 10.5px; color: rgba(237,239,245,0.5); letter-spacing: 0.02em; }
 .ls-thesis      { font-size: 12px; line-height: 1.45; color: rgba(237,239,245,0.85); }
 .ls-levels      { font-size: 10.5px; color: rgba(237,239,245,0.55); }
+.ls-when {
+  font-size: 10px; color: rgba(237,239,245,0.42); letter-spacing: 0.02em;
+}
 .live-signal-card { cursor: pointer; position: relative; }
 .live-signal-card:focus-visible {
   outline: 2px solid rgba(255,255,255,0.4); outline-offset: 2px;
@@ -5089,6 +5092,14 @@ body { font-size: 15.5px; }
   font-size: 22px; letter-spacing: 0.02em;
 }
 .sp-head-meta { font-size: 11.5px; color: var(--text-dim, #888); }
+.sp-head-when {
+  font-size: 11px; color: var(--text);
+  white-space: nowrap; opacity: 0.75;
+}
+@media (max-width: 640px) {
+  .sp-head { flex-wrap: wrap; }
+  .sp-head-when { margin-left: 0; }
+}
 .sp-close { margin-left: auto; font-size: 10px; }
 .sp-body {
   display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr);

@@ -632,20 +632,35 @@ function DataFreshnessStrip({ dh }) {
 // Reads directly from the signals table — visible BEFORE a scoring pass
 // rolls them into trade_scores. So the positioning desk surfaces real
 // extracted intelligence within seconds of ingestion.
+// Age of a timestamp, in the shortest unit that still reads precisely.
+function sigAge(iso) {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    const m = (Date.now() - d.getTime()) / 60000;
+    if (m < 60) return `${Math.round(m)}m`;
+    if (m < 24 * 60) return `${Math.round(m / 60)}h`;
+    return `${Math.round(m / (60 * 24))}d`;
+  } catch (e) { return "—"; }
+}
+
+// Absolute wall-clock stamp, local time, for hover titles and the modal.
+function sigStamp(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso).replace("T", " ").slice(0, 16);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+           ` ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch (e) { return ""; }
+}
+
 function LiveSignalsPanel({ signals }) {
   // signal_id of the card being drilled into — the modal fetches the full
   // provenance chain (chart, caption, extractor, model) on open.
   const [openId, setOpenId] = useStateP(null);
-  function fmtAge(iso) {
-    if (!iso) return "—";
-    try {
-      const d = new Date(iso);
-      const m = (Date.now() - d.getTime()) / 60000;
-      if (m < 60) return `${Math.round(m)}m`;
-      if (m < 24 * 60) return `${Math.round(m / 60)}h`;
-      return `${Math.round(m / (60 * 24))}d`;
-    } catch (e) { return "—"; }
-  }
+  const fmtAge = sigAge;
   const sideKind = (side) => {
     const s = (side || "").toUpperCase();
     if (s === "LONG" || s === "ADD") return "long";
@@ -691,8 +706,14 @@ function LiveSignalsPanel({ signals }) {
                 s.source_channel || s.source_slug,
                 s.horizon,
                 s.catalyst_type,
-                fmtAge(s.extracted_at) + " ago",
               ].filter(Boolean).join(" · ")}
+            </div>
+            <div className="ls-when mono"
+                 title={`called ${sigStamp(s.published_at || s.extracted_at)}`
+                        + (s.published_at ? ` · extracted ${sigStamp(s.extracted_at)}` : "")}>
+              {s.published_at
+                ? `called ${sigStamp(s.published_at)} · ${fmtAge(s.published_at)} ago`
+                : `extracted ${sigStamp(s.extracted_at)} · ${fmtAge(s.extracted_at)} ago`}
             </div>
             {s.thesis_summary && (
               <div className="ls-thesis">{s.thesis_summary}</div>
@@ -773,6 +794,13 @@ function SignalProvenanceModal({ signalId, onClose, onOpenSignal }) {
               {sig.status && sig.status !== "active" ? ` · ${sig.status}` : ""}
             </span>
           )}
+          {sig && (doc || sig.extracted_at) && (
+            <span className="mono sp-head-when"
+                  title="when the author posted it — the extraction clock below can lag by days">
+              called {sigStamp((doc && doc.published_at) || sig.extracted_at)}
+              {" · "}{sigAge((doc && doc.published_at) || sig.extracted_at)} ago
+            </span>
+          )}
           <button className="filter-pill sp-close" onClick={onClose}>✕ close</button>
         </div>
 
@@ -829,7 +857,19 @@ function SignalProvenanceModal({ signalId, onClose, onOpenSignal }) {
                   </>
                 ) : (doc && doc.author) || null} />
                 <Row k="document" v={doc ? doc.title : null} />
-                <Row k="posted" v={doc ? (doc.published_at || "").replace("T", " ").slice(0, 19) : null} />
+                <Row k="called" v={doc && doc.published_at
+                  ? <>{sigStamp(doc.published_at)} <span className="dim">· {sigAge(doc.published_at)} ago</span></>
+                  : null} />
+                {/* Only worth a line when the pipeline saw it appreciably
+                    later than the author posted it. */}
+                <Row k="ingested" v={(() => {
+                  if (!doc || !doc.ingested_at) return null;
+                  const lag = doc.published_at
+                    ? (new Date(doc.ingested_at) - new Date(doc.published_at)) / 60000
+                    : Infinity;
+                  return Math.abs(lag) < 2 ? null
+                    : <span className="dim">{sigStamp(doc.ingested_at)} · {sigAge(doc.ingested_at)} ago</span>;
+                })()} />
                 <Row k="source id" v={doc ? <span className="mono sp-mini">{doc.source_id}</span> : null} />
                 <Row k="extractor" v={
                   <span className="mono sp-mini">
@@ -840,7 +880,12 @@ function SignalProvenanceModal({ signalId, onClose, onOpenSignal }) {
                 <Row k="model" v={(sig.model_name || sig.model_provider)
                   ? <span className="mono sp-mini">{[sig.model_provider, sig.model_name].filter(Boolean).join(" / ")}</span>
                   : null} />
-                <Row k="extracted" v={<span className="mono sp-mini">{(sig.extracted_at || "").replace("T", " ").slice(0, 19)}</span>} />
+                <Row k="extracted" v={
+                  <span className="mono sp-mini">
+                    {sigStamp(sig.extracted_at)}
+                    <span className="dim"> · {sigAge(sig.extracted_at)} ago</span>
+                  </span>
+                } />
                 <Row k="signal id" v={<span className="mono sp-mini">{sig.signal_id}</span>} />
                 {(doc && (doc.telegram_link || doc.url)) && (
                   <div className="sp-links">
